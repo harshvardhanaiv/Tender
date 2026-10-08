@@ -1,0 +1,15 @@
+138451 -> 1: 138451:::Extracted\
+142077 -> 2: 142077:::Extracted\
+150909 -> 3: 150909:::Extracted\
+150910 -> 4: 150910:::apply\
+150911 -> 5: 150911:::apply\
+152677 -> 6: 152677:::t touched live. The old caveats stand: the framework back-fill (C2) is not done, and the 21,221 awards over £250m include frameworks, so the stats ceiling still hides them correctly.\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-10-06T17:46:59+05:30.\n\nThe user
+156330 -> 7: 156330:::Extracted\
+164873 -> 8: 164873:::apply\
+165882 -> 9: 165882:::apply\
+170292 -> 10: 170292:::East Yorkshire Motor Services Limited
+181621 -> 11: 181621:::Hertfordshire Partnership NHS Foundation Trust (RWR)  Principal and/or registered office address
+189383 -> 12: 189383:::HW Martin, Amberon Ltd, Hooke Highwyas, Chevron Traffic Management, Sunbelt Rentals, Idverde Ltd, City Traffic Management, Quantum Traffic Management, Safemark Roadmarking
+212934 -> 13: 212934:::Fox Building & Engineering Ltd, Adman Civil Projects Ltd, William & Henry Alexander (Civil Engineering) Limited, Lowry Building & Civil Engineering Ltd,
+229940 -> 14: 229940:::R<digits><letter>: ...\
+756697 -> 15: 756697:::To Be Confirmed\

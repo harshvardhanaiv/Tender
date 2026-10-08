@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <title>Buyer workspace · TenderFlow</title>
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("tf_theme");
+        if (!t && window.matchMedia("(prefers-color-scheme: dark)").matches) t = "dark";
+        if (t) document.documentElement.setAttribute("data-theme", t);
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="/styles.css?v=137" />
+  <link rel="stylesheet" href="/theme.css?v=27" />
+  <link rel="stylesheet" href="/mobile.css?v=4" />
+  <link rel="stylesheet" href="/buyer-workspace.css?v=8" />
+</head>
+
+<body class="tf-shell bw">
+  <a class="bw-skip" href="#bwMain">Skip to content</a>
+
+  <header class="tf-masthead">
+    <div class="tf-brand">
+      <svg class="brand__logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="bwLogoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="var(--user-accent, #4f46e5)" />
+            <stop offset="100%" stop-color="var(--user-accent-hover, #4338ca)" />
+          </linearGradient>
+        </defs>
+        <rect width="32" height="32" rx="7" fill="url(#bwLogoGrad)" />
+        <circle cx="14" cy="14" r="5.5" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+        <line x1="18" y1="18" x2="23.5" y2="23.5" stroke="white" stroke-width="2.5" stroke-linecap="round" />
+        <path d="M11 13.5L13.5 16L17.5 11" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <div class="tf-brand__text">
+        <div class="tf-brand__name">Tender<span class="brand__title-flow">Flow</span><span class="plan-badge plan-badge--pro bw-badge-buyers">BUYERS</span></div>
+        <div class="tf-brand__sub">Market research and engagement for public sector buyers</div>
+      </div>
+    </div>
+
+    <div class="tf-masthead__right">
+      <a id="bwOrgChip" class="topbar-btn bw-org-chip" href="#/settings" title="Your organisation">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M5 21V9l7-5 7 5v12M9 21v-6h6v6"/></svg>
+        <span id="bwOrgChipText">Choose your organisation</span>
+      </a>
+      <a class="topbar-btn bw-supplier-link" href="/" title="Open the supplier workspace">Supplier workspace <span aria-hidden="true">↗</span></a>
+      <div class="topbar-dropdown" id="bwProfileWrap">
+        <button class="topbar-avatar" id="bwProfileBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Account menu">
+          <span id="bwInitials">·</span>
+        </button>
+        <div class="topbar-dropdown__menu" id="bwProfileMenu" role="menu">
+          <div class="topbar-dropdown__profile-header">
+            <div class="topbar-dropdown__profile-name" id="bwProfileName">Signed in</div>
+            <div class="topbar-dropdown__profile-email" id="bwProfileEmail"></div>
+          </div>
+          <div class="topbar-dropdown__sep"></div>
+          <button class="topbar-dropdown__item" id="bwThemeBtn" type="button" role="menuitem">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>
+            <span id="bwThemeLabel">Dark mode</span>
+          </button>
+          <div class="topbar-dropdown__sep"></div>
+          <button class="topbar-dropdown__item topbar-dropdown__item--danger" id="bwLogoutBtn" type="button" role="menuitem">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
+            <span>Logout</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="tf-body">
+    <nav class="tf-rail" aria-label="Buyer workspace">
+      <div class="tf-rail__list">
+        <div class="tf-rail__group tf-rail__group--top"><span class="tf-rail__group-text">Overview</span></div>
+        <a class="tf-nav" data-nav="dashboard" href="#/dashboard" title="Dashboard">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8M5 10v10h14V10M10 20v-6h4v6"/></svg><span>Dashboard</span>
+        </a>
+
+        <div class="tf-rail__group"><span class="tf-rail__group-text">Research</span></div>
+        <a class="tf-nav" data-nav="radar" href="#/radar" title="Market Radar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 12l6-6"/></svg><span>Market Radar</span>
+        </a>
+        <a class="tf-nav" data-nav="engagements" href="#/engagements" title="Market engagement">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span>Market engagement</span>
+        </a>
+
+        <div class="tf-rail__group"><span class="tf-rail__group-text">My organisation</span></div>
+        <a class="tf-nav" data-nav="watchlist" href="#/watchlist" title="Followed categories">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg><span>Followed categories</span>
+        </a>
+        <a class="tf-nav" data-nav="settings" href="#/settings" title="My organisation">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18M5 21V9l7-5 7 5v12M9 21v-6h6v6"/></svg><span>My organisation</span>
+        </a>
+      </div>
+    </nav>
+
+    <div class="tf-main">
+      <main id="bwMain" class="bw-main" tabindex="-1" aria-live="polite">
+        <div class="bw-loading" role="status">Loading…</div>
+      </main>
+    </div>
+  </div>
+
+  <div id="bwToast" class="bw-toast" role="status" aria-live="polite"></div>
+
+  <div id="bwModal" class="bw-modal hidden" role="dialog" aria-modal="true" aria-labelledby="bwModalTitle">
+    <div class="bw-modal__box" id="bwModalBox"></div>
+  </div>
+
+  <noscript><p class="bw-noscript">The buyer workspace needs JavaScript.</p></noscript>
+
+  <script src="/name-format.js?v=1" defer></script>
+  <script src="/buyer-workspace.js?v=4" defer></script>
+  <script src="/buyer-engagement.js?v=5" defer></script>
+</body>
+
+</html>

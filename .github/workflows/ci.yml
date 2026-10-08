@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main, V1, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Same Python as the Dockerfile; running in a container makes the service reachable as "postgres"
+    container: python:3.10-slim
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: postgres
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      ENABLE_SCHEDULERS: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -r requirements.txt
+      - run: python -c "from tender_app.config import FREE_TRIAL_CREDITS; from tender_app.credits import InsufficientCredits; print('imports ok')"
+      - run: python -c "import server; app = server.create_app(); print('app ok')"

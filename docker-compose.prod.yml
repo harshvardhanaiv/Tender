@@ -1,0 +1,77 @@
+# Production stack for self-hosted deployment behind an EXISTING Traefik.
+#
+# Bring up:    docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+# Tear down:   docker compose --env-file .env.production -f docker-compose.prod.yml down
+# Logs:        docker compose --env-file .env.production -f docker-compose.prod.yml logs -f web
+# Shell:       docker compose --env-file .env.production -f docker-compose.prod.yml exec web sh
+#
+# Requires .env.production at repo root (see .env.production.example).
+# Requires firebase-service-account.json at repo root (gitignored; copy from Firebase console).
+# Requires a Traefik instance already running on the host with:
+#   - a Docker provider that watches an external network named `proxy`
+#   - a certresolver named ${TRAEFIK_CERT_RESOLVER} (commonly `letsencrypt`)
+# DNS for ${APP_HOST} must already resolve to the server.
+
+services:
+  web:
+    build: .
+    image: etenders-scraper:latest
+    env_file: .env.production
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - FIREBASE_CREDENTIALS_PATH=/app/secrets/firebase-service-account.json
+    volumes:
+      # Firebase Admin SDK key — place firebase-service-account.json on the host (gitignored)
+      - ./firebase-service-account.json:/app/secrets/firebase-service-account.json:ro
+    expose: ["8092"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal, proxy]
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.tender-web.rule=Host(`${APP_HOST}`)
+      - traefik.http.routers.tender-web.entrypoints=websecure
+      - traefik.http.routers.tender-web.tls=true
+      - traefik.http.routers.tender-web.tls.certresolver=${TRAEFIK_CERT_RESOLVER}
+      # Priority MUST be higher than any neighbouring HostRegexp(*.your-domain)
+      # router on this Traefik. Default priority is rule-length, so an exact
+      # Host() can lose to a longer HostRegexp() unless we set this explicitly.
+      - traefik.http.routers.tender-web.priority=200
+      - traefik.http.services.tender-web.loadbalancer.server.port=8092
+      # gzip/brotli-style compression: app.js (~960 KB) and styles.css (~340 KB) are served
+      # uncompressed by Flask, so this is the single biggest page-weight win. Traefik only
+      # compresses responses over 1400 bytes and skips already-compressed types (images).
+      - traefik.http.middlewares.tender-compress.compress=true
+      - traefik.http.routers.tender-web.middlewares=tender-compress
+
+  db:
+    image: postgres:17-alpine
+    ports:
+      # External admin access on a non-standard host port (container stays on 5432).
+      - "${POSTGRES_HOST_PORT:-5440}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+    restart: unless-stopped
+
+networks:
+  proxy:
+    external: true
+  internal:
+    driver: bridge
+
+volumes:
+  postgres_data:

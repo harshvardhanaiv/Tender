@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="TenderFlow plans and credit packs: search UK, Irish and international public tenders, score fit and write bids with AI." />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>Plans &amp; Credits — Tender search</title>
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("tf_theme");
+          if (!t && window.matchMedia("(prefers-color-scheme: dark)").matches) t = "dark";
+          if (t) document.documentElement.setAttribute("data-theme", t);
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="prefetch" href="/" />
+    <link rel="prefetch" href="/app.js" />
+    <link rel="stylesheet" href="/styles.css?v=39" />
+  </head>
+  <body>
+    <main class="container container--wide pricing-main" style="animation: fadeIn 0.25s ease-out;">
+      <div id="flash" class="pricing-flash" style="display:none"></div>
+
+      <div id="legacyBanner" class="pricing-switch-hint" style="display:none;border-color:#f59e0b;background:#fffbeb">
+        <strong>Old billing plan detected.</strong>
+        Plan switching won't prorate correctly until you cancel and subscribe again.
+        <div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+          <button id="btnCancelLegacy" class="btn btn--primary" type="button">Cancel subscription</button>
+          <button id="btnDismissLegacy" class="btn" type="button">Dismiss</button>
+        </div>
+      </div>
+
+      <div id="switchHint" class="pricing-switch-hint" style="display:none">
+        <strong>Switching plans:</strong> Use <strong>Manage subscription</strong> in the header to upgrade, downgrade, or cancel your subscription in Stripe.
+        Top-up packs add credits anytime without changing your plan.
+      </div>
+
+      <!-- Main Pricing Card Wrapper -->
+      <div class="pricing-card-wrap">
+        
+        <!-- Header: Title, Subtitle, Action Buttons -->
+        <div class="pricing-header">
+          <div class="pricing-header__left">
+            <h1>Plans &amp; credits</h1>
+            <p id="creditsSubText">Choose a plan or top up credits to power your tender workflow.</p>
+          </div>
+          <div class="pricing-header__right">
+            <button id="btnThemeToggle" class="btn btn--small btn--theme" type="button" title="Toggle dark mode" aria-label="Toggle dark mode" style="margin-right: 4px;">🌙</button>
+            <a href="/" class="pricing-btn-back">
+              <svg class="pricing-icon-device" width="14" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect>
+                <line x1="12" y1="18" x2="12.01" y2="18"></line>
+              </svg>
+              Back to app
+            </a>
+            <button id="btnPortal" class="pricing-btn-manage" type="button" style="display:none">Manage subscription</button>
+            <a id="btnDownloadInvoice" href="#" target="_blank" class="btn btn--secondary" style="display:none; text-decoration:none; font-size:13px; font-weight:600; padding:6px 12px; border-radius:8px;">📄 Download Invoice</a>
+          </div>
+        </div>
+
+        <!-- Dynamic Subscriptions Grid (Pre-rendered for Instant Loading) -->
+        <div id="planGrid" class="pricing-grid">
+          <!-- Solo Plan -->
+          <div class="plan-card plan-card--clickable" data-plan="standard" data-action="checkout">
+            <h3>Solo <span class="plan-card__badge" style="background:#ef4444;color:#fff;font-weight:700;margin-left:4px;">50% OFF</span></h3>
+            <div class="plan-card__price">
+              <span class="plan-card__price-loading" aria-label="Loading price">&hellip;</span><span>/mo + taxes</span>
+            </div>
+            <div class="plan-card__price-sub" style="color: #16a34a; font-weight: 600;">50% special discount &middot; Billed monthly</div>
+            <ul class="plan-card__features" style="margin-bottom: 20px;">
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> 500 credits/month</li>
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> Multi-portal search &amp; live scraper</li>
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> AI fit score &amp; tender analytics</li>
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> Standard email &amp; deadline alerts</li>
+            </ul>
+            <div style="margin-top: auto;">
+              <button type="button" class="btn btn--secondary" style="width: 100%; border-radius: 8px; font-weight: 600; padding: 10px 16px; cursor: pointer;">Subscribe</button>
+            </div>
+          </div>
+          <!-- Teams Plan -->
+          <div class="plan-card plan-card--featured plan-card--clickable" data-plan="advance" data-action="checkout">
+            <h3>Teams <span class="plan-card__badge" style="background:#ef4444;color:#fff;font-weight:700;margin-left:4px;">50% OFF</span> <span class="plan-card__badge" style="background:#2563eb;color:#fff;">Popular</span></h3>
+            <div class="plan-card__price">
+              <span class="plan-card__price-loading" aria-label="Loading price">&hellip;</span><span>/mo + taxes</span>
+            </div>
+            <div class="plan-card__price-sub" style="color: #16a34a; font-weight: 600;">50% special discount &middot; Billed monthly</div>
+            <ul class="plan-card__features" style="margin-bottom: 20px;">
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> 1500 credits/month</li>
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> Unlimited multi-portal search</li>
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> Full AI proposal &amp; bid writer suite</li>
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> Priority alerts &amp; dedicated support</li>
+            </ul>
+            <div style="margin-top: auto;">
+              <button type="button" class="btn btn--primary" style="width: 100%; border-radius: 8px; font-weight: 600; padding: 10px 16px; cursor: pointer;">Subscribe</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Top-up Packs (Cohesive Section) -->
+      <div class="pricing-pack-section" style="margin-top: 3.5rem;">
+        <h2 class="pricing-section-title">Top-up packs</h2>
+        <p style="text-align:center;color:var(--muted);font-size:13.5px;margin:-0.5rem 0 1.5rem">One-time credit bundles — stack with any plan</p>
+        <div id="packGrid" class="pricing-pack-grid">
+          <div class="plan-card plan-card--clickable" data-plan="pack_100" data-action="checkout">
+            <h3>100 Credits Top-up</h3>
+            <div class="plan-card__price"><span class="plan-card__price-loading" aria-label="Loading price">&hellip;</span></div>
+            <ul class="plan-card__features">
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> 100 credits added instantly</li>
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> Works with any plan</li>
+            </ul>
+          </div>
+          <div class="plan-card plan-card--clickable" data-plan="pack_300" data-action="checkout">
+            <h3>300 Credits Top-up</h3>
+            <div class="plan-card__price"><span class="plan-card__price-loading" aria-label="Loading price">&hellip;</span></div>
+            <ul class="plan-card__features">
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> 300 credits added instantly</li>
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> Works with any plan</li>
+            </ul>
+          </div>
+          <div class="plan-card plan-card--clickable" data-plan="pack_1000" data-action="checkout">
+            <h3>1000 Credits Top-up</h3>
+            <div class="plan-card__price"><span class="plan-card__price-loading" aria-label="Loading price">&hellip;</span></div>
+            <ul class="plan-card__features">
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> 1000 credits added instantly</li>
+              <li><svg class="feature-checkbox" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect><path d="M9 12l2 2 4-4" stroke="#22c55e"></path></svg> Works with any plan</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer elements hidden/removed balanceAmt to prevent warnings, keep hidden for JS compatibility -->
+      <div id="balanceBar" style="position: absolute; width: 0; height: 0; overflow: hidden; opacity: 0; pointer-events: none;">
+        <span id="balanceAmt">0</span>
+        <span id="planName">free</span>
+      </div>
+
+      <p class="pricing-footer">
+        <a href="/legal/terms.html">Terms</a> · <a href="/legal/privacy.html">Privacy</a>
+      </p>
+    </main>
+
+    <!-- ══ CUSTOM DIALOG MODALS ══ -->
+    <div id="customAlertModal" class="modal-overlay hidden" role="dialog" aria-modal="true" style="z-index: 20000;">
+      <div class="modal modal--dialog">
+        <div class="modal__header modal__header--dialog">
+          <h2 class="modal__title" id="customAlertTitle">Alert</h2>
+        </div>
+        <div class="modal__body modal__body--dialog" id="customAlertMessage">
+          Alert Message
+        </div>
+        <div class="modal__actions-row" style="margin-top: 16px; justify-content: flex-end; width: 100%;">
+          <button type="button" id="btnCustomAlertOk" class="btn btn--dialog btn--primary" style="min-width: 80px;">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="customConfirmModal" class="modal-overlay hidden" role="dialog" aria-modal="true" style="z-index: 20000;">
+      <div class="modal modal--dialog">
+        <div class="modal__header modal__header--dialog">
+          <h2 class="modal__title" id="customConfirmTitle">Confirm</h2>
+        </div>
+        <div class="modal__body modal__body--dialog" id="customConfirmMessage">
+          Confirm Message?
+        </div>
+        <div class="modal__actions-row" style="margin-top: 16px; justify-content: flex-end; gap: 8px; width: 100%;">
+          <button type="button" id="btnCustomConfirmCancel" class="btn btn--dialog btn--secondary" style="min-width: 80px; background-color: var(--surface-2, #f1f5f9); color: var(--text); border: 1px solid var(--border);">Cancel</button>
+          <button type="button" id="btnCustomConfirmOk" class="btn btn--dialog btn--danger" style="min-width: 80px; background-color: #ef4444; color: white;">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/pricing.js?v=6"></script>
+  </body>
+</html>

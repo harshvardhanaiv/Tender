@@ -1,0 +1,290 @@
+189383: 97. [ID 189383] [len=171 > 120, looks_like_description] 'HW Martin, Amberon Ltd, Hooke Highwyas, Chevron Traffic Management, Sunbelt Rentals, Idverde Ltd, City Traffic Management, Quantum Traffic Mana
+212934: 11. **[ID 212934]** *(len=152)* `Fox Building & Engineering Ltd, Adman Civil Projects Ltd, William & Henry Alexander...`
+189383: 9. **[ID 189383]** *(len=171)* `HW Martin, Amberon Ltd, Hooke Highwyas, Chevron Traffic Management, Sunbelt Rentals...`
+212934: 23. [ID 212934] len=152: 'Fox Building & Engineering Ltd, Adman Civil Projects Ltd, William & Henry Alexander (Civil Engineering) Limited, Lowry Building & Civil Engineering Ltd,'
+181621: C20. [ID 181621] Raw: Hertfordshire Partnership NHS Foundation Trust (RWR)  Principal and/or registered office address: The Colonnades Beaconsfield Close, Hatfield, Hertfordshire. AL10 8YE
+212934: C23. [ID 212934] Raw: Fox Building & Engineering Ltd, Adman Civil Projects Ltd, William & Henry Alexander (Civil Engineering) Limited, Lowry Building & Civil Engineering Ltd,
+189383: C22. [ID 189383] Raw: HW Martin, Amberon Ltd, Hooke Highwyas, Chevron Traffic Management, Sunbelt Rentals, Idverde Ltd, City Traffic Management, Quantum Traffic Management, Safemark Roadmarking
+170292: C19. [ID 170292] Raw: East Yorkshire Motor Services Limited, Procters Coaches (North Yorkshire) Limited, Esk Valley Coaches Limited, Compass Royston Travel Limted,  W Cropper Limited T/A Fourway Coach
+756697: B19. [ID 756697] To Be Confirmed
+181621: C20. [ID 181621] Raw: 'Hertfordshire Partnership NHS Foundation Trust (RWR)  Principal and/or registered office address: The Colonnades Beaconsfield Close, Hatfield, Hertfordshire. AL10 8YE'
+212934: C23. [ID 212934] Raw: 'Fox Building & Engineering Ltd, Adman Civil Projects Ltd, William & Henry Alexander (Civil Engineering) Limited, Lowry Building & Civil Engineering Ltd,'
+189383: C22. [ID 189383] Raw: 'HW Martin, Amberon Ltd, Hooke Highwyas, Chevron Traffic Management, Sunbelt Rentals, Idverde Ltd, City Traffic Management, Quantum Traffic Management, Safemark Roadmarking'
+170292: C19. [ID 170292] Raw: 'East Yorkshire Motor Services Limited, Procters Coaches (North Yorkshire) Limited, Esk Valley Coaches Limited, Compass Royston Travel Limted,  W Cropper Limited T/A Fourway Coac
+165882: 18. **[ID 165882]** `Wirral University Teaching Hospital NHS Foundation Trust, Arrowe Park Hospital, Arrowe Park Road, Upton, Wirral, Merseyside, CH49 5PE`
+181621: 20. **[ID 181621]** `Hertfordshire Partnership NHS Foundation Trust (RWR) Principal and/or registered office address: The Colonnades Beaconsfield Close, Hatfield, Hertfordshire. AL10 8YE`
+150910: 15. **[ID 150910]** `1st JF MCGOVERN CONTRACTS LIMITED, 2nd VALLEY FORESTRY, 3rd SEASONAL OUTDOOR SERVICES LIMITED, 4th ELM FORESTRY AND LANDSCAPING LTD, 5th GARDINER FARM AND FOREST SERVICES, 6th MCG
+150911: 16. **[ID 150911]** `1st SEASONAL OUTDOOR SERVICES LIMITED, 2nd VALLEY FORESTRY, 3rd GARDINER FARM AND FOREST SERVICES, 4th ELM FORESTRY AND LANDSCAPING LTD, 5th LANDSCAPING CENTRE LTD`
+164873: 17. **[ID 164873]** `Fox Building & Engineering Ltd, Adman Civil Projects Ltd, William & Henry Alexander (Civil Engineering) Limited, Lowry Building & Civil Engineering Ltd, Forrme Limited`
+212934: 23. **[ID 212934]** `Fox Building & Engineering Ltd, Adman Civil Projects Ltd, William & Henry Alexander (Civil Engineering) Limited, Lowry Building & Civil Engineering Ltd,`
+189383: 22. **[ID 189383]** `HW Martin, Amberon Ltd, Hooke Highwyas, Chevron Traffic Management, Sunbelt Rentals, Idverde Ltd, City Traffic Management, Quantum Traffic Management, Safemark Roadmarking`
+170292: 19. **[ID 170292]** `East Yorkshire Motor Services Limited, Procters Coaches (North Yorkshire) Limited, Esk Valley Coaches Limited, Compass Royston Travel Limted, W Cropper Limited T/A Fourway Coaches
+756697: - Move ID 756697 "To Be Confirmed" and ID 229940 to list A (junk).
+229940: - Move ID 756697 "To Be Confirmed" and ID 229940 to list A (junk).
+150909: - **[ID 150909]** (1 awards) `'1st VALLEY FORESTRY, 2nd GARDINER FARM AND FOREST SERVICES...'`
+150910: - **[ID 150910]** (1 awards) `'1st JF MCGOVERN CONTRACTS LIMITED, 2nd VALLEY FORESTRY...'`
+150911: - **[ID 150911]** (1 awards) `'1st SEASONAL OUTDOOR SERVICES LIMITED, 2nd VALLEY FORESTRY...'`
+164873: - **[ID 164873]** (1 awards) `'Fox Building & Engineering Ltd, Adman Civil Projects Ltd...'`
+212934: - **[ID 212934]** (1 awards) `'Fox Building & Engineering Ltd, Adman Civil Projects Ltd...'`
+189383: - **[ID 189383]** (1 awards) `'HW Martin, Amberon Ltd, Hooke Highwyas, Chevron Traffic Management...'`
+170292: - **[ID 170292]** (1 awards) `'East Yorkshire Motor Services Limited, Procters Coaches...'`
+142077: - **[ID 142077]** (1 awards) `'Generali, Generali, Swiss Re, RSA, QBE, QBE, QBE, QBE, Zurich...'`
+156330: - **[ID 156330]** (1 awards) `'1. Legal & General Affordable Homes Limited - CH no: 11223470 2. Legal & General...'`
+138451: - **[ID 138451]** (1 awards) `'WORLDPAY (UK) LIMITED (Company No. 07316500), WORLDPAY LIMITED...'`
+152677: ID 152677, `HSO - Herts Schools Outreach (UK) CIC (…Consortium)`, is in A. It is a real organisation, so it should be kept (B) or unlinked, not deleted.
+152677: 1. Ask Antigravity to move ID 152677 out of A, and to add it to the cleanup test.
+152677: B04. [ID 152677] (1 awards) 'HSO - Herts Schools Outreach (UK) CIC (HSO � Herts Schools Outreach (UK) CIC and NESHertfordhsireSie IN ED CIC � Consortium)'
+756697: A54. [ID 756697] (1 awards) 'To Be Confirmed'
+181621: A56. [ID 181621] (1 awards) 'Hertfordshire Partnership NHS Foundation Trust (RWR)  Principal and/or registered office address: The Colonnades Beaconsfield Close, Hatfield, Hertfordshire. AL10 8YE'
+152677: [ID 152677] HSO - Herts Schools Outreach (UK) CIC (HSO ? Herts Schools Outreach (UK) CIC and NESHertfordhsireSie IN ED CIC ? Consortium)
+152677: B04. [ID 152677] (0 awards)
+152677: Before live: the ID-based rules (FORCED_JUNK_IDS, MULTI_CO_IDS, FORCED_KEEP_B_IDS, the protected ID 152677, etc.) use LOCAL ids, which may not match live. Change them so each rule also requires the su
+756697: modifying the cleanup script, especially concerning Item 3, which deals with moving ID 756697, \"To Be Confirmed,\"
+756697: assignments based on manual review\n24: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital
+756697: 756697: '\\r\\nA55. [ID 181201] (1 awards) '
+229940: 229940: None
+165882: 165882: None
+181621: 181621: '\\r\\n       Extracted Companies: ['
+152677: 152677: '\\r\\n  B05. [ID 143056] (1 awards) '
+150909: 142077: '`\\n- **[ID 150909]** (1 awards) `'
+150909: 150909: '`\\n- **[ID 150910]** (1 awards) `'
+150910: 150909: '`\\n- **[ID 150910]** (1 awards) `'
+150910: 150910: '`\\n- **[ID 150911]** (1 awards) `'
+150911: 150910: '`\\n- **[ID 150911]** (1 awards) `'
+150911: 150911: '`\\n- **[ID 164873]** (1 awards) `'
+164873: 150911: '`\\n- **[ID 164873]** (1 awards) `'
+164873: 164873: '`\\n- **[ID 170292]** (1 awards) `'
+212934: 212934: '\\r\\n      Extracted Companies: ['
+189383: 189383: '\\r\\n 98. [ID 190382] [len=128 > 120, looks_like_description] '
+170292: 164873: '`\\n- **[ID 170292]** (1 awards) `'
+170292: 170292: '\\r\\n       Extracted Companies: ['
+142077: 142077: '`\\n- **[ID 150909]** (1 awards) `'
+142077: 156330: '`\\n- **[ID 142077]** (1 awards) `'
+156330: 138451: '`\\n- **[ID 156330]** (1 awards) `'
+156330: 156330: '`\\n- **[ID 142077]** (1 awards) `'
+138451: 138451: '`\\n- **[ID 156330]** (1 awards) `'
+756697: ID 756697: 756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers\n+FORCED_KEEP_B_IDS = {152677}  # HSO - Herts Schools Outreach (UK) CIC\n LOT_SCORE_IDS = {133816, 133827, 13383
+165882: ID 165882: 165882, 181621}  # TBC, prose, hospital trust address buyers\n25: LOT_SCORE_IDS = {133816, 133827, 133835, 133840, 133849, 133850, 133862, 133866, 133870, 187591}\n26: MULTI_CO_IDS = {15090
+165882: ID 756697: 756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers\n+FORCED_KEEP_B_IDS = {152677}  # HSO - Herts Schools Outreach (UK) CIC\n LOT_SCORE_IDS = {133816, 133827, 13383
+165882: ID 165882: 165882, 181621}  # TBC, prose, hospital trust address buyers\n+FORCED_KEEP_B_IDS = {152677}  # HSO - Herts Schools Outreach (UK) CIC\n LOT_SCORE_IDS = {133816, 133827, 133835, 133840, 13384
+152677: ID 152677: 152677}` to `scripts/supplier_name_cleanup.py`. My plan is to return `\"B\"` if `sid` is in `FORCED_KEEP_B_IDS`. Additionally, in the `classify_supplier` function, I am considering incorpor
+152677: ID 756697: 756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers\n+FORCED_KEEP_B_IDS = {152677}  # HSO - Herts Schools Outreach (UK) CIC\n LOT_SCORE_IDS = {133816, 133827, 13383
+152677: ID 165882: 165882, 181621}  # TBC, prose, hospital trust address buyers\n+FORCED_KEEP_B_IDS = {152677}  # HSO - Herts Schools Outreach (UK) CIC\n LOT_SCORE_IDS = {133816, 133827, 133835, 133840, 13384
+152677: ID 152677: 152677 name to test_category_b_example_names_never_deleted in test_supplier_name_cleanup.py\"","EndLine":"34","Instruction":"\"Add HSO - Herts Schools Outreach (UK) CIC to example_b_names\"
+150909: ID 165882: 165882, 181621}  # TBC, prose, hospital trust address buyers\n25: LOT_SCORE_IDS = {133816, 133827, 133835, 133840, 133849, 133850, 133862, 133866, 133870, 187591}\n26: MULTI_CO_IDS = {15090
+150909: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name
+150910: ID 165882: 165882, 181621}  # TBC, prose, hospital trust address buyers\n25: LOT_SCORE_IDS = {133816, 133827, 133835, 133840, 133849, 133850, 133862, 133866, 133870, 187591}\n26: MULTI_CO_IDS = {15090
+150910: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\"\"
+150910: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name
+150910: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        
+150911: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\"\"
+150911: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\"\"\"\n30: 
+150911: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name
+150911: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        
+150911: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \
+164873: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\"\"
+164873: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\"\"\"\n30: 
+164873: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name
+164873: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n
+164873: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        
+164873: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \
+212934: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\"\"
+212934: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\"\"\"\n30: 
+212934: ID 212934: 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n    if not name:
+212934: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name
+212934: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n
+212934: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        
+212934: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \
+189383: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\"\"
+189383: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\"\"\"\n30: 
+189383: ID 212934: 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n    if not name:
+189383: ID 189383: 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n    if not name:\\n     
+189383: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name
+189383: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n
+189383: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        
+189383: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \
+142077: ID 142077: 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\"\"\"\n30:     if not name:\n31:         return \"\
+142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\"\"
+142077: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\"\"\"\n30: 
+142077: ID 212934: 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n    if not name:
+142077: ID 189383: 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n    if not name:\\n     
+142077: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name
+142077: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n
+142077: 92: 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \"B\"\n     if sid and sid in FORCED_JUN
+142077: ID 142077: 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \"B\"\n     if sid and sid in FORCED_JUNK
+142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        
+142077: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \
+756697: 15: 756697: To Be Confirmed
+229940: 14: 229940: None
+165882: 9: 165882: Wirral University Teaching Hospital NHS Foundation Trust, Arrowe Park Hospital, Arrowe Park Road, Upton, Wirral, Merseyside, CH49 5PE
+181621: 11: 181621: Hertfordshire Partnership NHS Foundation Trust (RWR)  Principal and/or registered office address: The Colonnades Beaconsfield Close, Hatfield, Hertfordshire. AL10 8YE
+152677: 6: 152677: HSO - Herts Schools Outreach (UK) CIC (HSO � Herts Schools Outreach (UK) CIC and NESHertfordhsireSie IN ED CIC � Consortium)
+150909: 3: 150909: 1st VALLEY FORESTRY, 2nd GARDINER FARM AND FOREST SERVICES...
+150910: 4: 150910: 1st JF MCGOVERN CONTRACTS LIMITED, 2nd VALLEY FORESTRY, 3rd SEASONAL OUTDOOR SERVICES LIMITED, 4th ELM FORESTRY AND LANDSCAPING LTD, 5th GARDINER FARM AND FOREST SERVICES, 6th MCGRATH CONTR
+150911: 5: 150911: 1st SEASONAL OUTDOOR SERVICES LIMITED, 2nd VALLEY FORESTRY, 3rd GARDINER FARM AND FOREST SERVICES, 4th ELM FORESTRY AND LANDSCAPING LTD, 5th LANDSCAPING CENTRE LTD
+164873: 8: 164873: Fox Building & Engineering Ltd, Adman Civil Projects Ltd, William & Henry Alexander (Civil Engineering) Limited, Lowry Building & Civil Engineering Ltd, Forrme Limited
+212934: 13: 212934: Fox Building & Engineering Ltd, Adman Civil Projects Ltd, William & Henry Alexander...
+189383: 12: 189383: HW Martin, Amberon Ltd, Hooke Highwyas, Chevron Traffic Management, Sunbelt Rentals, Idverde Ltd, City Traffic Management, Quantum Traffic Management, Safemark Roadmarking
+170292: 10: 170292: East Yorkshire Motor Services Limited, Procters Coaches (North Yorkshire) Limited, Esk Valley Coaches Limited, Compass Royston Travel Limted,  W Cropper Limited T/A Fourway Coaches
+142077: 2: 142077: Generali, Generali, Swiss Re, RSA, QBE, QBE, QBE, QBE, Zurich...
+156330: 7: 156330: 1. Legal & General Affordable Homes Limited - CH no: 11223470 2. Legal & General...
+138451: 1: 138451: WORLDPAY (UK) LIMITED (Company No. 07316500), WORLDPAY LIMITED...
+756697: 15: 756697:::To Be Confirmed\
+229940: 14: 229940:::R<digits><letter>: ...\
+165882: 9: 165882:::apply\
+181621: 11: 181621:::Hertfordshire Partnership NHS Foundation Trust (RWR)  Principal and/or registered office address
+152677: 6: 152677:::t touched live. The old caveats stand: the framework back-fill (C2) is not done, and the 21,221 awards over £250m include frameworks, so the stats ceiling still hides them correctly.\n</US
+150909: 3: 150909:::Extracted\
+150910: 4: 150910:::apply\
+150911: 5: 150911:::apply\
+164873: 8: 164873:::apply\
+212934: 13: 212934:::Fox Building & Engineering Ltd, Adman Civil Projects Ltd, William & Henry Alexander (Civil Engineering) Limited, Lowry Building & Civil Engineering Ltd,
+189383: 12: 189383:::HW Martin, Amberon Ltd, Hooke Highwyas, Chevron Traffic Management, Sunbelt Rentals, Idverde Ltd, City Traffic Management, Quantum Traffic Management, Safemark Roadmarking
+170292: 10: 170292:::East Yorkshire Motor Services Limited
+142077: 2: 142077:::Extracted\
+156330: 7: 156330:::Extracted\
+138451: 1: 138451:::Extracted\
+756697: 15: 756697 -> 15: 756697:::To Be Confirmed\
+229940: 14: 229940 -> 14: 229940:::R<digits><letter>: ...\
+165882: 9: 165882 -> 9: 165882:::apply\
+181621: 11: 181621 -> 11: 181621:::Hertfordshire Partnership NHS Foundation Trust (RWR)  Principal and/or registered office address
+152677: 6: 152677 -> 6: 152677:::t touched live. The old caveats stand: the framework back-fill (C2) is not done, and the 21,221 awards over £250m include frameworks, so the stats ceiling still hides them cor
+150909: 3: 150909 -> 3: 150909:::Extracted\
+150910: 4: 150910 -> 4: 150910:::apply\
+150911: 5: 150911 -> 5: 150911:::apply\
+164873: 8: 164873 -> 8: 164873:::apply\
+212934: 13: 212934 -> 13: 212934:::Fox Building & Engineering Ltd, Adman Civil Projects Ltd, William & Henry Alexander (Civil Engineering) Limited, Lowry Building & Civil Engineering Ltd,
+189383: 12: 189383 -> 12: 189383:::HW Martin, Amberon Ltd, Hooke Highwyas, Chevron Traffic Management, Sunbelt Rentals, Idverde Ltd, City Traffic Management, Quantum Traffic Management, Safemark Roadmarking
+170292: 10: 170292 -> 10: 170292:::East Yorkshire Motor Services Limited
+142077: 2: 142077 -> 2: 142077:::Extracted\
+156330: 7: 156330 -> 7: 156330:::Extracted\
+138451: 1: 138451 -> 1: 138451:::Extracted\
+756697: ID 756697:    - Test that calling `classify_supplier(sid=756697, name="Real Company Ltd")` or `classify_supplier(sid=189383, name="Safe Single Contractor Ltd")` does NOT classify as `A` or `C`, but pr
+756697: ID 189383:    - Test that calling `classify_supplier(sid=756697, name="Real Company Ltd")` or `classify_supplier(sid=189383, name="Safe Single Contractor Ltd")` does NOT classify as `A` or `C`, but pr
+756697: ID 756697: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+756697: ID 229940: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+756697: ID 165882: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+756697: ID 181621: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+229940: ID 756697: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+229940: ID 229940: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+229940: ID 165882: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+229940: ID 181621: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+165882: ID 756697: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+165882: ID 229940: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+165882: ID 165882: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+165882: ID 181621: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+181621: ID 756697: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+181621: ID 229940: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+181621: ID 165882: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+181621: ID 181621: 27: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+150909: ID 142077: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from su
+150910: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplie
+150910: ID 142077: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from su
+150910: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n
+150910: ID 138451: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:
+150911: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplie
+150911: ID 142077: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\
+150911: ID 142077: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from su
+150911: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n
+150911: ID 138451: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:
+150911: ID 138451: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+     
+164873: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplie
+164873: ID 142077: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\
+164873: ID 142077: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from su
+164873: ID 142077: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"
+164873: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n
+164873: ID 138451: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"
+164873: ID 138451: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:
+164873: ID 138451: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+     
+212934: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplie
+212934: ID 142077: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\
+212934: ID 142077: ID 212934: 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n    i
+212934: ID 142077: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from su
+212934: ID 142077: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"
+212934: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n
+212934: ID 138451: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"
+212934: ID 138451: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:
+212934: ID 138451: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+     
+189383: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplie
+189383: ID 142077: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\
+189383: ID 142077: ID 212934: 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n    i
+189383: ID 142077: ID 189383: 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n    if not na
+189383: ID 142077: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from su
+189383: ID 142077: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"
+189383: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n
+189383: ID 138451: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"
+189383: ID 138451: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:
+189383: ID 138451: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+     
+189383: ID 756697:    - Test that calling `classify_supplier(sid=756697, name="Real Company Ltd")` or `classify_supplier(sid=189383, name="Safe Single Contractor Ltd")` does NOT classify as `A` or `C`, but pr
+189383: ID 189383:    - Test that calling `classify_supplier(sid=756697, name="Real Company Ltd")` or `classify_supplier(sid=189383, name="Safe Single Contractor Ltd")` does NOT classify as `A` or `C`, but pr
+142077: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplie
+142077: ID 142077: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\
+142077: ID 142077: ID 212934: 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n    i
+142077: ID 142077: ID 189383: 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n    if not na
+142077: ID 142077: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from su
+142077: ID 142077: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"
+142077: ID 142077: 92: 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \"B\"\n     if sid and sid in
+142077: ID 142077: ID 142077: 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \"B\"\n     if sid and sid in 
+142077: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n
+142077: ID 138451: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"
+142077: ID 138451: 92: 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \"B\"\n     if sid and sid in
+142077: ID 138451: ID 142077: 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \"B\"\n     if sid and sid in 
+142077: ID 138451: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:
+142077: ID 138451: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+     
+138451: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplie
+138451: ID 142077: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n27: \n28: def clean_lot_score_name(name: str) -> str:\n29:     \"\"\"Strips lot-score suffix from supplier name.\
+138451: ID 142077: ID 212934: 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n    i
+138451: ID 142077: ID 189383: 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"\\n    if not na
+138451: ID 142077: ID 150909: 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from su
+138451: ID 142077: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"
+138451: ID 142077: 92: 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \"B\"\n     if sid and sid in
+138451: ID 142077: ID 142077: 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \"B\"\n     if sid and sid in 
+138451: ID 142077: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n
+138451: ID 138451: ID 164873: 164873, 212934, 189383, 170292, 142077, 156330, 138451}\\n\\ndef clean_lot_score_name(name: str) -> str:\\n    \\\"\\\"\\\"Strips lot-score suffix from supplier name.\\\"\\\"\\\"
+138451: ID 138451: 92: 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \"B\"\n     if sid and sid in
+138451: ID 138451: ID 142077: 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+        return \"B\"\n     if sid and sid in 
+138451: ID 138451: ID 150910: 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:
+138451: ID 138451: ID 150911: 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\n \n@@ -37,6 +37,8 @@\n         name = sid\n         sid = 0\n \n+    if sid and sid in FORCED_KEEP_B_IDS:\n+     
+756697: [2956] 24: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital
+756697: [2956] assignments based on manual review\n24: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital
+756697: [2957] ids = [756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451]\
+756697: [2957] {'name': 'run_command', 'args': {'CommandLine': '"python -c \\"\\nimport json\\n\\nids = [756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077,
+756697: [2959] target_ids = {756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\
+756697: [2959] {'name': 'write_to_file', 'args': {'CodeContent': '"import re\\n\\ntarget_ids = {756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 
+756697: [2963] {'name': 'write_to_file', 'args': {'CodeContent': '"import json\\nimport re\\n\\ntarget_ids = {756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 14
+756697: ID 756697: 756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+165882: [2956] 24: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital
+165882: [2956] assignments based on manual review\n24: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital
+165882: [2957] ids = [756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451]\
+165882: [2957] {'name': 'run_command', 'args': {'CommandLine': '"python -c \\"\\nimport json\\n\\nids = [756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077,
+165882: [2959] target_ids = {756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\
+165882: [2959] {'name': 'write_to_file', 'args': {'CodeContent': '"import re\\n\\ntarget_ids = {756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 
+165882: [2963] {'name': 'write_to_file', 'args': {'CodeContent': '"import json\\nimport re\\n\\ntarget_ids = {756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 14
+165882: ID 165882: 165882, 181621}  # TBC, prose, hospit
+165882: ID 756697: 756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+165882: ID 165882: 165882, 181621}  # TBC, prose, hospital trust address buyers
+165882: [2966] ID 165882: 165882, 181621}  # TBC, prose, hospital trust address buyers\n25: LOT_SCORE_IDS = {133816, 133827, 133835, 133840, 133849, 133850, 1338
+181621: [2956] 24: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital
+181621: [2956] assignments based on manual review\n24: FORCED_JUNK_IDS = {756697, 229940, 165882, 181621}  # TBC, prose, hospital
+181621: [2957] ids = [756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451]\
+181621: [2957] {'name': 'run_command', 'args': {'CommandLine': '"python -c \\"\\nimport json\\n\\nids = [756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077,
+181621: [2959] target_ids = {756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\
+181621: [2959] {'name': 'write_to_file', 'args': {'CodeContent': '"import re\\n\\ntarget_ids = {756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 
+181621: 181621: '\\r\
+181621: [2962] 181621: '\\r\\n       Extracted Companies: ['
+181621: [2963] {'name': 'write_to_file', 'args': {'CodeContent': '"import json\\nimport re\\n\\ntarget_ids = {756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 14
+181621: ID 165882: 165882, 181621}  # TBC, prose, hospit
+181621: ID 756697: 756697, 229940, 165882, 181621}  # TBC, prose, hospital trust address buyers
+181621: ID 165882: 165882, 181621}  # TBC, prose, hospital trust address buyers
+181621: [2966] ID 165882: 165882, 181621}  # TBC, prose, hospital trust address buyers\n25: LOT_SCORE_IDS = {133816, 133827, 133835, 133840, 133849, 133850, 1338
+152677: [2957] ids = [756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451]\
+152677: [2957] {'name': 'run_command', 'args': {'CommandLine': '"python -c \\"\\nimport json\\n\\nids = [756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077,
+152677: [2959] target_ids = {756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 138451}\
+152677: [2959] {'name': 'write_to_file', 'args': {'CodeContent': '"import re\\n\\ntarget_ids = {756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 142077, 156330, 
+152677: [2963] {'name': 'write_to_file', 'args': {'CodeContent': '"import json\\nimport re\\n\\ntarget_ids = {756697, 229940, 165882, 181621, 152677, 150909, 150910, 150911, 164873, 212934, 189383, 170292, 14
+152677: 676] ID 152677, `HSO - Herts Schools Outreach (UK) CIC (�Consortium)`, is in A. It is a real organisation, so it should be kept (B) or unlinked, not deleted.
+152677: [1676] 1. Ask Antigravity to move ID 152677 out of A, and to add it to the cleanup test.
+152677: [1679] {'name': 'replace_file_content', 'args': {'AllowMultiple': 'false', 'Description': '"Add FORCED_KEEP_B_IDS for ID 152677 in supplier_name_cleanup.py"', 'EndLine': '48', 'Instruction': '"Add FOR
+152677: [1679] FORCED_KEEP_B_IDS = {152677}  # HSO - Herts Schools Outreach (UK) CIC\
+152677: [1680] +FORCED_KEEP_B_IDS = {152677}  # HSO - Herts Schools Outreach (UK) CIC
+152677: [1685] {'name': 'replace_file_content', 'args': {'AllowMultiple': 'false', 'Description': '"Add ID 152677 name to test_category_b_example_names_never_deleted in test_supplier_name_cleanup.py"', 'EndLi

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>Admin — TenderFlow</title>
+    <link rel="stylesheet" href="/styles.css?v=124" />
+    <style>
+      body { padding: 2rem; max-width: 1000px; margin: 0 auto; }
+      .table-wrap { overflow-x: auto; }
+      dialog { border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 20px; max-width: 92vw; }
+      dialog input { width: 100%; padding: 10px; margin: 10px 0 16px; font-size: 16px; box-sizing: border-box; }
+      dialog menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; margin: 0; }
+      button { min-height: 36px; }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; }
+      th, td { border: 1px solid var(--border, #e2e8f0); padding: 8px; text-align: left; }
+      th { background: var(--surface-2, #f8fafc); }
+    </style>
+  </head>
+  <body>
+    <p><a href="/">← App</a> · <a href="/pricing.html">Pricing</a></p>
+    <h1>Admin</h1>
+    <p id="status">Loading…</p>
+    <div class="table-wrap"><table id="usersTable" style="display:none">
+      <thead>
+        <tr><th>User</th><th>Email</th><th>Balance</th><th>Plan</th><th>Status</th><th>Adjust</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table></div>
+    <dialog id="creditDialog">
+      <form method="dialog">
+        <label for="creditAmount" id="creditLabel"></label>
+        <input id="creditAmount" type="number" step="1" value="50" required />
+        <menu><button value="cancel" formnovalidate>Cancel</button><button value="ok" id="creditOk">Apply</button></menu>
+      </form>
+    </dialog>
+    <script>
+      let csrf = sessionStorage.getItem("tf_csrf") || "";
+      async function api(path, opts = {}) {
+        const h = { "Content-Type": "application/json", ...(opts.headers || {}) };
+        if (csrf && opts.method && opts.method !== "GET") h["X-CSRF-Token"] = csrf;
+        const r = await fetch(path, { ...opts, headers: h });
+        if (r.status === 401) location.href = "/login.html";
+        if (r.status === 403) { document.getElementById("status").textContent = "Forbidden — not an admin."; return null; }
+        return r.json();
+      }
+      const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      function askCredits(username) {
+        // In-page dialog instead of window.prompt(), which blocks the tab and can't be styled.
+        return new Promise((resolve) => {
+          const dlg = document.getElementById("creditDialog");
+          document.getElementById("creditLabel").textContent = `Credits to add for ${username} (negative to deduct):`;
+          dlg.addEventListener("close", () => {
+            resolve(dlg.returnValue === "ok" ? parseInt(document.getElementById("creditAmount").value, 10) : null);
+          }, { once: true });
+          dlg.showModal();
+        });
+      }
+      async function grant(username) {
+        const n = await askCredits(username);
+        if (!n) return;
+        await api("/api/admin/credits", { method: "POST", body: JSON.stringify({ username, amount: n, reason: "admin_adjustment" }) });
+        load();
+      }
+      async function load() {
+        const me = await api("/api/me");
+        if (me?.csrf_token) { csrf = me.csrf_token; sessionStorage.setItem("tf_csrf", csrf); }
+        const data = await api("/api/admin/users");
+        if (!data?.ok) return;
+        document.getElementById("status").textContent = `${data.users.length} users`;
+        const tb = document.querySelector("#usersTable tbody");
+        tb.innerHTML = "";
+        for (const u of data.users) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${esc(u.username)}</td><td>${esc(u.email)}</td><td>${esc(u.balance)}</td><td>${esc(u.plan)}</td><td>${esc(u.status)}</td>
+            <td><button data-user="${esc(u.username)}">+/- credits</button></td>`;
+          tb.appendChild(tr);
+        }
+        document.getElementById("usersTable").style.display = "table";
+      }
+      document.querySelector("#usersTable tbody").addEventListener("click", (e) => {
+        const btn = e.target.closest("button[data-user]");
+        if (btn) grant(btn.dataset.user);
+      });
+      load();
+    </script>
+  </body>
+</html>

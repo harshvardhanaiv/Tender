@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Sign in to TenderFlow to search UK, Irish and international public-sector tenders, track deadlines and win more bids." />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>Sign in — TenderFlow</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("tf_theme");
+          if (!t && window.matchMedia("(prefers-color-scheme: dark)").matches) t = "dark";
+          if (t) document.documentElement.setAttribute("data-theme", t);
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
+    <style>
+      :root {
+        --ink: #0C1D30;
+        --slate: #4A5C70;
+        --mute: #7A8899;
+        --line: #DCE2E9;
+        --paper: #F3F6F8;
+        --panel: #FFFFFF;
+        --accent: #4F46E5;
+        --accent-hover: #4338CA;
+        --pos: #1B7A4B;
+        --pos-soft: #E4F5EC;
+        --neg: #AE3A2E;
+        --neg-soft: #FBEAE8;
+        --head-bg: #0C1D30;
+        --radius-card: 16px;
+        --radius-field: 10px;
+        --font-display: 'Outfit', 'Segoe UI', sans-serif;
+        --font-sans: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+      }
+      :root[data-theme="dark"] {
+        --ink: #E4EBF2;
+        --slate: #B3C0CE;
+        --mute: #8395A8;
+        --line: #243548;
+        --paper: #0A1521;
+        --panel: #101E2D;
+        --accent: #8B85FF;
+        --accent-hover: #756DFF;
+        --pos: #58C08A;
+        --pos-soft: #12301F;
+        --neg: #E07A6E;
+        --neg-soft: #2E1714;
+        --head-bg: #060E17;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { height: 100%; overflow: hidden; }
+      html { color-scheme: light dark; }
+      body {
+        font-family: var(--font-sans);
+        background: var(--paper);
+        color: var(--ink);
+        display: flex;
+        transition: background 0.2s ease, color 0.2s ease;
+      }
+
+      /* ── Left: visual/marketing panel (echoes the app's masthead colours) ── */
+      .login-visual {
+        flex: 1 1 56%;
+        position: relative;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 20% 10%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 45%),
+          linear-gradient(160deg, var(--head-bg) 0%, #132840 100%);
+        border-right: 3px solid var(--accent);
+        padding: 48px;
+        display: flex; flex-direction: column; justify-content: space-between;
+      }
+      .login-visual__brand { display: flex; align-items: center; gap: 10px; }
+      .login-visual__brand .brand-title { font-size: 19px; color: #FFFFFF; }
+      .login-visual__brand .brand-title-flow { color: color-mix(in srgb, var(--accent) 55%, #FFFFFF); }
+      .login-visual__stage { position: relative; flex: 1; min-height: 0; }
+      .float-card {
+        position: absolute;
+        background: rgba(255,255,255,0.85); backdrop-filter: blur(6px);
+        border: 1px solid rgba(255,255,255,0.9); border-radius: 14px;
+        box-shadow: 0 10px 30px rgba(79,70,229,0.12);
+        padding: 14px 16px;
+      }
+      .float-card--stat { top: 8%; left: 0; width: 170px; }
+      .float-card--stat .stat-label { font-size: 11px; color: var(--slate); display: flex; justify-content: space-between; align-items: center; }
+      .float-card--stat .stat-up { color: var(--pos); font-weight: 700; }
+      .float-card--stat .stat-num { font-size: 24px; font-weight: 800; font-family: var(--font-display); color: var(--ink); margin-top: 2px; }
+      .float-card--stat .stat-bar { height: 4px; border-radius: 4px; background: var(--line); margin-top: 8px; overflow: hidden; }
+      .float-card--stat .stat-bar span { display: block; height: 100%; width: 78%; background: var(--accent); border-radius: 4px; }
+
+      .float-card--status { top: 4%; right: 0; width: 190px; }
+      .float-card--status .status-title { font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; color: var(--slate); display: flex; justify-content: space-between; align-items: center; }
+      .float-card--status .status-title b { color: var(--ink); }
+      .float-card--status .status-row { display: flex; justify-content: space-between; font-size: 11px; margin-top: 9px; color: var(--slate); }
+      .float-card--status .status-row .status-bar { flex: 1; height: 4px; border-radius: 4px; background: var(--line); margin: 0 8px; overflow: hidden; align-self: center; }
+      .float-card--status .status-bar span { display: block; height: 100%; background: #16a34a; border-radius: 4px; }
+
+      .float-card--ingest { bottom: 14%; left: 6%; width: 260px; }
+      .float-card--ingest .ingest-title { display: flex; justify-content: space-between; align-items: center; font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; color: var(--slate); margin-bottom: 10px; }
+      .live-dot { display: inline-flex; align-items: center; gap: 5px; color: #16a34a; font-weight: 700; }
+      .live-dot::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,0.18); }
+      .ingest-sources { display: flex; flex-direction: column; gap: 5px; }
+      .ingest-sources li { list-style: none; font-size: 11px; color: var(--ink); display: flex; align-items: center; gap: 6px; }
+      .ingest-sources li::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+      .ingest-hub { position: absolute; right: 14px; bottom: 14px; width: 44px; height: 44px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; box-shadow: 0 8px 18px rgba(79,70,229,0.35); }
+      .ingest-hub small { font-size: 8px; font-weight: 600; opacity: 0.85; }
+
+      .float-card--gauge { bottom: 30%; right: 6%; width: 128px; text-align: center; }
+      .gauge-ring { width: 62px; height: 62px; margin: 0 auto 6px; border-radius: 50%; background: conic-gradient(var(--accent) 0% 82%, var(--line) 82% 100%); display: flex; align-items: center; justify-content: center; }
+      .gauge-ring span { width: 46px; height: 46px; border-radius: 50%; background: rgba(255,255,255,0.92); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; color: var(--ink); }
+      .float-card--gauge .gauge-label { font-size: 10.5px; color: var(--slate); font-weight: 600; }
+
+      .login-visual__copy h2 { font-family: var(--font-display); font-size: 27px; font-weight: 800; color: #FFFFFF; letter-spacing: -0.01em; margin-bottom: 8px; }
+      .login-visual__copy p { font-size: 14px; color: rgba(255,255,255,0.68); max-width: 380px; line-height: 1.5; }
+
+      @media (max-width: 880px) {
+        .login-visual { display: none; }
+      }
+
+      /* ── Right: form panel ────────────────────────────────────────────── */
+      .login-form-panel {
+        flex: 1 1 44%;
+        min-width: 360px;
+        display: flex; align-items: center; justify-content: center;
+        padding: 24px;
+        background: var(--panel);
+      }
+      .login-container { width: 100%; max-width: 380px; }
+      .login-card {
+        display: flex; flex-direction: column; gap: 16px;
+      }
+      .header { text-align: center; }
+      .brand-container { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 6px; }
+      .brand-title { font-size: 21px; font-weight: 800; letter-spacing: -0.02em; font-family: var(--font-display); color: var(--ink); line-height: 1; }
+      .brand-title-flow { color: var(--accent); }
+      .lang-row { margin-bottom: 18px; display: flex; justify-content: center; gap: 10px; }
+      .lang-opt { color: var(--mute); text-decoration: none; font-size: 12.5px; font-weight: 600; letter-spacing: 0.02em; }
+      .lang-opt.active, .lang-opt:hover { color: var(--accent); }
+      .lang-sep { color: var(--line); }
+      .header h1 {
+        font-size: 22px; font-weight: 700; margin-bottom: 6px;
+        font-family: var(--font-display); color: var(--ink);
+      }
+      .header p { font-size: 13.5px; color: var(--slate); }
+      .form-group { display: flex; flex-direction: column; gap: 6px; }
+      .form-group label {
+        font-size: 12px; font-weight: 600; color: var(--slate);
+      }
+      .input-wrapper { position: relative; }
+      .input-wrapper input {
+        width: 100%; background: var(--paper);
+        border: 1.5px solid var(--line); border-radius: var(--radius-field);
+        padding: 11px 14px; color: var(--ink); font-family: var(--font-sans); font-size: 14px; outline: none;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+      .input-wrapper input::placeholder { color: var(--mute); }
+      .input-wrapper input#password { padding-right: 44px; }
+      .input-wrapper input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+      .pwd-toggle-btn {
+        position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+        background: transparent; border: none; color: var(--mute);
+        cursor: pointer; padding: 6px; border-radius: 8px;
+        display: flex; align-items: center; justify-content: center;
+        transition: all 0.15s ease; outline: none;
+      }
+      .pwd-toggle-btn:hover:not(:disabled) { color: var(--ink); background: var(--paper); }
+      .pwd-toggle-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+      .copy-toast {
+        position: absolute; right: 42px; top: 50%; transform: translateY(-50%);
+        background: var(--ink); color: var(--panel); font-size: 11px; font-weight: 600;
+        padding: 3px 8px; border-radius: 6px; opacity: 0; pointer-events: none;
+        transition: opacity 0.2s ease; white-space: nowrap;
+      }
+      .copy-toast.show { opacity: 1; }
+      .btn {
+        border: 1.5px solid var(--line); border-radius: var(--radius-field); font-size: 14px; font-weight: 600;
+        padding: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+        font-family: var(--font-sans); transition: all 0.15s ease;
+      }
+      .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      .btn-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+      .btn-google { background: var(--panel); color: var(--ink); }
+      .btn-google:hover:not(:disabled) { background: var(--paper); }
+      .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+      .divider { text-align: center; color: var(--mute); font-size: 12.5px; position: relative; }
+      .divider::before, .divider::after {
+        content: ''; position: absolute; top: 50%; width: 38%; height: 1px; background: var(--line);
+      }
+      .divider::before { left: 0; } .divider::after { right: 0; }
+      .error-msg {
+        background: var(--neg-soft); border: 1px solid var(--neg);
+        color: var(--neg); font-size: 13px; padding: 10px 14px; border-radius: var(--radius-field); display: none;
+      }
+      .success-msg {
+        background: var(--pos-soft); border: 1px solid var(--pos);
+        color: var(--pos); font-size: 13px; padding: 10px 14px; border-radius: var(--radius-field); display: none;
+      }
+      .toggle-mode { text-align: center; font-size: 13.5px; color: var(--slate); }
+      .toggle-mode a { color: var(--accent); text-decoration: none; font-weight: 600; cursor: pointer; }
+      .forgot { text-align: right; font-size: 12.5px; }
+      .forgot a { color: var(--accent); text-decoration: none; cursor: pointer; }
+      .signup-only { max-height: 0; overflow: hidden; opacity: 0; transition: all 0.3s; }
+      .show-signup .signup-only { max-height: 120px; opacity: 1; margin-top: 0; }
+      .legal { text-align: center; font-size: 11.5px; color: var(--mute); }
+      .legal a { color: var(--slate); }
+      /* Touch targets: grow the hit area without moving the visible layout. */
+      .lang-opt { display: inline-block; padding: 8px 6px; margin: -8px -6px; }
+      .forgot a, .toggle-mode a, .legal a { display: inline-block; padding: 9px 4px; margin: -9px -4px; }
+      .pwd-toggle-btn { min-width: 36px; min-height: 36px; }
+      a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    </style>
+    <script src="/translations.js"></script>
+  </head>
+  <body>
+    <div class="login-visual">
+      <div class="login-visual__brand">
+        <svg class="brand-logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" width="28" height="28">
+          <defs>
+            <linearGradient id="visualBrandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#6366f1" />
+              <stop offset="100%" stop-color="#4f46e5" />
+            </linearGradient>
+          </defs>
+          <rect width="32" height="32" rx="7" fill="url(#visualBrandGrad)" />
+          <circle cx="14" cy="14" r="5.5" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+          <line x1="18" y1="18" x2="23.5" y2="23.5" stroke="white" stroke-width="2.5" stroke-linecap="round" />
+          <path d="M11 13.5L13.5 16L17.5 11" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <div class="brand-title">Tender<span class="brand-title-flow">Flow</span></div>
+      </div>
+
+      <div class="login-visual__stage">
+        <div class="float-card float-card--stat">
+          <div class="stat-label"><span>Tenders tracked</span><span class="stat-up">↑ 18.9%</span></div>
+          <div class="stat-num">2,198</div>
+          <div class="stat-bar"><span></span></div>
+        </div>
+
+        <div class="float-card float-card--status">
+          <div class="status-title">SEARCH STATUS <b>Live</b></div>
+          <div class="status-row"><span>Find a Tender</span><span class="status-bar"><span style="width:91%"></span></span></div>
+          <div class="status-row"><span>Contracts Finder</span><span class="status-bar"><span style="width:84%"></span></span></div>
+        </div>
+
+        <div class="float-card float-card--ingest">
+          <div class="ingest-title"><span>LIVE DATA INGESTION</span><span class="live-dot">Live Stream</span></div>
+          <ul class="ingest-sources">
+            <li>Find a Tender</li>
+            <li>Contracts Finder</li>
+            <li>eTenders Ireland</li>
+            <li>TED (EU)</li>
+          </ul>
+          <div class="ingest-hub">AI<small>92.4</small></div>
+        </div>
+
+        <div class="float-card float-card--gauge">
+          <div class="gauge-ring"><span>82%</span></div>
+          <div class="gauge-label">AI fit match</div>
+        </div>
+      </div>
+
+      <div class="login-visual__copy">
+        <h2>Search · Match · Win</h2>
+        <p>AI-powered discovery, fit scoring, and bid drafting across UK, Ireland and international public tenders.</p>
+      </div>
+    </div>
+
+    <div class="login-form-panel">
+    <div class="login-container">
+      <div class="login-card" id="loginCard">
+        <div class="header">
+          <div class="brand-container">
+            <svg class="brand-logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" width="32" height="32">
+              <defs>
+                <linearGradient id="brandLogoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#6366f1" />
+                  <stop offset="100%" stop-color="#4f46e5" />
+                </linearGradient>
+              </defs>
+              <rect width="32" height="32" rx="7" fill="url(#brandLogoGrad)" />
+              <circle cx="14" cy="14" r="5.5" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+              <line x1="18" y1="18" x2="23.5" y2="23.5" stroke="white" stroke-width="2.5" stroke-linecap="round" />
+              <path d="M11 13.5L13.5 16L17.5 11" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <div class="brand-title">Tender<span class="brand-title-flow">Flow</span></div>
+          </div>
+          <div class="lang-row">
+            <a href="#" class="lang-opt" data-lang="en">EN</a>
+            <span class="lang-sep">|</span>
+            <a href="#" class="lang-opt" data-lang="fr">FR</a>
+            <span class="lang-sep">|</span>
+            <a href="#" class="lang-opt" data-lang="nl">NL</a>
+          </div>
+          <h1 id="titleText">Welcome Back</h1>
+          <p id="subText">Sign in to search and bid on tenders</p>
+        </div>
+        <div id="errorMsg" class="error-msg"><span id="errorText"></span></div>
+        <div id="successMsg" class="success-msg"><span id="successText"></span></div>
+        <button type="button" id="btnGoogle" class="btn btn-google">Continue with Google</button>
+        <div class="divider">or email</div>
+        <form id="loginForm" style="display:flex;flex-direction:column;gap:14px;">
+          <div class="form-group signup-only" id="companyGroup">
+            <label for="companyName">Company name</label>
+            <div class="input-wrapper"><input type="text" id="companyName" placeholder="Acme Ltd" /></div>
+          </div>
+          <div class="form-group">
+            <label for="email">Email</label>
+            <div class="input-wrapper"><input type="email" id="email" required autocomplete="email" placeholder="you@company.com" /></div>
+          </div>
+          <div class="form-group">
+            <label for="password">Password</label>
+            <div class="input-wrapper">
+              <input type="password" id="password" required autocomplete="current-password" placeholder="••••••••" minlength="6" />
+              <span id="copyToast" class="copy-toast">Copied!</span>
+              <button type="button" id="togglePasswordBtn" class="pwd-toggle-btn" disabled title="View password" aria-label="Toggle password visibility">
+                <svg id="eyeIcon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="forgot" id="forgotWrap"><a id="forgotLink" href="#" role="button">Forgot password?</a></div>
+          <button type="submit" id="btnSubmit" class="btn btn-primary"><span id="btnText">Sign In</span></button>
+        </form>
+        <div class="toggle-mode">Don't have an account? <a id="toggleLink" href="#" role="button">Sign Up</a></div>
+        <div class="legal">By continuing you agree to our <a href="/legal/terms.html">Terms</a> and <a href="/legal/privacy.html">Privacy Policy</a>.</div>
+      </div>
+    </div>
+    </div>
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+      import {
+        getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
+        signInWithPopup, GoogleAuthProvider, sendPasswordResetEmail, signOut
+      } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+      const cfgRes = await fetch("/api/config/public");
+      const cfgData = await cfgRes.json();
+      const fb = cfgData.firebase || {};
+      if (!fb.apiKey) {
+        document.getElementById("errorText").textContent = "Firebase is not configured on this server.";
+        document.getElementById("errorMsg").style.display = "block";
+      }
+      const app = initializeApp(fb);
+      const auth = getAuth(app);
+      const googleProvider = new GoogleAuthProvider();
+
+      const $ = (id) => document.getElementById(id);
+      let isSignUp = false;
+
+      async function exchangeToken(user, companyName = "") {
+        const idToken = await user.getIdToken();
+        const res = await fetch("/api/auth/firebase", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken, company_name: companyName }),
+        });
+        let data;
+        try {
+          data = await res.json();
+        } catch {
+          throw new Error(res.ok ? "Invalid server response" : `Server error (${res.status})`);
+        }
+        if (!res.ok || !data.ok) throw new Error(data.error || "Server auth failed");
+        if (data.csrf_token) sessionStorage.setItem("tf_csrf", data.csrf_token);
+        window.location.href = "/";
+      }
+
+      function formatAuthError(err) {
+        if (!err) return "An unexpected error occurred. Please try again.";
+        const msg = typeof err === "string" ? err : (err.message || err.code || "");
+        const code = (err && err.code) ? err.code : "";
+
+        if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found" || /invalid-credential|wrong-password|user-not-found/i.test(msg)) {
+          return "Invalid email or password. Please check your credentials and try again.";
+        }
+        if (code === "auth/invalid-email" || /invalid-email/i.test(msg)) {
+          return "Please enter a valid email address.";
+        }
+        if (code === "auth/email-already-in-use" || /email-already-in-use/i.test(msg)) {
+          return "An account with this email address already exists. Please sign in instead.";
+        }
+        if (code === "auth/weak-password" || /weak-password/i.test(msg)) {
+          return "Password is too weak. Please use at least 6 characters.";
+        }
+        if (code === "auth/too-many-requests" || /too-many-requests/i.test(msg)) {
+          return "Too many failed login attempts. Please wait a few moments and try again.";
+        }
+        if (code === "auth/popup-closed-by-user" || /popup-closed-by-user/i.test(msg)) {
+          return "Sign-in popup was closed before completing. Please try again.";
+        }
+        if (code === "auth/popup-blocked" || /popup-blocked/i.test(msg)) {
+          return "Sign-in popup was blocked by your browser. Please allow popups for this site.";
+        }
+        if (code === "auth/network-request-failed" || /network-request-failed/i.test(msg)) {
+          return "Network error. Please check your internet connection and try again.";
+        }
+        if (code === "auth/user-disabled" || /user-disabled/i.test(msg)) {
+          return "This user account has been disabled. Please contact support.";
+        }
+        if (code === "auth/operation-not-allowed" || /operation-not-allowed/i.test(msg)) {
+          return "This sign-in method is not enabled. Please contact support.";
+        }
+
+        // Clean up any raw "Firebase: Error (auth/...)." string fallbacks
+        let cleanMsg = msg.replace(/^Firebase:\s*Error\s*\(([^)]+)\)\.?$/i, "$1");
+        if (cleanMsg.startsWith("auth/")) {
+          cleanMsg = cleanMsg.substring(5).replace(/-/g, " ");
+          return cleanMsg.charAt(0).toUpperCase() + cleanMsg.slice(1) + ".";
+        }
+
+        return cleanMsg || "Authentication failed. Please try again.";
+      }
+
+      function showError(err) {
+        $("successMsg").style.display = "none";
+        $("errorText").textContent = formatAuthError(err);
+        $("errorMsg").style.display = "block";
+      }
+      function showSuccess(msg) {
+        $("errorMsg").style.display = "none";
+        $("successText").textContent = msg;
+        $("successMsg").style.display = "block";
+      }
+
+      // Localization setup
+      let currentLang = localStorage.getItem("tf_lang") || "en";
+
+      function t(key, lang = currentLang) {
+        const translations = window.I18N_TRANSLATIONS || {};
+        const dict = translations[lang] || translations["en"] || {};
+        return dict[key] || key;
+      }
+
+      function translatePage(lang) {
+        currentLang = lang;
+        localStorage.setItem("tf_lang", lang);
+
+        document.querySelectorAll(".lang-opt").forEach(opt => {
+          opt.classList.toggle("active", opt.getAttribute("data-lang") === lang);
+        });
+
+        $("titleText").textContent = isSignUp ? t("login_create_acc") : t("login_welcome");
+        $("subText").textContent = isSignUp ? t("login_start_free") : t("login_sub");
+        $("btnGoogle").textContent = t("login_google");
+        document.querySelector(".divider").textContent = t("login_or_email");
+        document.querySelector("label[for='companyName']").textContent = t("login_company");
+        document.querySelector("label[for='email']").textContent = t("login_email");
+        document.querySelector("label[for='password']").textContent = t("login_password");
+        $("forgotLink").textContent = t("login_forgot");
+        $("btnText").textContent = isSignUp ? t("login_signup") : t("login_signin");
+
+        const toggleLink = $("toggleLink");
+        if (toggleLink) {
+          toggleLink.parentNode.firstChild.textContent = isSignUp ? t("login_have_account") : t("login_no_account");
+          toggleLink.textContent = isSignUp ? t("login_signin") : t("login_signup");
+        }
+
+        // Placeholders
+        $("companyName").setAttribute("placeholder", isSignUp ? "Acme Ltd" : "");
+        $("email").setAttribute("placeholder", "you@company.com");
+      }
+
+      document.querySelectorAll(".lang-opt").forEach(opt => {
+        opt.addEventListener("click", (e) => {
+          e.preventDefault();
+          translatePage(opt.getAttribute("data-lang"));
+        });
+      });
+
+      $("toggleLink").addEventListener("click", (e) => {
+        e.preventDefault();
+        isSignUp = !isSignUp;
+        $("errorMsg").style.display = "none";
+        $("loginCard").classList.toggle("show-signup", isSignUp);
+        $("forgotWrap").style.display = isSignUp ? "none" : "block";
+        translatePage(currentLang);
+      });
+
+      // Initialize language
+      translatePage(currentLang);
+
+      // View password toggle & copy logic
+      const pwdInput = $("password");
+      const togglePwdBtn = $("togglePasswordBtn");
+      const eyeIcon = $("eyeIcon");
+      const copyToast = $("copyToast");
+      let pwdHideTimer = null;
+      let copyToastTimer = null;
+
+      const svgEyeClosed = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>`;
+      const svgEyeOpen = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line>`;
+
+      function hidePassword() {
+        pwdInput.type = "password";
+        eyeIcon.innerHTML = svgEyeClosed;
+        togglePwdBtn.setAttribute("title", "View password");
+        if (pwdHideTimer) {
+          clearTimeout(pwdHideTimer);
+          pwdHideTimer = null;
+        }
+      }
+
+      function updatePwdToggleState() {
+        if (!pwdInput.value) {
+          togglePwdBtn.disabled = true;
+          hidePassword();
+        } else {
+          togglePwdBtn.disabled = false;
+        }
+      }
+
+      pwdInput.addEventListener("input", updatePwdToggleState);
+      updatePwdToggleState();
+
+      togglePwdBtn.addEventListener("click", async () => {
+        if (togglePwdBtn.disabled || !pwdInput.value) return;
+
+        if (pwdInput.type === "password") {
+          pwdInput.type = "text";
+          eyeIcon.innerHTML = svgEyeOpen;
+          togglePwdBtn.setAttribute("title", "Hide password");
+
+          // Copy password to clipboard
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              await navigator.clipboard.writeText(pwdInput.value);
+            } else {
+              pwdInput.select();
+              document.execCommand("copy");
+            }
+            if (copyToastTimer) clearTimeout(copyToastTimer);
+            copyToast.classList.add("show");
+            copyToastTimer = setTimeout(() => copyToast.classList.remove("show"), 2000);
+          } catch (err) {
+            console.error("Failed to copy password:", err);
+          }
+
+          // Auto-hide after 5 seconds
+          if (pwdHideTimer) clearTimeout(pwdHideTimer);
+          pwdHideTimer = setTimeout(() => {
+            hidePassword();
+          }, 5000);
+        } else {
+          hidePassword();
+        }
+      });
+
+      $("forgotLink").addEventListener("click", async (e) => {
+        e.preventDefault();
+        const email = $("email").value.trim();
+        if (!email) { showError("Enter your email first."); return; }
+        
+        $("errorMsg").style.display = "none";
+        $("successMsg").style.display = "none";
+        const origText = $("forgotLink").textContent;
+        $("forgotLink").textContent = "Sending reset link...";
+        $("forgotLink").style.pointerEvents = "none";
+        
+        try {
+          const res = await fetch("/api/auth/forgot-password", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.ok) {
+            showSuccess(data.message || "Password reset email sent. Please check your inbox.");
+          } else {
+            showError(data.error || "No user exists with this email address.");
+          }
+        } catch (err) {
+          showError("Unable to process password reset request. Please try again.");
+        } finally {
+          $("forgotLink").textContent = origText;
+          $("forgotLink").style.pointerEvents = "auto";
+        }
+      });
+
+      $("btnGoogle").addEventListener("click", async () => {
+        $("btnGoogle").disabled = true;
+        try {
+          const cred = await signInWithPopup(auth, googleProvider);
+          await exchangeToken(cred.user);
+        } catch (err) {
+          showError(err);
+          $("btnGoogle").disabled = false;
+        }
+      });
+
+      $("loginForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        $("errorMsg").style.display = "none";
+        $("btnSubmit").disabled = true;
+        const email = $("email").value.trim();
+        const password = $("password").value;
+        const companyName = $("companyName").value.trim();
+        try {
+          const cred = isSignUp
+            ? await createUserWithEmailAndPassword(auth, email, password)
+            : await signInWithEmailAndPassword(auth, email, password);
+          await exchangeToken(cred.user, isSignUp ? companyName : "");
+        } catch (err) {
+          showError(err);
+          $("btnSubmit").disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

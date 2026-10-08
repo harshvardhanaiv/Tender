@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+output/
+*.xlsx
+*.csv
+.DS_Store
+
+# Files retired from the project but kept locally for reference
+NOT_REQUIRED/
+
+# Secret environment files — NEVER commit these (.env.example is the template)
+.env
+.env.*
+!.env.example
+*.db
+uploads/
+firebase-service-account.json
+firebase-*.json
+
+# Contains the live production DB password — never commit
+scripts/run_live_geocode.sh
+
+# Large SQL dumps / sync data — never commit
+data/

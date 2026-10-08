@@ -1,0 +1,9 @@
+.env
+.env.*
+firebase-service-account.json
+firebase-*.json
+__pycache__
+.venv
+.git
+*.db
+NOT_REQUIRED
