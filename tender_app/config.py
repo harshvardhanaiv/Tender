@@ -114,6 +114,15 @@ SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
 # routes). Set to 0 to hide it entirely: the routes answer 404 and the menu link is not shown.
 ENABLE_BUYER_WORKSPACE = os.environ.get("ENABLE_BUYER_WORKSPACE", "1") == "1"
 
+# Market Radar "Insights" drawer: a per-buyer profile plus a short plain-language DeepSeek summary of the
+# buyer's procurement pattern (tender_app/buyer_insights.py). Set to 0 to hide it entirely: the Insights
+# button is not shown and its routes answer 404. The factual profile never needs the AI; the narrative
+# needs DEEPSEEK_API_KEY and is simply left out ("insight unavailable") when the key is missing or the
+# call fails. A narrative is only attempted for a buyer with at least BUYER_INSIGHT_MIN_AWARDS awards.
+ENABLE_BUYER_INSIGHTS = os.environ.get("ENABLE_BUYER_INSIGHTS", "1") == "1"
+BUYER_INSIGHT_TIMEOUT_SECONDS = float(os.environ.get("BUYER_INSIGHT_TIMEOUT_SECONDS", "25"))
+BUYER_INSIGHT_MIN_AWARDS = int(os.environ.get("BUYER_INSIGHT_MIN_AWARDS", "5"))
+
 # Growth Studio: outreach signals and campaigns for suppliers (web/growth-studio.js and the
 # /api/growth routes). Set to 0 to hide it entirely: the routes and its files answer 404 and the
 # sidebar item is not shown.

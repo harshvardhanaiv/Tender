@@ -246,7 +246,61 @@ test("peersTableHtml", () => {
   assert.equal((html.match(/data-action="peer-toggle"/g) || []).length, 3);
 });
 
-const supplierRow = (over = {}) => ({
+test("row actions: similar suppliers always, Insights only when the feature is on", () => {
+  const rows = [peer({ main_supplier_key: "ACME", main_supplier: "Acme & Co" }), peer({ key: "ISLINGTON", buyer: "Islington", main_supplier: null })];
+  BW.state.insights = false;
+  let html = BW.peersTableHtml(rows);
+  has(html, 'data-action="similar-suppliers" data-supplier="ACME"', "View similar suppliers");
+  lacks(html, 'data-action="peer-insights"');
+  assert.equal((html.match(/data-action="similar-suppliers"/g) || []).length, 1, "no button for a row without a main supplier");
+  BW.state.insights = true;
+  html = BW.peersTableHtml(rows);
+  assert.equal((html.match(/data-action="peer-insights"/g) || []).length, 2);
+  assert.ok(html.indexOf('data-action="peer-toggle"') < html.indexOf('data-action="peer-insights"'), "Insights sits below Contracts");
+  BW.state.insights = false;
+});
+
+const insightData = (over = {}) => ({
+  buyer: "Wigan <Council>", type_label: "Other local government", category: { label: "Housing repairs: gas" },
+  in_category: { awards: 3, frameworks: 1, suppliers: 2, total_value: 250000, shown: 1, recent_awards: [{ title: "Boiler <b>plant</b>", supplier: "Hayman", value: 132000, signed: "2026-08-18", route: "Open competition", url: "javascript:alert(1)" }] },
+  profile: { buyer_type: "x", stats: { total_contracts: 6, total_spend: 480000, earliest_award: "2022-01-10", latest_award: "2025-01-10", unique_suppliers: 3, direct_awards: 1, competitive_awards: 5 },
+    top_suppliers: [{ supplier: "Acme <Ltd>", contracts: 3, value: 300000, framework_appointments: 0 }], sectors: [{ label: "Boiler maintenance", awards: 4 }],
+    recent_awards: [{ title: "Old job", supplier: "Acme", value: 5e6, value_is_ceiling: true, signed: "2025-01-10", competitive: 1, url: null }] },
+  ...over,
+});
+
+test("insightFactsHtml", () => {
+  const html = BW.insightFactsHtml(insightData());
+  has(html, "Contracts on record", "£480k", "5 competitive · 1 direct", "In Housing repairs: gas", "3 awards", "1 framework appointment", "Main suppliers", "Acme &lt;Ltd&gt;",
+    "Frequent sectors", "Recent award history", "Framework ceiling", "Competitive", "Boiler &lt;b&gt;plant&lt;/b&gt;");
+  lacks(html, "<b>plant", "javascript:", "<Ltd>");
+  const bare = BW.insightFactsHtml(insightData({ profile: null }));
+  has(bare, "full buyer profile could not be loaded", "In Housing repairs: gas");
+  lacks(bare, "Main suppliers", "Contracts on record");
+});
+
+test("insightNarrativeHtml: waiting, written, too thin, unavailable", () => {
+  has(BW.insightNarrativeHtml(null), "Writing a summary");
+  const ok = BW.insightNarrativeHtml({ available: true, narrative: "It <awards> 6 contracts.", provider: "DeepSeek", based_on: ["6 contract awards <x>."] });
+  has(ok, "AI insight", "It &lt;awards&gt; 6 contracts.", "Written by DeepSeek", "Facts it was given", "6 contract awards &lt;x&gt;.");
+  lacks(ok, "<awards>", "<x>");
+  has(BW.insightNarrativeHtml({ available: false, reason: "thin", message: "Only 1 award on record." }), "Only 1 award on record.", "bw-note--info");
+  const down = BW.insightNarrativeHtml({ available: false, reason: "unavailable", message: "Insight unavailable right now." });
+  has(down, "Insight unavailable right now.", "figures above are unaffected");
+  lacks(down, "Writing a summary", "Facts it was given");
+});
+
+test("similarSuppliersHtml", () => {
+  const base = { supplier: "Acme <Ltd>", basis: "cpv", cpv: ["50721"], cpv_labels: { 50721: "Boiler maintenance" }, category: { label: "Housing repairs: gas" }, total: 30,
+    rows: [{ supplier: "Beta Heating", shared_awards: 2, awards: 3, shared_value: 200000, buyers: 2, shared_cpv: ["50721"] }, { supplier: "Gamma", shared_awards: 1, awards: 1, shared_value: null, buyers: 1, shared_cpv: [] }] };
+  const html = BW.similarSuppliersHtml(base);
+  has(html, "same CPV classes as Acme &lt;Ltd&gt;", "50721 Boiler maintenance", "Beta Heating", "£200k", "of 3", "CPV 50721", "Showing 2 of 30", '<span class="bw-faint">–</span>');
+  lacks(html, "<Ltd>");
+  has(BW.similarSuppliersHtml({ ...base, basis: "category", cpv: [] }), "carry no CPV code", "every other supplier");
+  has(BW.similarSuppliersHtml({ ...base, rows: [], total: 0 }), "No similar suppliers found");
+});
+
+const supplierRow =  (over = {}) => ({
   supplier: "Acme <Ltd>", buyers: 4, contracts: 5, framework_appointments: 1, total_value: 750000, valued_contracts: 4, avg_contract: 187500,
   avg_term_months: 24, repeat_rate: 0.33, price_band: "£ Lower", latest_signed: "2025-03-01", ...over,
 });

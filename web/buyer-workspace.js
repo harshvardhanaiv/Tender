@@ -9,7 +9,7 @@
 
   const root = typeof window !== "undefined" ? window : globalThis;
   const BW = (root.BW = root.BW || {});
-  const S = (BW.state = { me: null, csrf: "", org: null, watchlist: [], options: null });
+  const S = (BW.state = { me: null, csrf: "", org: null, watchlist: [], options: null, insights: false });
 
   // ── formatting ──────────────────────────────────────────────────────────────────────────────
   function esc(value) {
@@ -373,11 +373,11 @@
         <td class="bw-cell-main" data-label="Buyer"><span class="bw-name">${esc(displayName(p.buyer))}</span>${p.is_me ? ' <span class="bw-badge bw-badge--accent">Your organisation</span>' : ""}
           <span class="bw-sub">${esc(p.type_label)}</span></td>
         <td class="num" data-label="Awards">${fmtInt(p.awards)}${p.frameworks ? `<span class="bw-sub">${fmtInt(p.frameworks)} framework${p.frameworks === 1 ? "" : "s"}</span>` : ""}</td>
-        <td data-label="Main supplier">${p.main_supplier ? esc(displayName(p.main_supplier)) : '<span class="bw-faint">–</span>'}</td>
+        <td data-label="Main supplier">${p.main_supplier ? esc(displayName(p.main_supplier)) : '<span class="bw-faint">–</span>'}${p.main_supplier && p.main_supplier_key ? `<button class="bw-btn bw-btn--sm bw-row-btn" type="button" data-action="similar-suppliers" data-supplier="${esc(p.main_supplier_key)}">View similar suppliers</button>` : ""}</td>
         <td data-label="Latest contract">${titleText}
           <span class="bw-sub">${subBit}</span></td>
         <td data-label="Route"><span class="bw-badge" title="${ROUTE_HINT}">${esc(latest.route || "Not stated")}</span></td>
-        <td class="num"><button class="bw-link" type="button" data-action="peer-toggle" data-key="${esc(p.key)}" aria-expanded="false">Contracts</button></td>
+        <td class="num"><div class="bw-row-actions"><button class="bw-link" type="button" data-action="peer-toggle" data-key="${esc(p.key)}" aria-expanded="false">Contracts</button>${S.insights ? `<button class="bw-btn bw-btn--sm" type="button" data-action="peer-insights" data-key="${esc(p.key)}">Insights</button>` : ""}</div></td>
       </tr>
       <tr class="bw-detail hidden" data-detail="${esc(p.key)}"><td colspan="6"><div class="bw-detail__body"></div></td></tr>`;
     }).join("");
@@ -640,6 +640,118 @@
     box.innerHTML = `<ul class="bw-detail-list">${d.awards.map(awardLine).join("")}</ul>${d.total_awards > d.shown ? `<p class="bw-hint">Showing the ${d.shown} most recent of ${fmtInt(d.total_awards)}.</p>` : ""}`;
   }
 
+
+  // ── Market Radar: Insights and similar-suppliers drawer ─────────────────────────────────────
+  const AUTHORITY_ROUTE = { 1: "Competitive", 0: "Direct award" };
+
+  function statTile(label, value, sub) {
+    return `<div class="bw-stat"><div class="bw-stat__label">${esc(label)}</div><div class="bw-stat__value bw-stat__value--sm">${value}</div>${sub ? `<div class="bw-stat__hint">${esc(sub)}</div>` : ""}</div>`;
+  }
+  function drawerSection(title, inner) { return `<section class="bw-drawer__section"><h3>${esc(title)}</h3>${inner}</section>`; }
+
+  // The factual half of the Insights drawer: Buyer Intelligence profile + the buyer's awards in this category.
+  function insightFactsHtml(d) {
+    const p = d.profile, st = p && p.stats, c = d.in_category;
+    const parts = [];
+    if (st) {
+      const route = (st.competitive_awards || st.direct_awards) ? `${fmtInt(st.competitive_awards)} competitive · ${fmtInt(st.direct_awards)} direct` : "";
+      parts.push(`<div class="bw-drawer__stats">
+        ${statTile("Authority type", esc(d.type_label || p.buyer_type || "–"))}
+        ${statTile("Contracts on record", fmtInt(st.total_contracts), st.earliest_award ? `${fmtDate(st.earliest_award)} to ${fmtDate(st.latest_award)}` : "")}
+        ${statTile("Published spend", st.total_spend ? fmtMoney(st.total_spend) : '<span class="bw-faint">Not published</span>', "excludes framework ceilings")}
+        ${statTile("Suppliers used", fmtInt(st.unique_suppliers), route)}</div>`);
+    } else {
+      parts.push('<div class="bw-note bw-note--info">The full buyer profile could not be loaded, so only this category’s figures are shown.</div>');
+    }
+    parts.push(drawerSection(`In ${d.category.label}`, `<p class="bw-hint" style="margin:0 0 6px">${plural(c.awards, "award")}${c.frameworks ? ` (${plural(c.frameworks, "framework appointment")})` : ""} from ${plural(c.suppliers, "supplier")}${c.total_value ? `, ${fmtMoney(c.total_value)} published value` : ""}.</p>
+      <ul class="bw-detail-list">${c.recent_awards.map(awardLine).join("")}</ul>${c.awards > c.shown ? `<p class="bw-hint">Showing the ${c.shown} most recent; use Contracts for the full list.</p>` : ""}`));
+    if (p) {
+      if (p.top_suppliers.length) parts.push(drawerSection("Main suppliers", `<ul class="bw-detail-list">${p.top_suppliers.map((s) => `<li>${esc(displayName(s.supplier))}<span class="bw-sub">${plural(s.contracts, "contract")}${s.value ? ` · ${fmtMoney(s.value)}` : ""}${s.framework_appointments ? ` · ${plural(s.framework_appointments, "framework appointment")}` : ""}</span></li>`).join("")}</ul>`));
+      if (p.sectors.length) parts.push(drawerSection("Frequent sectors", `<ul class="bw-detail-list">${p.sectors.map((x) => `<li>${esc(x.label || x.cpv)}<span class="bw-sub">${plural(x.awards, "award")}</span></li>`).join("")}</ul>`));
+      if (p.recent_awards.length) parts.push(drawerSection("Recent award history (all categories)", `<ul class="bw-detail-list">${p.recent_awards.map((a) => awardLine({ ...a, route: AUTHORITY_ROUTE[a.competitive] || null })).join("")}</ul>`));
+    }
+    return parts.join("");
+  }
+
+  // The AI half. `r` is the /peers/insight reply; null while it is still being written.
+  function insightNarrativeHtml(r) {
+    const head = "AI insight";
+    if (!r) return drawerSection(head, `<div class="bw-insight bw-insight--wait" role="status">Writing a summary from the figures in this panel…</div>`);
+    if (r.available) {
+      const basis = (r.based_on || []).map((f) => `<li>${esc(f)}</li>`).join("");
+      return drawerSection(head, `<div class="bw-insight"><p>${esc(r.narrative)}</p>
+        <p class="bw-hint" style="margin:8px 0 0">Written by ${esc(r.provider || "AI")} from published award notices only. Check the figures against the contracts listed here.</p>
+        ${basis ? `<details class="bw-insight__basis"><summary>Facts it was given</summary><ul>${basis}</ul></details>` : ""}</div>`);
+    }
+    if (r.reason === "thin") return drawerSection(head, `<div class="bw-note bw-note--info" style="margin:0">${esc(r.message)}</div>`);
+    return drawerSection(head, `<p class="bw-hint" style="margin:0">${esc(r.message || "Insight unavailable right now.")} The figures above are unaffected.</p>`);
+  }
+
+  function similarSuppliersHtml(d) {
+    const basis = d.basis === "cpv"
+      ? `Ranked by awards under the same CPV classes as ${esc(displayName(d.supplier))} in ${esc(d.category.label)}${d.cpv.length ? `: ${d.cpv.slice(0, 5).map((c) => esc(d.cpv_labels && d.cpv_labels[c] ? `${c} ${d.cpv_labels[c]}` : c)).join("; ")}` : ""}.`
+      : `${esc(displayName(d.supplier))}’s notices carry no CPV code, so every other supplier in ${esc(d.category.label)} is listed, ranked by awards.`;
+    if (!d.rows.length) return `<p class="bw-hint">${basis}</p><div class="bw-empty"><strong>No similar suppliers found</strong>No other supplier in this view has awards under the same CPV classes.</div>`;
+    const rows = d.rows.map((r) => `<tr><td class="bw-cell-main" data-label="Supplier"><span class="bw-name">${esc(displayName(r.supplier))}</span>${r.shared_cpv.length ? `<span class="bw-sub">CPV ${esc(r.shared_cpv.join(", "))}</span>` : ""}</td>
+      <td class="num" data-label="Awards">${fmtInt(r.shared_awards)}${r.awards > r.shared_awards ? `<span class="bw-sub">of ${fmtInt(r.awards)}</span>` : ""}</td>
+      <td class="num" data-label="Value">${r.shared_value ? fmtMoney(r.shared_value) : '<span class="bw-faint">–</span>'}</td>
+      <td class="num" data-label="Buyers">${fmtInt(r.buyers)}</td></tr>`).join("");
+    return `<p class="bw-hint" style="margin-top:0">${basis}</p>
+      <div class="bw-table-wrap"><table class="bw-table bw-table--stack"><thead><tr><th>Supplier</th><th class="num" title="Awards under the shared CPV classes">Awards</th><th class="num" title="Published value of those awards, framework ceilings excluded">Value</th><th class="num">Buyers</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="bw-hint">${d.total > d.rows.length ? `Showing ${d.rows.length} of ${fmtInt(d.total)}. ` : ""}Values are published notice values, not invoiced spend.</p>`;
+  }
+
+  let drawerReturnFocus = null;
+  let drawerSeq = 0;
+  function openDrawer(title, html) {
+    const el = document.getElementById("bwDrawer");
+    if (el.classList.contains("hidden")) drawerReturnFocus = document.activeElement;
+    document.getElementById("bwDrawerTitle").textContent = title;
+    document.getElementById("bwDrawerBody").innerHTML = html;
+    el.classList.remove("hidden");
+    el.querySelector("[data-action='drawer-close']").focus();
+  }
+  function closeDrawer() {
+    drawerSeq++;
+    const el = document.getElementById("bwDrawer");
+    if (!el || el.classList.contains("hidden")) return;
+    el.classList.add("hidden");
+    document.getElementById("bwDrawerBody").innerHTML = "";
+    if (drawerReturnFocus && drawerReturnFocus.focus) drawerReturnFocus.focus();
+    drawerReturnFocus = null;
+  }
+
+  async function openInsights(key) {
+    const seq = ++drawerSeq;
+    const peer = (radar.data && radar.data.peers.rows.find((p) => p.key === key)) || {};
+    openDrawer(`Insights: ${displayName(peer.buyer || "buyer")}`, skeleton(3));
+    const body = () => (seq === drawerSeq ? document.getElementById("bwDrawerBody") : null);
+    let d;
+    try { d = await api(`/api/market-radar/peers/profile${radarQuery(radar.spec, radar.filters, { buyer: key })}`); }
+    catch (err) { const b = body(); if (b) b.innerHTML = `<div class="bw-note bw-note--bad">${esc(err.message)}</div>`; return; }
+    if (seq !== drawerSeq) return;
+    document.getElementById("bwDrawerTitle").textContent = `Insights: ${displayName(d.buyer)}`;
+    const paint = (r) => { const b = body(); if (b) b.innerHTML = insightFactsHtml(d) + insightNarrativeHtml(r); };
+    paint(null);
+    let r;
+    try { r = await api(`/api/market-radar/peers/insight${radarQuery(radar.spec, radar.filters, { buyer: key })}`, { method: "POST" }); }
+    catch (err) { r = { available: false, reason: "unavailable", message: "Insight unavailable right now." }; }
+    paint(r);
+  }
+
+  async function openSimilarSuppliers(supplierKey) {
+    const seq = ++drawerSeq;
+    const peer = radar.data && radar.data.peers.rows.find((p) => p.main_supplier_key === supplierKey);
+    openDrawer(`Similar to ${displayName((peer && peer.main_supplier) || "supplier")}`, skeleton(3));
+    try {
+      const d = await api(`/api/market-radar/similar-suppliers${radarQuery(radar.spec, radar.filters, { supplier: supplierKey })}`);
+      if (seq !== drawerSeq) return;
+      document.getElementById("bwDrawerBody").innerHTML = similarSuppliersHtml(d);
+    } catch (err) {
+      if (seq === drawerSeq) document.getElementById("bwDrawerBody").innerHTML = `<div class="bw-note bw-note--bad">${esc(err.message)}</div>`;
+    }
+  }
+
   // ── dashboard ───────────────────────────────────────────────────────────────────────────────
   function renewalsTableHtml(items) {
     const rows = items.map((r) => `<tr>
@@ -774,6 +886,9 @@
         case "radar-plan": if (BW.openNewEngagement) BW.openNewEngagement({ category: specOf(radar.data.category), title: `${radar.data.category.label}: market engagement` }); break;
         case "cost-basis": radar.basis = target.dataset.basis; paintRadarPanel(); break;
         case "peer-toggle": await togglePeerAwards(target.dataset.key, target); break;
+        case "peer-insights": await openInsights(target.dataset.key); break;
+        case "similar-suppliers": await openSimilarSuppliers(target.dataset.supplier); break;
+        case "drawer-close": closeDrawer(); break;
         case "peers-page": radar.peers.page = Number(target.dataset.page); await refreshPeers(); break;
         case "unfollow": await saveWatchlist(S.watchlist.filter((c) => c.key !== target.dataset.key)); toast("Stopped following"); if (parseHash().parts[0] === "watchlist") renderWatchlist({ main: document.getElementById("bwMain"), isCurrent: () => true }); break;
         case "org-use": await setOrganisation(target.dataset.name); navigate("#/dashboard"); break;
@@ -811,6 +926,7 @@
 
   function onKey(e) {
     if (e.key === "Escape" && !document.getElementById("bwModal").classList.contains("hidden")) closeModal();
+    else if (e.key === "Escape") closeDrawer();
     const tab = e.target.closest && e.target.closest("[role='tab']");
     if (tab && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
       const tabs = [...tab.parentElement.querySelectorAll("[role='tab']")];
@@ -840,7 +956,7 @@
       try { sessionStorage.removeItem("tf_csrf"); } catch { /* storage blocked */ }
       root.location.href = "/login.html";
     });
-    root.addEventListener("hashchange", route);
+    root.addEventListener("hashchange", () => { closeDrawer(); route(); });
   }
 
   BW.start = async function start() {
@@ -853,6 +969,7 @@
       const ws = await api("/api/buyer-workspace/me");
       S.org = ws.organisation;
       S.watchlist = ws.watchlist;
+      S.insights = Boolean(ws.insights);
       updateMasthead();
     } catch (err) {
       if (err.status === 404) { document.getElementById("bwMain").innerHTML = '<div class="bw-page"><div class="bw-card"><div class="bw-empty"><strong>The buyer workspace is not available</strong>It has been switched off for this site.</div></div></div>'; return; }
@@ -870,7 +987,7 @@
   Object.assign(BW, {
     esc, fmtInt, fmtMoney, fmtDate, fmtPct, plural, qs, api, ApiError, ensureOptions, toast, openModal, closeModal, copyText, download,
     parseHash, buildHash, navigate, replaceHash, route, skeleton, errorHtml, pickerHtml, bindPicker, specOf,
-    peersTableHtml, suppliersPanelHtml, costPanelHtml, kpiHtml, renewalsTableHtml, activityTableHtml, niceTicks, valueCell, awardLine,
+    insightFactsHtml, insightNarrativeHtml, similarSuppliersHtml, peersTableHtml, suppliersPanelHtml, costPanelHtml, kpiHtml, renewalsTableHtml, activityTableHtml, niceTicks, valueCell, awardLine,
     specFromParams, specToParams, specFromKey, defaultAuthority, safeUrl, trimNum, clamp,
   });
 

@@ -809,6 +809,7 @@ def get_buyer_detail(authority_name: str):
                 cpv_description,
                 procurement_type,
                 is_competitive,
+                is_framework,
                 notice_url
             FROM contract_awards
             WHERE {_norm_auth_sql("authority_name")} = {_norm_auth_sql("?")}
