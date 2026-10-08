@@ -10,6 +10,9 @@ module is the HTTP layer plus the small per-user state the buyer workspace needs
     /api/market-radar/analysis                 summary, peers (page 1), supplier comparison, cost benchmark
     /api/market-radar/peers                    further pages of peers (search, sort)
     /api/market-radar/peers/awards?buyer=      one peer's awards in the category
+    /api/market-radar/peers/profile?buyer=     Insights drawer: the buyer's Buyer Intelligence profile + its awards here
+    /api/market-radar/peers/insight (POST)     Insights drawer: DeepSeek summary of the buyer's pattern (may be unavailable)
+    /api/market-radar/similar-suppliers?supplier=  suppliers with awards under the same CPV classes (plain data)
     /api/buyer-workspace/me                    the user's organisation and watchlist
     /api/buyer-workspace/organisations?q=      organisation search
     /api/buyer-workspace/organisation  (PUT)   choose or clear "my organisation"
@@ -25,10 +28,17 @@ import json
 import traceback
 from typing import Any
 
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, abort, jsonify, request, session
 
+from tender_app import buyer_insights as bi
 from tender_app import market_radar as mr
-from tender_app.config import RATE_LIMIT_SEARCH
+from tender_app.config import (
+    BUYER_INSIGHT_MIN_AWARDS,
+    BUYER_INSIGHT_TIMEOUT_SECONDS,
+    ENABLE_BUYER_INSIGHTS,
+    RATE_LIMIT_AI,
+    RATE_LIMIT_SEARCH,
+)
 from tender_app.security import rate_limit
 
 market_radar_bp = Blueprint("market_radar", __name__)
@@ -292,6 +302,153 @@ def radar_peer_awards():
     })
 
 
+# ── Insights drawer and similar suppliers ────────────────────────────────────────────────────
+
+# A buyer profile costs several queries and the narrative costs a model call, so both are kept for a while.
+_PROFILE_CACHE = mr.AnalysisCache(ttl=15 * 60, max_entries=200)
+_INSIGHT_CACHE = mr.AnalysisCache(ttl=6 * 3600, max_entries=500)
+
+
+def _insights_on() -> None:
+    if not ENABLE_BUYER_INSIGHTS:
+        abort(404)
+
+
+def _peer_in_view(args) -> tuple[Any, dict[str, Any], dict[str, Any]]:
+    """(category, analysis, peer) for ?buyer=<peer key> under the same filters as the table."""
+    buyer = (args.get("buyer") or "").strip()
+    if not buyer:
+        raise mr.CategoryError("buyer is required")
+    cat = _category_from(args)
+    authority, window, scope = _filters_from(args)
+    analysis = mr.get_analysis(_connect, cat, authority, window, scope)
+    peer = next((p for p in analysis["peers"] if p["key"] == buyer), None)
+    if not peer:
+        raise LookupError("buyer not found in this view")
+    return cat, analysis, peer
+
+
+def _buyer_profile(name: str) -> dict[str, Any] | None:
+    """The Buyer Intelligence profile (GET /api/buyers/<name>), reused as it is rather than re-queried here.
+
+    None when it cannot be built or the buyer has no awards on record; the drawer then shows the Market
+    Radar figures alone."""
+    from tender_app.blueprints.buyers_bp import get_buyer_detail
+
+    def compute() -> dict[str, Any]:
+        result = get_buyer_detail(name)
+        response = result[0] if isinstance(result, tuple) else result
+        data = response.get_json(silent=True) or {}
+        if response.status_code != 200 or not data.get("ok") or not (data.get("stats") or {}).get("total_contracts"):
+            raise LookupError("no profile")
+        return data
+
+    try:
+        return _PROFILE_CACHE.get_or_compute(name.strip().lower(), compute)
+    except Exception:
+        return None
+
+
+def _profile_public(profile: dict[str, Any]) -> dict[str, Any]:
+    st = profile["stats"]
+    return {
+        "buyer_type": profile.get("buyer_type"),
+        "stats": {k: st.get(k) for k in (
+            "total_contracts", "total_spend", "avg_contract_value", "framework_appointments", "earliest_award",
+            "latest_award", "direct_awards", "competitive_awards", "unique_suppliers", "repeat_supplier_pct")},
+        "sample_size_floor_met": bool(profile.get("sample_size_floor_met")),
+        "top_suppliers": [{"supplier": s.get("supplier_name"), "contracts": s.get("contracts_won"), "value": s.get("total_value"),
+                           "framework_appointments": s.get("framework_appointments"), "last_award": s.get("last_award_date")}
+                          for s in (profile.get("top_suppliers") or [])[:5]],
+        "sectors": [{"label": c.get("cpv_description"), "cpv": c.get("cpv_code"), "awards": c.get("count")}
+                    for c in (profile.get("cpv_breakdown") or []) if c.get("cpv_code") != "uncategorized"][:5],
+        "recent_awards": [{"title": h.get("tender_title"), "supplier": h.get("supplier_name"), "value": h.get("contract_value"),
+                           "value_is_ceiling": bool(h.get("is_framework")), "signed": h.get("date_signed"),
+                           "competitive": h.get("is_competitive"), "url": h.get("notice_url")}
+                          for h in (profile.get("contract_history") or [])[:8]],
+    }
+
+
+@market_radar_bp.get("/api/market-radar/peers/profile")
+@rate_limit(RATE_LIMIT_SEARCH)
+def radar_peer_profile():
+    _insights_on()
+    try:
+        cat, _, peer = _peer_in_view(request.args)
+    except mr.CategoryError as exc:
+        return _error(str(exc))
+    except LookupError as exc:
+        return _error(str(exc), 404)
+    profile = _buyer_profile(peer["buyer"])
+    return jsonify({
+        "buyer": peer["buyer"],
+        "type_label": peer["type_label"],
+        "category": cat.to_public(),
+        "in_category": {
+            "awards": peer["awards"], "frameworks": peer["frameworks"], "suppliers": peer["suppliers"],
+            "total_value": peer["total_value"], "shown": len(peer["_awards"]), "recent_awards": peer["_awards"][:8],
+        },
+        "profile": _profile_public(profile) if profile else None,
+        "min_awards_for_insight": BUYER_INSIGHT_MIN_AWARDS,
+    })
+
+
+@market_radar_bp.post("/api/market-radar/peers/insight")
+@rate_limit(RATE_LIMIT_AI)
+def radar_peer_insight():
+    """The AI summary. Always 200 with {"available": bool}: a failure here must never block the drawer."""
+    _insights_on()
+    try:
+        cat, _, peer = _peer_in_view(request.args)
+    except mr.CategoryError as exc:
+        return _error(str(exc))
+    except LookupError as exc:
+        return _error(str(exc), 404)
+    profile = _buyer_profile(peer["buyer"])
+    awards_on_record = int(((profile or {}).get("stats") or {}).get("total_contracts") or peer["awards"])
+    if awards_on_record < BUYER_INSIGHT_MIN_AWARDS:
+        return jsonify({"available": False, "reason": "thin", "message": (
+            f"{peer['buyer']} has only {awards_on_record} award{'s' if awards_on_record != 1 else ''} on record, "
+            f"which is too few to describe a procurement pattern. Insights need at least {BUYER_INSIGHT_MIN_AWARDS}.")})
+    facts = bi.build_facts(peer["buyer"], profile, cat.label, peer["_awards"], peer["awards"])
+    try:
+        from server import call_deepseek_insight
+
+        def compute() -> str:
+            text = call_deepseek_insight(bi.SYSTEM_PROMPT, bi.build_prompt(facts), max_tokens=450, temperature=0.2,
+                                         timeout=BUYER_INSIGHT_TIMEOUT_SECONDS).strip()
+            if not text or not bi.numbers_are_grounded(text, facts):
+                raise ValueError("insight rejected: empty, or it quotes a figure that is not in the data")
+            return text
+
+        narrative = _INSIGHT_CACHE.get_or_compute(f"{peer['key']}#{cat.key}#{hash(tuple(facts))}", compute)
+    except Exception:
+        traceback.print_exc()
+        return jsonify({"available": False, "reason": "unavailable", "message": "Insight unavailable right now."})
+    return jsonify({"available": True, "narrative": narrative, "based_on": facts, "provider": "DeepSeek"})
+
+
+@market_radar_bp.get("/api/market-radar/similar-suppliers")
+@rate_limit(RATE_LIMIT_SEARCH)
+def radar_similar_suppliers():
+    supplier = (request.args.get("supplier") or "").strip()
+    if not supplier:
+        return _error("supplier is required")
+    try:
+        cat = _category_from(request.args)
+        authority, window, scope = _filters_from(request.args)
+        analysis = mr.get_analysis(_connect, cat, authority, window, scope)
+    except mr.CategoryError as exc:
+        return _error(str(exc))
+    result = mr.similar_suppliers(analysis["_supplier_cpv"], supplier)
+    if result is None:
+        return _error("supplier not found in this view", 404)
+    labels, _ = mr.load_cpv_labels(_connect)
+    result["cpv_labels"] = {c: next((labels[c[:n]] for n in (5, 4, 3, 2) if c[:n] in labels), None) for c in result["cpv"][:5]}
+    result["category"] = cat.to_public()
+    return jsonify(result)
+
+
 # ── buyer workspace: organisation, watchlist, dashboard ──────────────────────────────────────
 
 @market_radar_bp.get("/api/buyer-workspace/me")
@@ -307,6 +464,7 @@ def workspace_me():
         "username": username,
         "organisation": org,
         "watchlist": [c.to_public() for c in watch],
+        "insights": ENABLE_BUYER_INSIGHTS,
     })
 
 

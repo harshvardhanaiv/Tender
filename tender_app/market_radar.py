@@ -630,10 +630,11 @@ def peers_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 count_by_supplier[r["supplier_key"]] += 1
                 spend_by_supplier[r["supplier_key"]] += r["value_ok"] or 0.0
                 spellings[r["supplier_key"]][r["supplier"]] += 1
-        main = None
+        main = main_key = None
         if count_by_supplier:
             top = max(count_by_supplier, key=lambda s: (spend_by_supplier[s], count_by_supplier[s]))
             main = _display_name(spellings[top])
+            main_key = top
         valued = [r["value_ok"] for r in group if r["value_ok"] is not None]
         names: dict[str, int] = defaultdict(int)
         for r in group:  # prefer the proper-case, longest spelling of the name
@@ -650,6 +651,7 @@ def peers_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "suppliers": len({r["supplier_key"] for r in group if r["listable"]}),
             "total_value": _round_money(sum(valued)) if valued else None,
             "main_supplier": main,
+            "main_supplier_key": main_key,
             "latest": {
                 "supplier": latest["supplier"] if latest["listable"] else None,
                 "value": _round_money(latest["value"]),
@@ -667,6 +669,76 @@ def peers_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _mean(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
+
+
+SIMILAR_CPV_DIGITS = 5  # CPV "category" level: 50531100 and 50531000 are the same kind of work
+
+
+def cpv_class(code: Any) -> str:
+    """The CPV class an award is filed under for supplier similarity ("" when it has no usable code)."""
+    digits = re.sub(r"\D", "", str(code or ""))
+    return digits[:SIMILAR_CPV_DIGITS] if len(digits) >= 2 else ""
+
+
+def supplier_cpv_index(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """{supplier key: {name, id, buyers, cpv: {cpv class: [awards, valued spend]}}} for the suppliers a notice names.
+
+    Kept beside the cached analysis (a few numbers per supplier and code, not the 60,000 rows) so "similar
+    suppliers" never needs another scan. Framework appointments count as awards but never as spend."""
+    index: dict[str, dict[str, Any]] = {}
+    spellings: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for r in rows:
+        if not r["listable"]:
+            continue
+        entry = index.setdefault(r["supplier_key"], {"name": "", "id": None, "buyers": set(), "cpv": {}})
+        slot = entry["cpv"].setdefault(cpv_class(r["cpv"]), [0, 0.0])
+        slot[0] += 1
+        slot[1] += r["value_ok"] or 0.0
+        entry["buyers"].add(r["buyer_key"])
+        entry["id"] = entry["id"] or r["supplier_id"]
+        spellings[r["supplier_key"]][r["supplier"]] += 1
+    for key, entry in index.items():
+        entry["name"] = _display_name(spellings[key])
+        entry["buyers"] = len(entry["buyers"])
+    return index
+
+
+def similar_suppliers(index: dict[str, dict[str, Any]], supplier_key: str, limit: int = 15) -> dict[str, Any] | None:
+    """Other suppliers in the same category doing the same kind of work as `supplier_key`.
+
+    "Same kind of work" is CPV overlap: a supplier is similar when it has awards under a CPV class (first
+    five digits) that the reference supplier also holds. Ranked by awards in the shared classes, then by
+    their value. When the reference supplier's awards carry no CPV code there is nothing to overlap on, so
+    every other supplier in the category is listed and `basis` says so. None when the supplier is unknown."""
+    mine = index.get(supplier_key)
+    if mine is None:
+        return None
+    my_classes = {c for c in mine["cpv"] if c}
+    ranked = []
+    for key, entry in index.items():
+        if key == supplier_key:
+            continue
+        shared = {c: v for c, v in entry["cpv"].items() if c in my_classes} if my_classes else entry["cpv"]
+        if not shared:
+            continue
+        ranked.append({
+            "key": key,
+            "supplier": entry["name"],
+            "supplier_id": entry["id"],
+            "shared_awards": int(sum(v[0] for v in shared.values())),
+            "shared_value": _round_money(sum(v[1] for v in shared.values())) or None,
+            "buyers": entry["buyers"],
+            "awards": int(sum(v[0] for v in entry["cpv"].values())),
+            "shared_cpv": sorted((c for c in shared if c), key=lambda c: -shared[c][0])[:3],
+        })
+    ranked.sort(key=lambda x: (x["shared_awards"], x["shared_value"] or 0, x["awards"], x["supplier"].lower()), reverse=True)
+    return {
+        "supplier": mine["name"],
+        "basis": "cpv" if my_classes else "category",
+        "cpv": sorted(my_classes, key=lambda c: -mine["cpv"][c][0]),
+        "total": len(ranked),
+        "rows": ranked[:limit],
+    }
 
 
 def suppliers_table(rows: list[dict[str, Any]], limit: int = 200) -> list[dict[str, Any]]:
@@ -774,6 +846,7 @@ def build_analysis(rows: Iterable[dict[str, Any]], truncated: bool = False, cat:
         "summary": summarise(prepared),
         "peers": peers,
         "suppliers": suppliers,
+        "_supplier_cpv": supplier_cpv_index(prepared),
         "cost": cost_table(prepared),
         "truncated": bool(truncated),
     }

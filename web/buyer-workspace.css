@@ -217,6 +217,25 @@
 .bw-log time { color: var(--bw-faint); font-variant-numeric: tabular-nums; }
 .bw-missing { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
 
+/* row actions, Insights / similar-suppliers drawer */
+.bw-row-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.bw-row-btn { display: flex; margin-top: 6px; }
+.bw-drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 880; display: flex; flex-direction: column; width: min(480px, 100vw); background: var(--panel); color: var(--ink); border-left: 1px solid var(--line); box-shadow: -12px 0 40px rgba(0, 0, 0, 0.22); }
+.bw-drawer.hidden { display: none; }
+.bw-drawer__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.bw-drawer__head h2 { margin: 0; font-size: 16px; line-height: 1.3; min-width: 0; overflow-wrap: anywhere; }
+.bw-drawer__body { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: 16px 18px 40px; }
+.bw-drawer__stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.bw-stat__value--sm { font-size: 17px; }
+.bw-drawer__section { margin-top: 20px; }
+.bw-drawer__section h3 { margin: 0 0 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--bw-faint); }
+.bw-insight { padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 3px; background: var(--bw-accent-soft); font-size: 14px; line-height: 1.55; }
+.bw-insight p { margin: 0; }
+.bw-insight--wait { color: var(--slate); }
+.bw-insight__basis { margin-top: 8px; font-size: 12.5px; color: var(--slate); }
+.bw-insight__basis summary { cursor: pointer; }
+.bw-insight__basis ul { margin: 6px 0 0; padding-left: 18px; }
+
 /* modal and toast */
 .bw-modal { position: fixed; inset: 0; z-index: 900; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(8, 14, 22, 0.55); }
 .bw-modal.hidden { display: none; }
@@ -243,6 +262,7 @@
   .bw-toolbar .bw-input { width: 100%; }
   .bw-log li { grid-template-columns: 1fr; gap: 2px; }
   .bw-stat__value { font-size: 22px; }
+  .bw-stat__value--sm { font-size: 17px; }
   /* tables turn into stacked cards: each cell carries its column name in data-label */
   .bw-table--stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .bw-table--stack, .bw-table--stack tbody, .bw-table--stack tr, .bw-table--stack td { display: block; width: 100%; box-sizing: border-box; }

@@ -985,6 +985,19 @@ def call_chat_api(system: str, user: str, max_tokens: int = 4000, temperature: f
         raise ValueError(f"Unsupported AI provider: {p}")
 
 
+def call_deepseek_insight(system: str, user: str, max_tokens: int = 500, temperature: float = 0.2, timeout: float = 25) -> str:
+    """DeepSeek only, with the server's own DEEPSEEK_API_KEY and a short timeout, for Market Radar's buyer insight.
+
+    Unlike call_chat_api this ignores the caller's X-AI-Provider / X-AI-Key headers: the buyer insight is a
+    system feature on a fixed provider, never the user's chosen model or BYO key. Raises ValueError when the
+    key is not configured and AIServiceError (or a urllib/socket error) when DeepSeek fails or times out.
+    """
+    key = os.environ.get("DEEPSEEK_API_KEY", "")
+    if not key:
+        raise ValueError("API key is not configured for provider: DEEPSEEK")
+    return _call_deepseek(system, user, key, DEEPSEEK_MODEL, max_tokens, temperature, False, timeout=timeout)
+
+
 def call_chat_json(system: str, user: str, max_tokens: int = 4000, temperature: float = 0.3,
                    provider: str = None, api_key: str = None, model: str = None,
                    expect: type = dict, retries: int = 1):
@@ -1013,7 +1026,7 @@ def call_chat_json(system: str, user: str, max_tokens: int = 4000, temperature: 
     raise AIServiceError(f"The AI returned an unusable response ({last_err}). Please try again.", status_code=502)
 
 
-def _call_deepseek(system: str, user: str, api_key: str, model: str, max_tokens: int, temperature: float, response_format_json: bool) -> str:
+def _call_deepseek(system: str, user: str, api_key: str, model: str, max_tokens: int, temperature: float, response_format_json: bool, timeout: float = 120) -> str:
     import urllib.request
     import json
     
@@ -1043,7 +1056,7 @@ def _call_deepseek(system: str, user: str, api_key: str, model: str, max_tokens:
     )
     
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             result = json.loads(resp.read())
             return result["choices"][0]["message"]["content"].strip()
     except urllib.error.HTTPError as http_err:
