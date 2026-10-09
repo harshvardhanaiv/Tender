@@ -3878,12 +3878,8 @@ function updateResultsTotal() {
     ? SearchStatus.headerSub(portalList, checkedPortalsCount, checkedCountriesCount, state.searchPhase === "loading")
     : `Across ${checkedPortalsCount} portal${checkedPortalsCount !== 1 ? 's' : ''} in ${checkedCountriesCount} countr${checkedCountriesCount !== 1 ? 'ies' : 'y'}`;
 
-  // Rows hidden by the page's own filters are reported as "before your filters" (the same wording as the
-  // progress line). There is no "sample" line any more.
-  const searchedIds = new Set(portalList.map((p) => p.id));
-  const loadedCount = searchedIds.size ? (state.rows || []).filter((r) => searchedIds.has(r.source)).length : (state.rows || []).length;
   const headline = typeof SearchStatus !== "undefined" && SearchStatus.resultsHeadline
-    ? SearchStatus.resultsHeadline(filteredCount, loadedCount)
+    ? SearchStatus.resultsHeadline(filteredCount)
     : { main: `${filteredCount.toLocaleString()} tender${filteredCount !== 1 ? 's' : ''}` };
 
   // how the portal, saved and filtered numbers add up: kept as the hover text of the count, not a line on the page
@@ -7987,7 +7983,7 @@ function updateSearchProgressUI() {
       // the raw total counts only this search's portals (the list also holds tenders saved from earlier searches of other portals)
       const searchedIds = new Set(portalList.map((p) => p.id));
       const inSearch = searchedIds.size ? state.rows.filter((r) => searchedIds.has(r.source)).length : state.rows.length;
-      const beforeFilters = inSearch > shownCount ? ` (${inSearch.toLocaleString()} before your filters)` : "";
+      const beforeFilters = "";
       const shownText = `${shownCount.toLocaleString()} tender${shownCount === 1 ? "" : "s"}`;
 
       const errors = state.meta?.errors || {};
