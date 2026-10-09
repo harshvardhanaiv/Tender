@@ -12,6 +12,7 @@ module is the HTTP layer plus the small per-user state the buyer workspace needs
     /api/market-radar/peers/awards?buyer=      one peer's awards in the category
     /api/market-radar/peers/profile?buyer=     Insights drawer: the buyer's Buyer Intelligence profile + its awards here
     /api/market-radar/peers/insight (POST)     Insights drawer: DeepSeek summary of the buyer's pattern (may be unavailable)
+    /api/market-radar/company-profile?supplier_id=  Companies House filings/owners + Google/Trustpilot ratings
     /api/market-radar/similar-suppliers?supplier=  suppliers with awards under the same CPV classes (plain data)
     /api/buyer-workspace/me                    the user's organisation and watchlist
     /api/buyer-workspace/organisations?q=      organisation search
@@ -448,6 +449,27 @@ def radar_similar_suppliers():
     result["category"] = cat.to_public()
     result["unawarded"] = _unawarded_suppliers()
     return jsonify(result)
+
+
+@market_radar_bp.get("/api/market-radar/company-profile")
+@rate_limit(RATE_LIMIT_SEARCH)
+def radar_company_profile():
+    try:
+        supplier_id = int(request.args.get("supplier_id", ""))
+    except ValueError:
+        return _error("supplier_id is required")
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, name, company_number, region, website FROM suppliers WHERE id = %s", (supplier_id,))
+        row = cur.fetchone()
+        cur.close()
+    finally:
+        conn.close()
+    if not row:
+        return _error("supplier not found", 404)
+    from tender_app import company_profile as cp
+    return jsonify(cp.build_profile({"id": row[0], "name": row[1], "company_number": row[2], "region": row[3], "website": row[4]}))
 
 
 def _unawarded_suppliers(limit: int = 15) -> dict:
