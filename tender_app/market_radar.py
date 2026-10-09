@@ -705,6 +705,39 @@ def supplier_cpv_index(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return index
 
 
+# Words that appear in company names everywhere and say nothing about the trade.
+_NAME_STOPWORDS = frozenset({
+    "services", "service", "works", "work", "maintenance", "repair", "repairs", "planned", "responsive", "management",
+    "systems", "system", "solutions", "software", "the", "and", "for", "with", "support", "other", "general", "safety",
+})
+
+
+def related_cpv_groups(category: Category) -> list[str]:
+    """CPV groups (first three digits) around a category: where a supplier "awarded elsewhere" is looked for.
+
+    "5072" -> "507", "45331" -> "453". Empty for a category defined only by search words (no CPV to widen)."""
+    base = category.cpv or category.keyword_cpv
+    return sorted({c[:3] for c in base if len(c) >= 2})
+
+
+def category_name_terms(category: Category, cpv_labels: dict[str, str] | None = None, limit: int = 8) -> list[str]:
+    """Words a supplier's name is searched for when it has no award to show its trade: the category's own
+    keywords and search words plus the words of its CPV labels, without the generic ones above."""
+    raw: list[str] = list(category.text_tokens)
+    for kw in category.keywords:
+        raw.extend(kw.split())
+    for c in category.cpv[:6]:
+        label = (cpv_labels or {}).get(c)
+        if label:
+            raw.extend(label.split())
+    seen: dict[str, None] = {}
+    for w in raw:
+        w = re.sub(r"[^a-z]", "", w.lower())
+        if len(w) >= 3 and w not in _NAME_STOPWORDS:
+            seen.setdefault(w)
+    return list(seen)[:limit]
+
+
 def similar_suppliers(index: dict[str, dict[str, Any]], supplier_key: str, limit: int = 15) -> dict[str, Any] | None:
     """Other suppliers in the same category doing the same kind of work as `supplier_key`.
 

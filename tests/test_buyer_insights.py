@@ -174,5 +174,14 @@ def main():
         sys.exit(1)
 
 
+def test_not_awarded_helpers():
+    cat = mr.resolve_category("housing-repairs-gas", None, None, None)
+    assert mr.related_cpv_groups(cat) == ["453", "507"]
+    terms = mr.category_name_terms(cat, {"5072": "Repair and maintenance services of central heating"})
+    assert {"gas", "boiler", "heating"} <= set(terms) and "services" not in terms and "repair" not in terms
+    custom = mr.resolve_category(None, None, "tree surgery", None)
+    assert mr.related_cpv_groups(custom) == [] and mr.category_name_terms(custom) == ["tree", "surgery"]
+
+
 if __name__ == "__main__":
     main()
