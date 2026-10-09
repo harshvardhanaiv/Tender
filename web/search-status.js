@@ -107,12 +107,11 @@
     return `${text} in ${countriesCount} countr${countriesCount === 1 ? "y" : "ies"}`;
   }
 
-  /* The results header's first line. `shown` is what is left after the page's own filters, `loaded` what the
-     search brought in before them; rows hidden by the page's own filters are reported as "before your filters".
+  /* The results header's first line. `shown` is what is left after the page's own filters. The number
+     loaded before those filters is not shown (it read as a second, unexplained total).
      There is no "sample" line: a portal holding more notices than were fetched is in that portal's chip tooltip. */
-  function resultsHeadline(shown, loaded) {
-    const before = loaded > shown ? ` (${fmtInt(loaded)} before your filters)` : "";
-    return { main: `${plural(shown, "tender")}${before}` };
+  function resultsHeadline(shown) {
+    return { main: plural(shown, "tender") };
   }
 
   /* How the numbers on the page add up, from the server's own count identity (`meta.reconciliation.total`):

@@ -222,7 +222,7 @@ test("resultsHeadline: rows hidden by the page's own filters are not a sample", 
   // The header used to say "Showing sample of 6,177 of 8,765 tenders".
   const list = S.portalList(metaOf({}, { find_tender: { count: 5000 }, contracts_finder: { count: 3000 }, procontract: { count: 765 } }), labelOf);
   const h = S.resultsHeadline(6177, 8765, list);
-  assert.equal(h.main, "6,177 tenders (8,765 before your filters)");
+  assert.equal(h.main, "6,177 tenders");
   assert.ok(!/sample/i.test(h.main), "no sample wording when nothing was left unfetched");
 });
 
@@ -230,7 +230,7 @@ test("resultsHeadline: no 'Sample only' line, even when a portal holds more noti
   // asked for removal after the live check: "Sample only: Find a Tender (UK) 119 of 15,456 fetched" sat under every search
   const list = S.portalList(metaOf({}, { find_tender: { count: 119, available: 15422 }, contracts_finder: { count: 173, available: 173 } }), labelOf);
   const h = S.resultsHeadline(13, 304, list);
-  assert.equal(h.main, "13 tenders (304 before your filters)");
+  assert.equal(h.main, "13 tenders");
   assert.equal(h.note, undefined);
   assert.ok(!/sample/i.test(JSON.stringify(h)));
 });

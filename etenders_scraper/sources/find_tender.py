@@ -69,6 +69,10 @@ class FindTenderError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 _MIN_GAP_SEC = 1.0
+# Every HTTP 429 widens the gap (x2, x3 ... up to x5 of _MIN_GAP_SEC) and each good response narrows it again,
+# so a busy day slows the crawl down instead of hammering a site that has already said "too fast".
+_MAX_BOOST = 4.0
+_boost = 0.0
 _sleep = time.sleep  # tests replace this so they do not wait
 _throttle_lock = threading.Lock()
 _next_slot = 0.0
@@ -80,7 +84,7 @@ def _throttle() -> None:
     with _throttle_lock:
         now = time.monotonic()
         wait = max(0.0, _next_slot - now)
-        _next_slot = max(now, _next_slot) + _MIN_GAP_SEC
+        _next_slot = max(now, _next_slot) + _MIN_GAP_SEC * (1.0 + _boost)
     if wait > 0:
         _sleep(wait)
 
@@ -100,8 +104,14 @@ def _make_session() -> requests.Session:
     return s
 
 
-def _request(session: requests.Session, method: str, url: str, *, retries: int = 2, timeout: int = 20, **kwargs: Any) -> requests.Response:
-    """One throttled request; 429/503 and network errors are retried a couple of times."""
+def _note_response(status: int) -> None:
+    global _boost
+    with _throttle_lock:
+        _boost = min(_MAX_BOOST, _boost + 1.0) if status == 429 else max(0.0, _boost - 0.25)
+
+
+def _request(session: requests.Session, method: str, url: str, *, retries: int = 4, timeout: int = 20, **kwargs: Any) -> requests.Response:
+    """One throttled request; 429/503 and network errors are retried a few times, waiting out Retry-After."""
     last: requests.Response | None = None
     for attempt in range(retries + 1):
         _throttle()
@@ -112,9 +122,10 @@ def _request(session: requests.Session, method: str, url: str, *, retries: int =
                 _sleep(1.5 * (attempt + 1))
                 continue
             raise FindTenderError(f"Find a Tender did not answer ({type(exc).__name__})") from exc
+        _note_response(resp.status_code)
         if resp.status_code in (429, 503) and attempt < retries:
             last = resp
-            _sleep(min(10.0, _retry_after(resp) or 3.0 * (attempt + 1)))
+            _sleep(min(30.0, _retry_after(resp) or 3.0 * (attempt + 1)))
             continue
         return resp
     assert last is not None
