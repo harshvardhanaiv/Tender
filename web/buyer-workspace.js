@@ -373,7 +373,7 @@
         <td class="bw-cell-main" data-label="Buyer"><span class="bw-name">${esc(displayName(p.buyer))}</span>${p.is_me ? ' <span class="bw-badge bw-badge--accent">Your organisation</span>' : ""}
           <span class="bw-sub">${esc(p.type_label)}</span></td>
         <td class="num" data-label="Awards">${fmtInt(p.awards)}${p.frameworks ? `<span class="bw-sub">${fmtInt(p.frameworks)} framework${p.frameworks === 1 ? "" : "s"}</span>` : ""}</td>
-        <td data-label="Main supplier">${p.main_supplier ? esc(displayName(p.main_supplier)) : '<span class="bw-faint">–</span>'}${p.main_supplier && p.main_supplier_key ? `<button class="bw-btn bw-btn--sm bw-row-btn" type="button" data-action="similar-suppliers" data-supplier="${esc(p.main_supplier_key)}">View similar suppliers</button>` : ""}</td>
+        <td data-label="Main supplier">${p.main_supplier ? esc(displayName(p.main_supplier)) : '<span class="bw-faint">–</span>'}${p.main_supplier && p.main_supplier_key ? `<button class="bw-btn bw-btn--sm bw-row-btn" type="button" data-action="similar-suppliers" data-supplier="${esc(p.main_supplier_key)}">View similar suppliers</button>` : ""}${p.main_supplier && p.main_supplier_id ? `<button class="bw-btn bw-btn--sm bw-row-btn" type="button" data-action="company-profile" data-supplier-id="${esc(p.main_supplier_id)}" data-name="${esc(p.main_supplier)}">Company profile</button>` : ""}</td>
         <td data-label="Latest contract">${titleText}
           <span class="bw-sub">${subBit}</span></td>
         <td data-label="Route"><span class="bw-badge" title="${ROUTE_HINT}">${esc(latest.route || "Not stated")}</span></td>
@@ -687,16 +687,63 @@
     return drawerSection(head, `<p class="bw-hint" style="margin:0">${esc(r.message || "Insight unavailable right now.")} The figures above are unaffected.</p>`);
   }
 
+  const profileBtn = (r) => r.supplier_id ? `<button class="bw-link bw-link-btn" type="button" data-action="company-profile" data-supplier-id="${esc(r.supplier_id)}" data-name="${esc(r.supplier)}">Company profile</button>` : "";
+
+  const SOURCE_NOTE = { not_connected: "Not connected: no API key is configured.", not_found: "No confident match found.", no_website: "No website on record to look this supplier up by.", no_reviews: "Listed, but no reviews yet.", error: "Unavailable right now." };
+  function ratingCardHtml(label, r) {
+    const head = `<div class="bw-stat__label">${esc(label)}</div>`;
+    if (!r || r.status !== "ok") return `<div class="bw-stat">${head}<div class="bw-stat__value bw-stat__value--sm bw-faint">–</div><div class="bw-stat__hint">${esc(SOURCE_NOTE[r && r.status] || SOURCE_NOTE.error)}</div></div>`;
+    const link = safeUrl(r.url) ? ` <a class="bw-link" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">View</a>` : "";
+    return `<div class="bw-stat">${head}<div class="bw-stat__value">${esc(Number(r.rating).toFixed(1))} <small>/ 5</small></div><div class="bw-stat__hint">${fmtInt(r.count || 0)} reviews${link}</div></div>`;
+  }
+  function companyProfileHtml(d) {
+    const ch = d.companies_house || {};
+    let chHtml;
+    if (ch.status !== "ok") {
+      chHtml = `<div class="bw-empty"><strong>Companies House</strong>${esc(SOURCE_NOTE[ch.status] || SOURCE_NOTE.error)}</div>`;
+    } else {
+      const link = safeUrl(ch.url) ? `<a class="bw-link" href="${esc(ch.url)}" target="_blank" rel="noopener noreferrer">${esc(ch.company_number)}</a>` : esc(ch.company_number);
+      const facts = [["Company", `${esc(ch.name || d.supplier.name)} (${link})`], ["Status", esc(ch.company_status || "–")], ["Incorporated", ch.incorporated ? fmtDate(ch.incorporated) : "–"],
+        ["Last accounts made up to", ch.last_accounts ? fmtDate(ch.last_accounts) : "None filed"], ["Next accounts due", ch.accounts_next_due ? fmtDate(ch.accounts_next_due) : "–"],
+        ["Last confirmation statement", ch.last_confirmation_statement ? fmtDate(ch.last_confirmation_statement) : "–"]]
+        .map(([k, v]) => `<tr><th scope="row">${k}</th><td>${v}</td></tr>`).join("");
+      const match = ch.matched_by === "name" ? `<p class="bw-hint">Matched to Companies House by name (high confidence), as no registration number is held.</p>` : "";
+      const filings = ch.filings_error ? `<p class="bw-hint">Filing history unavailable right now.</p>` : ch.filings.length
+        ? `<ul class="bw-plainlist">${ch.filings.map((f) => `<li><span class="bw-name">${esc(String(f.description || "Filing").replace(/-/g, " "))}</span><span class="bw-sub">${f.date ? fmtDate(f.date) : ""}${f.category ? ` · ${esc(String(f.category).replace(/-/g, " "))}` : ""}</span></li>`).join("")}</ul>`
+        : `<p class="bw-hint">No filings returned.</p>`;
+      const active = (ch.owners || []).filter((o) => !o.ceased), ceased = (ch.owners || []).length - active.length;
+      const owners = ch.owners_error ? `<p class="bw-hint">Owners unavailable right now.</p>` : active.length
+        ? `<ul class="bw-plainlist">${active.map((o) => `<li><span class="bw-name">${esc(o.name || "Name withheld")}</span><span class="bw-sub">${esc(o.control.join("; ") || "Significant control")}${o.since ? ` · since ${fmtDate(o.since)}` : ""}</span></li>`).join("")}</ul>${ceased ? `<p class="bw-hint">${plural(ceased, "former owner")} not shown.</p>` : ""}`
+        : `<p class="bw-hint">No persons with significant control are registered.</p>`;
+      chHtml = `<div class="bw-table-wrap"><table class="bw-table"><tbody>${facts}</tbody></table></div>${match}
+        <h3 class="bw-drawer__sub">Latest filings</h3>${filings}<h3 class="bw-drawer__sub">Owners (persons with significant control)</h3>${owners}`;
+    }
+    return `<div class="bw-grid bw-grid--2">${ratingCardHtml("Google rating", d.google)}${ratingCardHtml("Trustpilot", d.trustpilot)}</div>${chHtml}
+      <p class="bw-hint">Sources: Companies House, Google Places, Trustpilot. Shown as published, not verified by TenderFlow.</p>`;
+  }
+
+  async function openCompanyProfile(id, name) {
+    const seq = ++drawerSeq;
+    openDrawer(`Company profile: ${displayName(name || "supplier")}`, skeleton(3));
+    try {
+      const d = await api(`/api/market-radar/company-profile?supplier_id=${encodeURIComponent(id)}`);
+      if (seq !== drawerSeq) return;
+      document.getElementById("bwDrawerBody").innerHTML = companyProfileHtml(d);
+    } catch (err) {
+      if (seq === drawerSeq) document.getElementById("bwDrawerBody").innerHTML = `<div class="bw-note bw-note--bad">${esc(err.message)}</div>`;
+    }
+  }
+
   function similarSuppliersHtml(d) {
     const basis = d.basis === "cpv"
       ? `Ranked by awards under the same CPV classes as ${esc(displayName(d.supplier))} in ${esc(d.category.label)}${d.cpv.length ? `: ${d.cpv.slice(0, 5).map((c) => esc(d.cpv_labels && d.cpv_labels[c] ? `${c} ${d.cpv_labels[c]}` : c)).join("; ")}` : ""}.`
       : `${esc(displayName(d.supplier))}’s notices carry no CPV code, so every other supplier in ${esc(d.category.label)} is listed, ranked by awards.`;
     const un = d.unawarded && d.unawarded.rows && d.unawarded.rows.length ? `<h3 class="bw-drawer__sub">Registered, no awards yet</h3>
       <p class="bw-hint" style="margin-top:0">Suppliers on the register with no published award. Their category is unknown, so they are not ranked by similarity.</p>
-      <ul class="bw-plainlist">${d.unawarded.rows.map((r) => `<li><span class="bw-name">${esc(displayName(r.supplier))}</span>${r.region || r.sme ? `<span class="bw-sub">${esc([r.region, r.sme ? "SME" : ""].filter(Boolean).join(" · "))}</span>` : ""}</li>`).join("")}</ul>
+      <ul class="bw-plainlist">${d.unawarded.rows.map((r) => `<li><span class="bw-name">${esc(displayName(r.supplier))}</span>${profileBtn(r)}${r.region || r.sme ? `<span class="bw-sub">${esc([r.region, r.sme ? "SME" : ""].filter(Boolean).join(" · "))}</span>` : ""}</li>`).join("")}</ul>
       ${d.unawarded.total > d.unawarded.rows.length ? `<p class="bw-hint">Showing ${d.unawarded.rows.length} of ${fmtInt(d.unawarded.total)}.</p>` : ""}` : "";
     if (!d.rows.length) return `<p class="bw-hint">${basis}</p><div class="bw-empty"><strong>No similar suppliers found</strong>No other supplier in this view has awards under the same CPV classes.</div>${un}`;
-    const rows = d.rows.map((r) => `<tr><td class="bw-cell-main" data-label="Supplier"><span class="bw-name">${esc(displayName(r.supplier))}</span>${r.shared_cpv.length ? `<span class="bw-sub">CPV ${esc(r.shared_cpv.join(", "))}</span>` : ""}</td>
+    const rows = d.rows.map((r) => `<tr><td class="bw-cell-main" data-label="Supplier"><span class="bw-name">${esc(displayName(r.supplier))}</span>${r.shared_cpv.length ? `<span class="bw-sub">CPV ${esc(r.shared_cpv.join(", "))}</span>` : ""}${profileBtn(r)}</td>
       <td class="num" data-label="Awards">${fmtInt(r.shared_awards)}${r.awards > r.shared_awards ? `<span class="bw-sub">of ${fmtInt(r.awards)}</span>` : ""}</td>
       <td class="num" data-label="Value">${r.shared_value ? fmtMoney(r.shared_value) : '<span class="bw-faint">–</span>'}</td>
       <td class="num" data-label="Buyers">${fmtInt(r.buyers)}</td></tr>`).join("");
@@ -891,6 +938,7 @@
         case "cost-basis": radar.basis = target.dataset.basis; paintRadarPanel(); break;
         case "peer-toggle": await togglePeerAwards(target.dataset.key, target); break;
         case "peer-insights": await openInsights(target.dataset.key); break;
+        case "company-profile": await openCompanyProfile(target.dataset.supplierId, target.dataset.name); break;
         case "similar-suppliers": await openSimilarSuppliers(target.dataset.supplier); break;
         case "drawer-close": closeDrawer(); break;
         case "peers-page": radar.peers.page = Number(target.dataset.page); await refreshPeers(); break;
@@ -991,7 +1039,7 @@
   Object.assign(BW, {
     esc, fmtInt, fmtMoney, fmtDate, fmtPct, plural, qs, api, ApiError, ensureOptions, toast, openModal, closeModal, copyText, download,
     parseHash, buildHash, navigate, replaceHash, route, skeleton, errorHtml, pickerHtml, bindPicker, specOf,
-    insightFactsHtml, insightNarrativeHtml, similarSuppliersHtml, peersTableHtml, suppliersPanelHtml, costPanelHtml, kpiHtml, renewalsTableHtml, activityTableHtml, niceTicks, valueCell, awardLine,
+    insightFactsHtml, insightNarrativeHtml, similarSuppliersHtml, companyProfileHtml, peersTableHtml, suppliersPanelHtml, costPanelHtml, kpiHtml, renewalsTableHtml, activityTableHtml, niceTicks, valueCell, awardLine,
     specFromParams, specToParams, specFromKey, defaultAuthority, safeUrl, trimNum, clamp,
   });
 

@@ -300,6 +300,18 @@ test("similarSuppliersHtml", () => {
   has(BW.similarSuppliersHtml({ ...base, rows: [], total: 0 }), "No similar suppliers found");
 });
 
+test("companyProfileHtml: sources fail soft, text is escaped, owners and filings render", () => {
+  const html = BW.companyProfileHtml({ supplier: { name: "Acme" }, google: { status: "ok", rating: 4.25, count: 120, url: "https://maps.example/x" }, trustpilot: { status: "not_connected" },
+    companies_house: { status: "ok", matched_by: "name", company_number: "01234567", name: "ACME <LTD>", company_status: "active", incorporated: "2010-03-01", last_accounts: "2025-03-31", accounts_next_due: "2026-12-31",
+      last_confirmation_statement: "2025-06-01", url: "https://find.example/c/01234567", filings_error: false, owners_error: false,
+      filings: [{ date: "2025-09-01", description: "accounts-with-accounts-type-full", category: "accounts" }],
+      owners: [{ name: "Jane <Doe>", control: ["ownership of shares 25 to 50 percent"], since: "2020-01-01", ceased: null }, { name: "Old Owner", control: [], ceased: "2021-01-01" }] } });
+  has(html, "4.3 <small>/ 5</small>", "120 reviews", "Not connected: no API key", "ACME &lt;LTD&gt;", "Last accounts made up to", "31 Mar 2025", "accounts with accounts type full",
+    "Jane &lt;Doe&gt;", "ownership of shares 25 to 50 percent", "1 former owner not shown", "Matched to Companies House by name");
+  lacks(html, "<LTD>", "<Doe>", "Old Owner");
+  has(BW.companyProfileHtml({ supplier: {}, google: { status: "not_found" }, trustpilot: { status: "no_website" }, companies_house: { status: "error" } }), "No confident match found", "No website on record", "Unavailable right now");
+});
+
 const supplierRow =  (over = {}) => ({
   supplier: "Acme <Ltd>", buyers: 4, contracts: 5, framework_appointments: 1, total_value: 750000, valued_contracts: 4, avg_contract: 187500,
   avg_term_months: 24, repeat_rate: 0.33, price_band: "£ Lower", latest_signed: "2025-03-01", ...over,

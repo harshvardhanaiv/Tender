@@ -123,6 +123,13 @@ ENABLE_BUYER_INSIGHTS = os.environ.get("ENABLE_BUYER_INSIGHTS", "1") == "1"
 BUYER_INSIGHT_TIMEOUT_SECONDS = float(os.environ.get("BUYER_INSIGHT_TIMEOUT_SECONDS", "25"))
 BUYER_INSIGHT_MIN_AWARDS = int(os.environ.get("BUYER_INSIGHT_MIN_AWARDS", "5"))
 
+# Company profile drawer (Market Radar): Companies House filings and owners, plus Google and Trustpilot
+# ratings. Each source needs its own key and is reported as "not connected" without one; none is guessed.
+COMPANIES_HOUSE_API_KEY = os.environ.get("COMPANIES_HOUSE_API_KEY", "")
+GOOGLE_PLACES_API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY", "")
+TRUSTPILOT_API_KEY = os.environ.get("TRUSTPILOT_API_KEY", "")
+COMPANY_PROFILE_TIMEOUT_SECONDS = float(os.environ.get("COMPANY_PROFILE_TIMEOUT_SECONDS", "6"))
+
 # Growth Studio: outreach signals and campaigns for suppliers (web/growth-studio.js and the
 # /api/growth routes). Set to 0 to hide it entirely: the routes and its files answer 404 and the
 # sidebar item is not shown.

@@ -630,11 +630,12 @@ def peers_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 count_by_supplier[r["supplier_key"]] += 1
                 spend_by_supplier[r["supplier_key"]] += r["value_ok"] or 0.0
                 spellings[r["supplier_key"]][r["supplier"]] += 1
-        main = main_key = None
+        main = main_key = main_id = None
         if count_by_supplier:
             top = max(count_by_supplier, key=lambda s: (spend_by_supplier[s], count_by_supplier[s]))
             main = _display_name(spellings[top])
             main_key = top
+            main_id = next((r["supplier_id"] for r in group if r["listable"] and r["supplier_key"] == top and r["supplier_id"]), None)
         valued = [r["value_ok"] for r in group if r["value_ok"] is not None]
         names: dict[str, int] = defaultdict(int)
         for r in group:  # prefer the proper-case, longest spelling of the name
@@ -652,6 +653,7 @@ def peers_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "total_value": _round_money(sum(valued)) if valued else None,
             "main_supplier": main,
             "main_supplier_key": main_key,
+            "main_supplier_id": main_id,
             "latest": {
                 "supplier": latest["supplier"] if latest["listable"] else None,
                 "value": _round_money(latest["value"]),
