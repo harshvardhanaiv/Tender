@@ -2307,7 +2307,8 @@ def _build_email_html(username: str, tender: dict, days_remaining: int) -> tuple
     else:
         app_url = f"{base_url}/?q={encoded_title}"
 
-    pause_url = f"{base_url}/api/alerts/preference?cadence=off&user={urllib.parse.quote(username)}"
+    from tender_app.email_svc import alert_pref_token
+    pause_url = f"{base_url}/api/alerts/preference?cadence=off&user={urllib.parse.quote(username)}&token={alert_pref_token(username)}"
 
     return f"""<!DOCTYPE html>
 <html>
@@ -2525,7 +2526,8 @@ def _build_recommendation_email_html(username, company_name, tenders) -> tuple[s
         base_url = "http://localhost:8092"
 
     import urllib.parse as _urllib_parse
-    pause_url = f"{base_url}/api/alerts/preference?cadence=off&user={_urllib_parse.quote(username)}"
+    from tender_app.email_svc import alert_pref_token
+    pause_url = f"{base_url}/api/alerts/preference?cadence=off&user={_urllib_parse.quote(username)}&token={alert_pref_token(username)}"
 
     tenders_html = ""
     for t in tenders:
@@ -3104,14 +3106,31 @@ def create_app() -> Flask:
     def api_alerts_preference():
         """Handle deep-linked alert preference changes (e.g. cadence=daily, cadence=weekly, cadence=off)."""
         cadence = (request.args.get("cadence") or request.form.get("cadence") or "daily").lower()
-        username = request.args.get("user") or request.args.get("username") or session.get("username") or ""
+        link_user = (request.args.get("user") or request.args.get("username") or "").strip()
+        username = link_user or session.get("username") or ""
+
+        # This route is reachable without a session (email links). A logged-in user may change
+        # their own settings; otherwise the link must carry a valid signature, except pausing,
+        # which stays open so unsubscribing works from emails sent before links were signed.
+        if username and cadence != "off" and (session.get("username") or "").lower() != username.lower():
+            import hmac as _hmac
+            from tender_app.email_svc import alert_pref_token
+            expected = alert_pref_token(username)
+            if not expected or not _hmac.compare_digest(expected, request.args.get("token") or ""):
+                username = ""
 
         if username:
             try:
                 conn = get_db_connection()
                 ph = "%s"
                 cur = conn.cursor()
-                
+                # Links carry the address as written in the email; stored usernames are
+                # lowercase, so resolve to the stored spelling before touching either table.
+                cur.execute("SELECT username FROM users WHERE LOWER(username) = LOWER(%s) OR LOWER(email) = LOWER(%s) LIMIT 1", (username, username))
+                found = cur.fetchone()
+                if found:
+                    username = found[0]
+
                 enabled_val = "false" if cadence == "off" else "true"
                 prefs_to_save = [("automated_emails_enabled", enabled_val)]
                 if cadence != "off":
@@ -3400,6 +3419,9 @@ def create_app() -> Flask:
         allowed_paths = [
             "/login.html", "/pricing.html", "/api/auth/firebase", "/api/logout",
             "/api/auth/forgot-password",
+            # Linked from emails and opened (or POSTed by mail clients' one-click unsubscribe)
+            # without a session; the handlers do their own checks.
+            "/api/alerts/preference", "/api/alerts/feedback",
             "/api/health", "/api/config/public", "/api/stripe/webhook",
             "/api/billing/catalog", "/translations.js", "/api/auth/bypass",
             "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png",

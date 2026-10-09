@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request, session
 
-from tender_app.email_svc import send_welcome
 from tender_app.firebase_auth import AuthError, upsert_firebase_user, verify_id_token
 from tender_app.security import ensure_csrf_token, rate_limit
 
@@ -62,8 +61,7 @@ def api_auth_firebase():
     session["email"] = email.lower() if email else username
     csrf = ensure_csrf_token()
 
-    if not existed and email:
-        send_welcome(email, name)
+    # The welcome email is sent once, from upsert_firebase_user, when it creates the account.
 
     return jsonify({"ok": True, "username": username, "csrf_token": csrf})
 
