@@ -353,6 +353,18 @@ def generate_capability_reasons(tender: Dict[str, Any], profile_text: str = "", 
     return reasons[:3]
 
 
+def alert_pref_token(user: str) -> str:
+    """Signature for the links in alert emails, so a logged-out click can change that user's
+    cadence without anyone being able to forge links for other accounts. Empty when no stable
+    FLASK_SECRET_KEY is configured (the route then cannot verify and falls back to pause-only)."""
+    import hashlib
+    import hmac
+    secret = os.environ.get("FLASK_SECRET_KEY", "")
+    if not secret or not user:
+        return ""
+    return hmac.new(secret.encode(), f"alert-pref:{user.strip().lower()}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
 def render_best_fit_digest_html(display_name: str, tenders: List[Dict[str, Any]], company_name: str = "", profile_text: str = "", email: str = "") -> tuple[str, str, str, str]:
     """Render subject, HTML body, plain-text body and the pause/unsubscribe URL for the
     best-fit tender digest (Image 1 template)."""
@@ -536,10 +548,11 @@ def render_best_fit_digest_html(display_name: str, tenders: List[Dict[str, Any]]
     """
 
     # PART 4: Footer Controls & Footnote
-    instant_url = f"{base_url}/api/alerts/preference?cadence=immediately&user={encoded_user}"
-    daily_url = f"{base_url}/api/alerts/preference?cadence=daily&user={encoded_user}"
-    weekly_url = f"{base_url}/api/alerts/preference?cadence=weekly&user={encoded_user}"
-    pause_url = f"{base_url}/api/alerts/preference?cadence=off&user={encoded_user}"
+    _sig = f"&token={alert_pref_token(email or display_name)}"
+    instant_url = f"{base_url}/api/alerts/preference?cadence=immediately&user={encoded_user}{_sig}"
+    daily_url = f"{base_url}/api/alerts/preference?cadence=daily&user={encoded_user}{_sig}"
+    weekly_url = f"{base_url}/api/alerts/preference?cadence=weekly&user={encoded_user}{_sig}"
+    pause_url = f"{base_url}/api/alerts/preference?cadence=off&user={encoded_user}{_sig}"
     settings_url = f"{base_url}/#settings"
 
     html_body = f"""
