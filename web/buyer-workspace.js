@@ -689,7 +689,7 @@
 
   const profileBtn = (r) => r.supplier_id ? `<button class="bw-link bw-link-btn" type="button" data-action="company-profile" data-supplier-id="${esc(r.supplier_id)}" data-name="${esc(r.supplier)}">Company profile</button>` : "";
 
-  const SOURCE_NOTE = { not_connected: "Not connected: no API key is configured.", not_found: "No confident match found.", no_website: "No website on record to look this supplier up by.", no_reviews: "Listed, but no reviews yet.", error: "Unavailable right now." };
+  const SOURCE_NOTE = { not_connected: "Not connected: no API key is configured.", not_found: "No confident match found.", no_reviews: "Listed, but no reviews yet.", error: "Unavailable right now." };
   function ratingCardHtml(label, r) {
     const head = `<div class="bw-stat__label">${esc(label)}</div>`;
     if (!r || r.status !== "ok") return `<div class="bw-stat">${head}<div class="bw-stat__value bw-stat__value--sm bw-faint">–</div><div class="bw-stat__hint">${esc(SOURCE_NOTE[r && r.status] || SOURCE_NOTE.error)}</div></div>`;
@@ -718,8 +718,8 @@
       chHtml = `<div class="bw-table-wrap"><table class="bw-table"><tbody>${facts}</tbody></table></div>${match}
         <h3 class="bw-drawer__sub">Latest filings</h3>${filings}<h3 class="bw-drawer__sub">Owners (persons with significant control)</h3>${owners}`;
     }
-    return `<div class="bw-grid bw-grid--2">${ratingCardHtml("Google rating", d.google)}${ratingCardHtml("Trustpilot", d.trustpilot)}</div>${chHtml}
-      <p class="bw-hint">Sources: Companies House, Google Places, Trustpilot. Shown as published, not verified by TenderFlow.</p>`;
+    return `<div class="bw-grid bw-grid--1">${ratingCardHtml("Google rating", d.google)}</div>${chHtml}
+      <p class="bw-hint">Sources: Companies House and Google Places. Shown as published, not verified by TenderFlow.</p>`;
   }
 
   async function openCompanyProfile(id, name) {

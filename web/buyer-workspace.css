@@ -284,6 +284,6 @@
 .bw-plainlist li { padding: 8px 0; border-top: 1px solid var(--bw-line-strong); }
 .bw-plainlist li:first-child { border-top: 0; }
 .bw-link-btn { display: block; margin-top: 3px; padding: 0; border: 0; background: none; font: inherit; font-size: 12.5px; cursor: pointer; text-align: left; }
-.bw-drawer .bw-grid--2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+.bw-drawer .bw-grid--1 { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 16px; }
 .bw-stat__value small { font-size: 12px; font-weight: 400; color: var(--slate); }
 .bw-table th[scope="row"] { text-align: left; font-weight: 500; color: var(--slate); width: 46%; }

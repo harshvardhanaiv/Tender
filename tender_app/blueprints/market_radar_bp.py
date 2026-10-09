@@ -12,7 +12,7 @@ module is the HTTP layer plus the small per-user state the buyer workspace needs
     /api/market-radar/peers/awards?buyer=      one peer's awards in the category
     /api/market-radar/peers/profile?buyer=     Insights drawer: the buyer's Buyer Intelligence profile + its awards here
     /api/market-radar/peers/insight (POST)     Insights drawer: DeepSeek summary of the buyer's pattern (may be unavailable)
-    /api/market-radar/company-profile?supplier_id=  Companies House filings/owners + Google/Trustpilot ratings
+    /api/market-radar/company-profile?supplier_id=  Companies House filings/owners + Google rating
     /api/market-radar/similar-suppliers?supplier=  suppliers with awards under the same CPV classes (plain data)
     /api/buyer-workspace/me                    the user's organisation and watchlist
     /api/buyer-workspace/organisations?q=      organisation search

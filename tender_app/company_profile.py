@@ -1,4 +1,4 @@
-"""Company profile for a supplier: Companies House filings and owners, plus Google and Trustpilot ratings.
+"""Company profile for a supplier: Companies House filings and owners, plus the Google rating.
 
 Every figure comes straight from the source's API response; a source with no key, no confident match or a
 failing call is reported as such and the rest still render. Matches need a name similarity of at least
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import base64
 import json
-import re
 import time
 import urllib.error
 import urllib.parse
@@ -39,14 +38,6 @@ def _get_json(url: str, headers: dict[str, str], data: bytes | None = None) -> A
     req = urllib.request.Request(url, data=data, headers={"Accept": "application/json", **headers})
     with urllib.request.urlopen(req, timeout=config.COMPANY_PROFILE_TIMEOUT_SECONDS) as resp:
         return json.loads(resp.read().decode("utf-8"))
-
-
-def _domain(website: str | None) -> str | None:
-    if not website:
-        return None
-    host = urllib.parse.urlparse(website if "//" in website else "//" + website.strip()).hostname or ""
-    host = re.sub(r"^www\.", "", host.lower())
-    return host if "." in host else None
 
 
 # ── Companies House ─────────────────────────────────────────────────────────────────────────
@@ -147,50 +138,14 @@ def google(name: str, region: str | None) -> dict[str, Any]:
     return _cached(("google", name.lower(), region or ""), build)
 
 
-# ── Trustpilot ──────────────────────────────────────────────────────────────────────────────
-
-def trustpilot(name: str, website: str | None) -> dict[str, Any]:
-    if not config.TRUSTPILOT_API_KEY:
-        return {"status": "not_connected"}
-    domain = _domain(website)
-    if not domain:
-        return {"status": "no_website"}
-
-    def build() -> dict[str, Any]:
-        try:
-            key = {"apikey": config.TRUSTPILOT_API_KEY}
-            found = _get_json(f"https://api.trustpilot.com/v1/business-units/find?name={urllib.parse.quote(domain)}", key)
-            unit_id = found.get("id")
-            if not unit_id:
-                return {"status": "not_found"}
-            unit = _get_json(f"https://api.trustpilot.com/v1/business-units/{unit_id}", key)
-            title = (unit.get("displayName") or unit.get("name", {}).get("referring") or "")
-            if title and calculate_name_similarity(name, title) < MATCH_THRESHOLD and (unit.get("name") or {}).get("identifying", "").lower() != domain:
-                return {"status": "not_found"}
-            score = unit.get("score") or {}
-            total = (unit.get("numberOfReviews") or {}).get("total")
-            if score.get("trustScore") is None or not total:
-                return {"status": "no_reviews", "name": title}
-            return {"status": "ok", "name": title, "rating": score["trustScore"], "stars": score.get("stars"), "count": total,
-                    "url": f"https://www.trustpilot.com/review/{domain}"}
-        except urllib.error.HTTPError as ex:
-            return {"status": "not_found"} if ex.code == 404 else {"status": "error"}
-        except Exception:
-            return {"status": "error"}
-
-    return _cached(("trustpilot", name.lower(), domain), build)
-
-
 def build_profile(supplier: dict[str, Any]) -> dict[str, Any]:
     from concurrent.futures import ThreadPoolExecutor
     name = supplier["name"]
-    with ThreadPoolExecutor(max_workers=3) as ex:  # three independent sources: wait for the slowest, not the sum
+    with ThreadPoolExecutor(max_workers=2) as ex:  # independent sources: wait for the slowest, not the sum
         ch = ex.submit(companies_house, name, supplier.get("company_number"))
         gg = ex.submit(google, name, supplier.get("region"))
-        tp = ex.submit(trustpilot, name, supplier.get("website"))
         return {
-            "supplier": {"id": supplier["id"], "name": name, "region": supplier.get("region"), "website": supplier.get("website")},
+            "supplier": {"id": supplier["id"], "name": name, "region": supplier.get("region")},
             "companies_house": ch.result(),
             "google": gg.result(),
-            "trustpilot": tp.result(),
         }

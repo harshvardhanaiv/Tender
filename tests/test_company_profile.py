@@ -22,9 +22,9 @@ def fake(routes):
 
 def test_no_keys():
     cp._CACHE.clear()
-    config.COMPANIES_HOUSE_API_KEY = config.GOOGLE_PLACES_API_KEY = config.TRUSTPILOT_API_KEY = ""
+    config.COMPANIES_HOUSE_API_KEY = config.GOOGLE_PLACES_API_KEY = ""
     out = cp.build_profile({"id": 1, "name": "Acme Ltd", "company_number": None, "region": None, "website": None})
-    assert out["companies_house"]["status"] == out["google"]["status"] == out["trustpilot"]["status"] == "not_connected"
+    assert out["companies_house"]["status"] == out["google"]["status"] == "not_connected"
 
 
 def test_companies_house_by_number():
@@ -59,20 +59,15 @@ def test_errors_not_cached_and_soft():
     assert not cp._CACHE, "a failed call must be retried, not remembered"
 
 
-def test_google_and_trustpilot():
+def test_google():
     cp._CACHE.clear()
-    config.GOOGLE_PLACES_API_KEY = config.TRUSTPILOT_API_KEY = "k"
+    config.GOOGLE_PLACES_API_KEY = "k"
     cp._get_json = fake({
         "places:searchText": {"places": [{"displayName": {"text": "Other Co"}, "rating": 1.0, "userRatingCount": 3},
                                          {"displayName": {"text": "Acme Ltd"}, "rating": 4.4, "userRatingCount": 87, "googleMapsUri": "https://maps"}]},
-        "business-units/find": {"id": "abc"},
-        "business-units/abc": {"displayName": "Acme", "score": {"trustScore": 4.1, "stars": 4}, "numberOfReviews": {"total": 55}},
     })
     g = cp.google("Acme Ltd", None)
     assert g["status"] == "ok" and g["rating"] == 4.4 and g["count"] == 87
-    t = cp.trustpilot("Acme Ltd", "https://www.acme.co.uk/about")
-    assert t["status"] == "ok" and t["rating"] == 4.1 and t["url"].endswith("/review/acme.co.uk")
-    assert cp.trustpilot("Acme Ltd", None)["status"] == "no_website"
 
 
 if __name__ == "__main__":
