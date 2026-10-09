@@ -446,7 +446,28 @@ def radar_similar_suppliers():
     labels, _ = mr.load_cpv_labels(_connect)
     result["cpv_labels"] = {c: next((labels[c[:n]] for n in (5, 4, 3, 2) if c[:n] in labels), None) for c in result["cpv"][:5]}
     result["category"] = cat.to_public()
+    result["unawarded"] = _unawarded_suppliers()
     return jsonify(result)
+
+
+def _unawarded_suppliers(limit: int = 15) -> dict:
+    """Registered suppliers with no contract award anywhere. The register carries no CPV or category for
+    them, so they cannot be ranked by similarity; they are listed separately, newest first."""
+    where = "FROM suppliers s WHERE COALESCE(s.name, '') <> '' AND NOT EXISTS (SELECT 1 FROM contract_awards a WHERE a.supplier_id = s.id)"
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(f"SELECT COUNT(*) {where}")
+        total = int(cur.fetchone()[0])
+        cur.execute(f"SELECT s.id, s.name, s.region, s.sme_status {where} ORDER BY s.created_at DESC, s.id DESC LIMIT %s", (limit,))
+        rows = [{"supplier_id": r[0], "supplier": r[1], "region": r[2], "sme": (r[3] or "") == "SME"} for r in cur.fetchall()]
+        cur.close()
+    except Exception:
+        traceback.print_exc()
+        return {"total": 0, "rows": []}
+    finally:
+        conn.close()
+    return {"total": total, "rows": rows}
 
 
 # ── buyer workspace: organisation, watchlist, dashboard ──────────────────────────────────────

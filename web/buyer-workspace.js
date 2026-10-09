@@ -691,14 +691,18 @@
     const basis = d.basis === "cpv"
       ? `Ranked by awards under the same CPV classes as ${esc(displayName(d.supplier))} in ${esc(d.category.label)}${d.cpv.length ? `: ${d.cpv.slice(0, 5).map((c) => esc(d.cpv_labels && d.cpv_labels[c] ? `${c} ${d.cpv_labels[c]}` : c)).join("; ")}` : ""}.`
       : `${esc(displayName(d.supplier))}’s notices carry no CPV code, so every other supplier in ${esc(d.category.label)} is listed, ranked by awards.`;
-    if (!d.rows.length) return `<p class="bw-hint">${basis}</p><div class="bw-empty"><strong>No similar suppliers found</strong>No other supplier in this view has awards under the same CPV classes.</div>`;
+    const un = d.unawarded && d.unawarded.rows && d.unawarded.rows.length ? `<h3 class="bw-drawer__sub">Registered, no awards yet</h3>
+      <p class="bw-hint" style="margin-top:0">Suppliers on the register with no published award. Their category is unknown, so they are not ranked by similarity.</p>
+      <ul class="bw-plainlist">${d.unawarded.rows.map((r) => `<li><span class="bw-name">${esc(displayName(r.supplier))}</span>${r.region || r.sme ? `<span class="bw-sub">${esc([r.region, r.sme ? "SME" : ""].filter(Boolean).join(" · "))}</span>` : ""}</li>`).join("")}</ul>
+      ${d.unawarded.total > d.unawarded.rows.length ? `<p class="bw-hint">Showing ${d.unawarded.rows.length} of ${fmtInt(d.unawarded.total)}.</p>` : ""}` : "";
+    if (!d.rows.length) return `<p class="bw-hint">${basis}</p><div class="bw-empty"><strong>No similar suppliers found</strong>No other supplier in this view has awards under the same CPV classes.</div>${un}`;
     const rows = d.rows.map((r) => `<tr><td class="bw-cell-main" data-label="Supplier"><span class="bw-name">${esc(displayName(r.supplier))}</span>${r.shared_cpv.length ? `<span class="bw-sub">CPV ${esc(r.shared_cpv.join(", "))}</span>` : ""}</td>
       <td class="num" data-label="Awards">${fmtInt(r.shared_awards)}${r.awards > r.shared_awards ? `<span class="bw-sub">of ${fmtInt(r.awards)}</span>` : ""}</td>
       <td class="num" data-label="Value">${r.shared_value ? fmtMoney(r.shared_value) : '<span class="bw-faint">–</span>'}</td>
       <td class="num" data-label="Buyers">${fmtInt(r.buyers)}</td></tr>`).join("");
     return `<p class="bw-hint" style="margin-top:0">${basis}</p>
       <div class="bw-table-wrap"><table class="bw-table bw-table--stack"><thead><tr><th>Supplier</th><th class="num" title="Awards under the shared CPV classes">Awards</th><th class="num" title="Published value of those awards, framework ceilings excluded">Value</th><th class="num">Buyers</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <p class="bw-hint">${d.total > d.rows.length ? `Showing ${d.rows.length} of ${fmtInt(d.total)}. ` : ""}Values are published notice values, not invoiced spend.</p>`;
+      <p class="bw-hint">${d.total > d.rows.length ? `Showing ${d.rows.length} of ${fmtInt(d.total)}. ` : ""}Values are published notice values, not invoiced spend.</p>${un}`;
   }
 
   let drawerReturnFocus = null;
