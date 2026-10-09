@@ -13,6 +13,7 @@ module is the HTTP layer plus the small per-user state the buyer workspace needs
     /api/market-radar/peers/profile?buyer=     Insights drawer: the buyer's Buyer Intelligence profile + its awards here
     /api/market-radar/peers/insight (POST)     Insights drawer: DeepSeek summary of the buyer's pattern (may be unavailable)
     /api/market-radar/company-profile?supplier_id=  Companies House filings/owners + Google rating
+    /api/market-radar/not-awarded-suppliers  suppliers with no award in the category (awarded elsewhere / registered)
     /api/market-radar/similar-suppliers?supplier=  suppliers with awards under the same CPV classes (plain data)
     /api/buyer-workspace/me                    the user's organisation and watchlist
     /api/buyer-workspace/organisations?q=      organisation search
@@ -26,6 +27,7 @@ preferences, stored in user_prefs. Mutating requests are CSRF-protected by the a
 from __future__ import annotations
 
 import json
+import re
 import traceback
 from typing import Any
 
@@ -447,7 +449,6 @@ def radar_similar_suppliers():
     labels, _ = mr.load_cpv_labels(_connect)
     result["cpv_labels"] = {c: next((labels[c[:n]] for n in (5, 4, 3, 2) if c[:n] in labels), None) for c in result["cpv"][:5]}
     result["category"] = cat.to_public()
-    result["unawarded"] = _unawarded_suppliers()
     return jsonify(result)
 
 
@@ -472,23 +473,71 @@ def radar_company_profile():
     return jsonify(cp.build_profile({"id": row[0], "name": row[1], "company_number": row[2], "region": row[3], "website": row[4]}))
 
 
-def _unawarded_suppliers(limit: int = 15) -> dict:
-    """Registered suppliers with no contract award anywhere. The register carries no CPV or category for
-    them, so they cannot be ranked by similarity; they are listed separately, newest first."""
-    where = "FROM suppliers s WHERE COALESCE(s.name, '') <> '' AND NOT EXISTS (SELECT 1 FROM contract_awards a WHERE a.supplier_id = s.id)"
+@market_radar_bp.get("/api/market-radar/not-awarded-suppliers")
+@rate_limit(RATE_LIMIT_SEARCH)
+def radar_not_awarded_suppliers():
+    """Suppliers with no award in the category, in two groups: awarded under a related CPV group elsewhere,
+    and registered with no award anywhere (matched to the category by words in their name only)."""
+    try:
+        limit = max(5, min(100, int(request.args.get("limit", "25"))))
+    except ValueError:
+        return _error("limit must be a number")
+    try:
+        cat = _category_from(request.args)
+        authority, window, scope = _filters_from(request.args)
+        analysis = mr.get_analysis(_connect, cat, authority, window, scope)
+    except mr.CategoryError as exc:
+        return _error(str(exc))
+    labels, _ = mr.load_cpv_labels(_connect)
+    in_category = {e["id"] for e in analysis["_supplier_cpv"].values() if e["id"]}
+    groups = mr.related_cpv_groups(cat)
+    terms = mr.category_name_terms(cat, labels)
     conn = _connect()
     try:
         cur = conn.cursor()
-        cur.execute(f"SELECT COUNT(*) {where}")
-        total = int(cur.fetchone()[0])
-        cur.execute(f"SELECT s.id, s.name, s.region, s.sme_status {where} ORDER BY s.created_at DESC, s.id DESC LIMIT %s", (limit,))
-        rows = [{"supplier_id": r[0], "supplier": r[1], "region": r[2], "sme": (r[3] or "") == "SME"} for r in cur.fetchall()]
+        elsewhere = _awarded_elsewhere(cur, groups, in_category, limit)
+        registered = _registered_unawarded(cur, terms, limit)
         cur.close()
     except Exception:
         traceback.print_exc()
-        return {"total": 0, "rows": []}
+        return _error("could not load suppliers right now", 500)
     finally:
         conn.close()
+    elsewhere["groups"] = [{"cpv": g, "label": next((labels[g[:n]] for n in (3, 2) if g[:n] in labels), None)} for g in groups]
+    registered["terms"] = terms
+    return jsonify({"category": cat.to_public(), "limit": limit, "elsewhere": elsewhere, "registered": registered})
+
+
+def _awarded_elsewhere(cur, groups: list[str], in_category: set, limit: int) -> dict:
+    """Suppliers with notices under the category's related CPV groups but none in the category itself."""
+    if not groups:
+        return {"total": 0, "rows": []}
+    cur.execute("""
+        SELECT s.id, s.name, s.region, s.sme_status, COUNT(*) AS n, MAX(a.date_signed) AS latest
+        FROM contract_awards a
+        JOIN suppliers s ON s.id = a.supplier_id
+        LEFT JOIN supplier_stats st ON st.supplier_id = s.id
+        WHERE a.cpv_code ~ %s AND COALESCE(s.name, '') <> '' AND COALESCE(st.listable, TRUE)
+        GROUP BY s.id, s.name, s.region, s.sme_status
+        ORDER BY n DESC, s.name
+        LIMIT 2000
+    """, ("^(" + "|".join(groups) + ")",))
+    rows = [{"supplier_id": r[0], "supplier": r[1], "region": r[2], "sme": (r[3] or "") == "SME", "notices": int(r[4]), "latest": r[5]}
+            for r in cur.fetchall() if r[0] not in in_category]
+    return {"total": len(rows), "rows": rows[:limit]}
+
+
+def _registered_unawarded(cur, terms: list[str], limit: int) -> dict:
+    """Registered suppliers with no award anywhere whose name contains one of the category's words."""
+    if not terms:
+        return {"total": 0, "rows": []}
+    where = ("FROM suppliers s WHERE COALESCE(s.name, '') <> '' AND s.name ~* %s "
+             "AND NOT EXISTS (SELECT 1 FROM contract_awards a WHERE a.supplier_id = s.id)")
+    pattern = r"\m(" + "|".join(re.escape(t) for t in terms) + ")"
+    cur.execute(f"SELECT COUNT(*) {where}", (pattern,))
+    total = int(cur.fetchone()[0])
+    cur.execute(f"SELECT s.id, s.name, s.region, s.sme_status {where} ORDER BY s.created_at DESC, s.id DESC LIMIT %s", (pattern, limit))
+    rows = [{"supplier_id": r[0], "supplier": r[1], "region": r[2], "sme": (r[3] or "") == "SME"} for r in cur.fetchall()]
     return {"total": total, "rows": rows}
 
 

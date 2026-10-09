@@ -350,7 +350,7 @@ def _open_search(keyword: str, source_id: str, source_label: str) -> tuple[reque
     for _attempt in range(2):
         session = _make_session()
         token = _fetch_form_token(session)
-        resp = _request(session, "POST", _SEARCH_URL, retries=1, timeout=25, data=_search_form(token, keyword))
+        resp = _request(session, "POST", _SEARCH_URL, retries=3, timeout=25, data=_search_form(token, keyword))
         _check_status(resp, "the search")
         kind, total, title, rows = _parse_page(resp.text, source_id, source_label)
         if kind != "error":
@@ -388,7 +388,7 @@ def search_find_tender(
             break
         page += 1
         try:
-            resp = _request(session, "GET", _SEARCH_URL, retries=1, timeout=20, params={"page": page})
+            resp = _request(session, "GET", _SEARCH_URL, retries=4, timeout=20, params={"page": page})
             _check_status(resp, f"results page {page}")
         except FindTenderError as exc:
             info["note"] = f"results page {page} failed: {exc}"

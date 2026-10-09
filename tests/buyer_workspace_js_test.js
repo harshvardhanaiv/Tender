@@ -312,6 +312,20 @@ test("companyProfileHtml: sources fail soft, text is escaped, owners and filings
   has(BW.companyProfileHtml({ supplier: {}, google: { status: "not_connected" }, companies_house: { status: "error" } }), "Not connected: no API key", "Unavailable right now");
 });
 
+test("not awarded tab: two groups, escaped, show-more only when there is more", () => {
+  const d = { category: { label: "Housing <repairs>" }, limit: 25,
+    elsewhere: { total: 40, groups: [{ cpv: "507", label: "Repair services" }], rows: [{ supplier_id: 7, supplier: "Nearby <Co>", region: "North West", sme: true, notices: 3, latest: "2025-06-01" }] },
+    registered: { total: 1, terms: ["gas", "boiler"], rows: [{ supplier_id: 9, supplier: "Gas Heat Ltd", region: null, sme: false }] } };
+  const html = BW.notAwardedHtml(d);
+  has(html, "Awarded elsewhere, none in this category", "Registered, no awards anywhere", "Housing &lt;repairs&gt;", "Nearby &lt;Co&gt;", "North West · SME · 3 notices in related codes", "CPV 507 Repair services",
+    "gas, boiler", 'data-action="company-profile" data-supplier-id="7"', "Showing 1 of 40", 'data-action="not-awarded-more"', "Gas Heat Ltd");
+  lacks(html, "<Co>", "<repairs>");
+  assert.equal((html.match(/not-awarded-more/g) || []).length, 1, "registered list is complete, so no second button");
+  has(BW.notAwardedHtml({ ...d, elsewhere: { total: 0, rows: [], groups: [] }, registered: { total: 0, rows: [], terms: [] } }), "defined by search words only", "No words in this category");
+  const tabs = BW.similarTabsHtml("notawarded", "x");
+  has(tabs, 'data-tab="awarded" aria-selected="false"', 'data-tab="notawarded" aria-selected="true"');
+});
+
 const supplierRow =  (over = {}) => ({
   supplier: "Acme <Ltd>", buyers: 4, contracts: 5, framework_appointments: 1, total_value: 750000, valued_contracts: 4, avg_contract: 187500,
   avg_term_months: 24, repeat_rate: 0.33, price_band: "£ Lower", latest_signed: "2025-03-01", ...over,

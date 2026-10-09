@@ -738,18 +738,41 @@
     const basis = d.basis === "cpv"
       ? `Ranked by awards under the same CPV classes as ${esc(displayName(d.supplier))} in ${esc(d.category.label)}${d.cpv.length ? `: ${d.cpv.slice(0, 5).map((c) => esc(d.cpv_labels && d.cpv_labels[c] ? `${c} ${d.cpv_labels[c]}` : c)).join("; ")}` : ""}.`
       : `${esc(displayName(d.supplier))}’s notices carry no CPV code, so every other supplier in ${esc(d.category.label)} is listed, ranked by awards.`;
-    const un = d.unawarded && d.unawarded.rows && d.unawarded.rows.length ? `<h3 class="bw-drawer__sub">Registered, no awards yet</h3>
-      <p class="bw-hint" style="margin-top:0">Suppliers on the register with no published award. Their category is unknown, so they are not ranked by similarity.</p>
-      <ul class="bw-plainlist">${d.unawarded.rows.map((r) => `<li><span class="bw-name">${esc(displayName(r.supplier))}</span>${profileBtn(r)}${r.region || r.sme ? `<span class="bw-sub">${esc([r.region, r.sme ? "SME" : ""].filter(Boolean).join(" · "))}</span>` : ""}</li>`).join("")}</ul>
-      ${d.unawarded.total > d.unawarded.rows.length ? `<p class="bw-hint">Showing ${d.unawarded.rows.length} of ${fmtInt(d.unawarded.total)}.</p>` : ""}` : "";
-    if (!d.rows.length) return `<p class="bw-hint">${basis}</p><div class="bw-empty"><strong>No similar suppliers found</strong>No other supplier in this view has awards under the same CPV classes.</div>${un}`;
+    if (!d.rows.length) return `<p class="bw-hint">${basis}</p><div class="bw-empty"><strong>No similar suppliers found</strong>No other supplier in this view has awards under the same CPV classes.</div>`;
     const rows = d.rows.map((r) => `<tr><td class="bw-cell-main" data-label="Supplier"><span class="bw-name">${esc(displayName(r.supplier))}</span>${r.shared_cpv.length ? `<span class="bw-sub">CPV ${esc(r.shared_cpv.join(", "))}</span>` : ""}${profileBtn(r)}</td>
       <td class="num" data-label="Awards">${fmtInt(r.shared_awards)}${r.awards > r.shared_awards ? `<span class="bw-sub">of ${fmtInt(r.awards)}</span>` : ""}</td>
       <td class="num" data-label="Value">${r.shared_value ? fmtMoney(r.shared_value) : '<span class="bw-faint">–</span>'}</td>
       <td class="num" data-label="Buyers">${fmtInt(r.buyers)}</td></tr>`).join("");
     return `<p class="bw-hint" style="margin-top:0">${basis}</p>
       <div class="bw-table-wrap"><table class="bw-table bw-table--stack"><thead><tr><th>Supplier</th><th class="num" title="Awards under the shared CPV classes">Awards</th><th class="num" title="Published value of those awards, framework ceilings excluded">Value</th><th class="num">Buyers</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <p class="bw-hint">${d.total > d.rows.length ? `Showing ${d.rows.length} of ${fmtInt(d.total)}. ` : ""}Values are published notice values, not invoiced spend.</p>${un}`;
+      <p class="bw-hint">${d.total > d.rows.length ? `Showing ${d.rows.length} of ${fmtInt(d.total)}. ` : ""}Values are published notice values, not invoiced spend.</p>`;
+  }
+
+  function similarTabsHtml(tab, inner) {
+    const t = [["awarded", "Awarded"], ["notawarded", "Not awarded"]];
+    return `<div class="bw-tabs" role="tablist" aria-label="Supplier groups">${t.map(([id, label]) => `<button type="button" role="tab" class="bw-tab" data-action="similar-tab" data-tab="${id}" aria-selected="${tab === id}">${label}</button>`).join("")}</div>
+      <div role="tabpanel">${inner}</div>`;
+  }
+
+  function notAwardedHtml(d) {
+    const cat = esc(d.category.label);
+    const sub = (r, extra) => { const bits = [r.region, r.sme ? "SME" : "", extra].filter(Boolean); return bits.length ? `<span class="bw-sub">${esc(bits.join(" · "))}</span>` : ""; };
+    const more = (g) => g.total > g.rows.length && d.limit < 100 ? `<p class="bw-hint">Showing ${g.rows.length} of ${fmtInt(g.total)}. <button type="button" class="bw-link bw-link-btn" style="display:inline" data-action="not-awarded-more">Show more</button></p>` : (g.total > g.rows.length ? `<p class="bw-hint">Showing ${g.rows.length} of ${fmtInt(g.total)}.</p>` : "");
+    const el = d.elsewhere, rg = d.registered;
+    const groups = el.groups && el.groups.length ? ` (CPV ${el.groups.map((g) => esc(g.label ? `${g.cpv} ${g.label}` : g.cpv)).join("; ")})` : "";
+    const elHtml = !el.groups || !el.groups.length
+      ? `<p class="bw-hint">This category is defined by search words only, so there is no CPV group to look under.</p>`
+      : el.rows.length ? `<ul class="bw-plainlist">${el.rows.map((r) => `<li><span class="bw-name">${esc(displayName(r.supplier))}</span>${sub(r, `${plural(r.notices, "notice")} in related codes${r.latest ? `, latest ${fmtDate(r.latest)}` : ""}`)}${profileBtn(r)}</li>`).join("")}</ul>${more(el)}`
+      : `<p class="bw-hint">No other supplier has notices under the related CPV groups.</p>`;
+    const rgHtml = !rg.terms || !rg.terms.length
+      ? `<p class="bw-hint">No words in this category to match company names on.</p>`
+      : rg.rows.length ? `<ul class="bw-plainlist">${rg.rows.map((r) => `<li><span class="bw-name">${esc(displayName(r.supplier))}</span>${sub(r)}${profileBtn(r)}</li>`).join("")}</ul>${more(rg)}`
+      : `<p class="bw-hint">No registered supplier without awards has these words in its name.</p>`;
+    return `<p class="bw-hint" style="margin-top:0">Suppliers with no award in ${cat}. Both lists come from the supplier register and the published notices.</p>
+      <h3 class="bw-drawer__sub" style="margin-top:6px">Awarded elsewhere, none in this category</h3>
+      <p class="bw-hint" style="margin-top:0">Have notices under related CPV groups${groups}, so they work nearby.</p>${elHtml}
+      <h3 class="bw-drawer__sub">Registered, no awards anywhere</h3>
+      <p class="bw-hint" style="margin-top:0">Matched to this category by words in the company name only (${rg.terms && rg.terms.length ? esc(rg.terms.join(", ")) : "none"}), so a name can mislead.</p>${rgHtml}`;
   }
 
   let drawerReturnFocus = null;
@@ -790,14 +813,47 @@
     paint(r);
   }
 
+  const sim = { seq: 0, supplierKey: null, awarded: null, notAwarded: null, tab: "awarded", limit: 25 };
+  function paintSimilar() {
+    const body = document.getElementById("bwDrawerBody");
+    if (!body || sim.seq !== drawerSeq) return;
+    const inner = sim.tab === "awarded" ? similarSuppliersHtml(sim.awarded) : (sim.notAwarded ? notAwardedHtml(sim.notAwarded) : skeleton(3));
+    body.innerHTML = similarTabsHtml(sim.tab, inner);
+  }
+  async function loadNotAwarded() {
+    const seq = sim.seq;
+    try {
+      const d = await api(`/api/market-radar/not-awarded-suppliers${radarQuery(radar.spec, radar.filters, { limit: sim.limit })}`);
+      if (seq !== sim.seq || seq !== drawerSeq) return;
+      sim.notAwarded = d;
+      paintSimilar();
+    } catch (err) {
+      const body = document.getElementById("bwDrawerBody");
+      if (seq === drawerSeq && body) body.innerHTML = similarTabsHtml("notawarded", `<div class="bw-note bw-note--bad">${esc(err.message)}</div>`);
+    }
+  }
+  function switchSimilarTab(tab) {
+    if (tab === sim.tab) return;
+    sim.tab = tab;
+    paintSimilar();
+    if (tab === "notawarded" && !sim.notAwarded) loadNotAwarded();
+  }
+  function moreNotAwarded() {
+    sim.limit = Math.min(100, sim.limit + 25);
+    sim.notAwarded = null;
+    paintSimilar();
+    loadNotAwarded();
+  }
   async function openSimilarSuppliers(supplierKey) {
     const seq = ++drawerSeq;
+    Object.assign(sim, { seq, supplierKey, awarded: null, notAwarded: null, tab: "awarded", limit: 25 });
     const peer = radar.data && radar.data.peers.rows.find((p) => p.main_supplier_key === supplierKey);
     openDrawer(`Similar to ${displayName((peer && peer.main_supplier) || "supplier")}`, skeleton(3));
     try {
       const d = await api(`/api/market-radar/similar-suppliers${radarQuery(radar.spec, radar.filters, { supplier: supplierKey })}`);
       if (seq !== drawerSeq) return;
-      document.getElementById("bwDrawerBody").innerHTML = similarSuppliersHtml(d);
+      sim.awarded = d;
+      paintSimilar();
     } catch (err) {
       if (seq === drawerSeq) document.getElementById("bwDrawerBody").innerHTML = `<div class="bw-note bw-note--bad">${esc(err.message)}</div>`;
     }
@@ -939,6 +995,8 @@
         case "peer-toggle": await togglePeerAwards(target.dataset.key, target); break;
         case "peer-insights": await openInsights(target.dataset.key); break;
         case "company-profile": await openCompanyProfile(target.dataset.supplierId, target.dataset.name); break;
+        case "similar-tab": switchSimilarTab(target.dataset.tab); break;
+        case "not-awarded-more": moreNotAwarded(); break;
         case "similar-suppliers": await openSimilarSuppliers(target.dataset.supplier); break;
         case "drawer-close": closeDrawer(); break;
         case "peers-page": radar.peers.page = Number(target.dataset.page); await refreshPeers(); break;
@@ -1039,7 +1097,7 @@
   Object.assign(BW, {
     esc, fmtInt, fmtMoney, fmtDate, fmtPct, plural, qs, api, ApiError, ensureOptions, toast, openModal, closeModal, copyText, download,
     parseHash, buildHash, navigate, replaceHash, route, skeleton, errorHtml, pickerHtml, bindPicker, specOf,
-    insightFactsHtml, insightNarrativeHtml, similarSuppliersHtml, companyProfileHtml, peersTableHtml, suppliersPanelHtml, costPanelHtml, kpiHtml, renewalsTableHtml, activityTableHtml, niceTicks, valueCell, awardLine,
+    insightFactsHtml, insightNarrativeHtml, similarSuppliersHtml, notAwardedHtml, similarTabsHtml, companyProfileHtml, peersTableHtml, suppliersPanelHtml, costPanelHtml, kpiHtml, renewalsTableHtml, activityTableHtml, niceTicks, valueCell, awardLine,
     specFromParams, specToParams, specFromKey, defaultAuthority, safeUrl, trimNum, clamp,
   });
 
