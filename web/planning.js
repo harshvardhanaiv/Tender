@@ -144,9 +144,10 @@
     let lng = form.elements.lng.value;
     if (cityVal === "custom") {
       const txt = (byId("txtPlanningLocationCustom")?.value || "").trim();
-      const found = txt ? resolveCustomBuyerLocation(txt) : null;
-      lat = found ? found.lat : 51.5074;
-      lng = found ? found.lon : -0.1278;
+      // The custom-location handler below has already resolved the text into the hidden lat/lng fields;
+      // keep those rather than guessing again (and never fall back to London).
+      const found = txt && !(lat && lng) ? resolveCustomBuyerLocation(txt) : null;
+      if (found) { lat = found.lat; lng = found.lon; }
     } else if (cityVal && cityVal !== "gps") {
       // "gps" has no live source beyond what the Geolocation callback already wrote into the
       // hidden fields, so it keeps using those (lat/lng above).
@@ -909,20 +910,19 @@
     }
 
     if (txtCustom) {
-      const handleCustomLocation = () => {
+      const handleCustomLocation = async () => {
         const txt = txtCustom.value.trim();
         if (!txt) return;
-        const found = resolveCustomBuyerLocation(txt);
+        if (lblStatus) lblStatus.textContent = "Looking up location…";
+        const found = await window.resolveLocationAsync(txt);
         if (found) {
           hidLat.value = found.lat;
           hidLng.value = found.lon;
-          if (lblStatus) lblStatus.innerHTML = `📍 Resolved to: <strong>${esc(found.name)}</strong>`;
-        } else {
-          hidLat.value = 51.5074;
-          hidLng.value = -0.1278;
-          if (lblStatus) lblStatus.innerHTML = `📍 Centered on UK / London (${esc(txt)})`;
+          if (lblStatus) lblStatus.innerHTML = `📍 Centered on <strong>${esc(found.name)}</strong> (${esc(txt)})`;
+          search(1);
+        } else if (lblStatus) {
+          lblStatus.innerHTML = `⚠️ Couldn’t find “${esc(txt)}”. Enter a UK postcode (e.g. CM9 5ED) or a city name.`;
         }
-        search(1);
       };
       txtCustom.addEventListener("change", handleCustomLocation);
       txtCustom.addEventListener("keydown", (e) => {

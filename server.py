@@ -3047,6 +3047,45 @@ def create_app() -> Flask:
 
     # Note: /api/email-settings GET/POST is handled by init_profiles_blueprint (profiles_bp.py)
 
+    _GEOCODE_CACHE = {}
+
+    @app.get("/api/geocode")
+    def api_geocode():
+        """Resolve a UK postcode (full or outward, e.g. 'CM9 5ED' / 'CM9') to lat/lon via postcodes.io.
+
+        The page used to guess from the first letters of the postcode and fall back to London, so
+        'CM9 5ED' (Maldon, Essex) was measured from London. Returns {found: false} when unresolved
+        so the page can say so instead of silently using London.
+        """
+        import urllib.parse
+        import urllib.request
+        raw = (request.args.get("q") or "").strip().upper()
+        compact = re.sub(r"\s+", "", raw)
+        if not re.fullmatch(r"[A-Z]{1,2}\d[A-Z\d]?(\d[A-Z]{2})?", compact):
+            return jsonify({"found": False})
+        if compact in _GEOCODE_CACHE:
+            return jsonify(_GEOCODE_CACHE[compact])
+        full = bool(re.search(r"\d[A-Z]{2}$", compact)) and len(compact) >= 5
+        kind = "postcodes" if full else "outcodes"
+        url = f"https://api.postcodes.io/{kind}/{urllib.parse.quote(compact)}"
+        try:
+            with urllib.request.urlopen(url, timeout=6) as resp:
+                data = json.loads(resp.read().decode("utf-8")).get("result") or {}
+        except Exception:
+            return jsonify({"found": False})
+        lat, lon = data.get("latitude"), data.get("longitude")
+        if lat is None or lon is None:
+            out = {"found": False}
+        else:
+            place = data.get("admin_district") or data.get("parish") or ""
+            if isinstance(place, list):
+                place = place[0] if place else ""
+            region = data.get("region") or data.get("country") or ""
+            name = ", ".join(x for x in (place, region) if x) or raw
+            out = {"found": True, "lat": lat, "lon": lon, "name": name}
+        _GEOCODE_CACHE[compact] = out
+        return jsonify(out)
+
 
     @app.route("/api/alerts/feedback", methods=["GET", "POST"])
     def api_alerts_feedback():

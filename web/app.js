@@ -3419,13 +3419,10 @@ function renderPortalSummary() {
   }
   const chips = SearchStatus.summaryHtml(list, esc);
   chipsEl.innerHTML = chips;
-  const note = SearchStatus.countyNoteHtml(
-    state.meta?.county_filter, activeCountySelection().length, (id) => SOURCES_LABEL[id] || id, esc
-  );
-  noteEl.innerHTML = note;
-  noteEl.classList.toggle("hidden", !note);
-  // nothing to say (every portal answered normally and no county filter hid rows): no empty box
-  wrap.classList.toggle("hidden", !chips && !note);
+  // The "N results hidden by your county filter" banner was removed on request; the county chip in the
+  // filter bar already shows what is applied.
+  if (noteEl) { noteEl.innerHTML = ""; noteEl.classList.add("hidden"); }
+  wrap.classList.toggle("hidden", !chips);
 }
 
 // Retry / Resume buttons on the summary chips
@@ -4154,8 +4151,8 @@ function formatDaysLeft(row) {
   if (days == null || urgency === "unknown") {
     const pubDate = parseDate(row.date_published);
     const pubYear = pubDate ? pubDate.getFullYear() : null;
-    const pubText = pubYear && pubYear < new Date().getFullYear() ? ` · Published ${pubYear}` : "";
-    return `<span class="days-badge days-badge--unknown" title="${esc(deadline || "No deadline stated")}">No deadline stated${esc(pubText)}</span>`;
+    const pubText = pubYear && pubYear < new Date().getFullYear() ? ` (published ${pubYear})` : "";
+    return `<span class="days-badge days-badge--unknown" title="${esc((deadline || "No deadline stated") + pubText)}">No deadline</span>`;
   }
   if (urgency === "past") {
     return `<span class="days-badge days-badge--past" title="Deadline: ${esc(deadline)}">Closed</span>`;
@@ -5092,6 +5089,52 @@ function syncKeywordScopeFromInput(val) {
   }
 }
 
+// ── Word-level matching ──────────────────────────────────────────────────────────────────────
+// "software development" must find "Development of a software platform", and a row that contains neither
+// word (a portal's loose fuzzy hit, e.g. a boiler contract) must not be shown. A comma separates
+// alternatives ("software, dashboard" = software OR dashboard); within one alternative every word must appear.
+const QUERY_STOPWORDS = new Set(["and", "the", "for", "of", "in", "to", "a", "an", "with", "on", "services", "service"]);
+
+function queryWordStem(w) {
+  return w.length > 5 ? w.replace(/(ing|ed|es|s)$/, "") : w.replace(/s$/, "");
+}
+
+// Returns [[stem, ...], ...]: one array of word stems per comma-separated alternative.
+function queryAlternatives(query) {
+  return String(query || "")
+    .toLowerCase()
+    .split(/[,;|]+/)
+    .map((part) => part.split(/[^a-z0-9]+/).filter((w) => w.length >= 2 && !QUERY_STOPWORDS.has(w)).map(queryWordStem))
+    .filter((words) => words.length);
+}
+
+function rowSearchText(row) {
+  const parts = [
+    row.title, row.tender_title, row.name, row.description, row.abstract, row.procurement_description,
+    row.summary, row.scope, row.contracting_authority, row.authority_name, row.buyer, row.cpv_description,
+    row.cpv_codes_text, row.supplier_name, row.awarded_supplier,
+  ];
+  return parts.map((f) => extractTextFromField(f)).join(" ").toLowerCase();
+}
+
+// "all" when some alternative has every word in the row, "some" when only some of the words appear, else "none".
+function wordMatchLevel(row, query, titleOnly) {
+  const alts = queryAlternatives(query);
+  if (!alts.length) return "none";
+  const hay = titleOnly ? String(row.title || row.tender_title || row.name || "").toLowerCase() : rowSearchText(row);
+  const titleHay = String(row.title || row.tender_title || row.name || "").toLowerCase();
+  let some = false;
+  for (const words of alts) {
+    const hits = words.filter((w) => hay.includes(w));
+    if (hits.length === words.length) {
+      if (!row._match_reason) row._match_reason = words.every((w) => titleHay.includes(w)) ? "title" : "scope text";
+      return "all";
+    }
+    if (hits.length) some = true;
+  }
+  return some ? "some" : "none";
+}
+
 function matchRowToKeyword(row, query, scope = "all") {
   if (!row) return false;
   row._match_reason = null;
@@ -5194,7 +5237,7 @@ function matchRowToKeyword(row, query, scope = "all") {
   };
 
   if (effectiveScope === "title") {
-    return checkTitle();
+    return checkTitle() || wordMatchLevel(row, q, true) === "all";
   }
   if (effectiveScope === "supplier") {
     return checkSupplier();
@@ -5208,6 +5251,8 @@ function matchRowToKeyword(row, query, scope = "all") {
   if (checkSupplier()) return true;
   if (checkBuyer()) return true;
   if (checkScope()) return true;
+  // Not the exact phrase anywhere: accept a row that has every word of the search.
+  if (wordMatchLevel(row, q, false) === "all") return true;
 
   return false;
 }
@@ -5228,7 +5273,20 @@ function filteredAndSortedRows() {
       if (matchRowToKeyword(row, parsedKeyword.query, parsedKeyword.scope)) return true;
       // The portal returned this row for the search itself, so it is a hit even though the word is not in the fields shown
       // (all-fields searches only: a title / supplier / buyer search is exactly about those fields).
-      if (parsedKeyword.scope === "all" && row._portal_hit) { row._match_reason = "portal"; return true; }
+      // A single-word search keeps every portal hit; with several words a hit must contain at least one of
+      // them, otherwise it is a loose fuzzy result (a "software development" search returning a boiler contract).
+      if (parsedKeyword.scope === "all" && row._portal_hit) {
+        const multi = queryAlternatives(parsedKeyword.query).reduce((n, w) => n + w.length, 0) > 1;
+        if (multi) {
+          const level = wordMatchLevel(row, parsedKeyword.query, false);
+          // title-only portals (no description on the row) may have matched on text we cannot see, so a partial
+          // word match is tolerated there; a row with a description that lacks the words is simply off-topic.
+          const hasDesc = extractTextFromField(row.description || row.abstract || row.summary || row.scope).length > 40;
+          if (level === "none" || (level === "some" && hasDesc)) return false;
+        }
+        row._match_reason = "portal";
+        return true;
+      }
       return false;
     });
   } else {
@@ -6915,7 +6973,7 @@ function renderPipelineBoard() {
       const stageSelectOptions = PIPELINE_STAGES.map(s => `<option value="${s}" ${s === stage ? "selected" : ""}>${STAGE_LABEL[s]}</option>`).join("");
       return `
         <div class="dash-card" data-key="${esc(key)}" data-stage="${esc(stage)}" draggable="true">
-          <div class="dash-card__top" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${sourceBadge}${fitHtml}${daysHtml}</div>
+          <div class="dash-card__top" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${sourceBadge}${fitHtml}${daysHtml}<button class="dash-card__remove dash-card__remove--top" data-key="${esc(key)}" title="Remove from pipeline" aria-label="Remove from pipeline">✕</button></div>
           <div class="dash-card__title">${esc(item.title || key)}</div>
           ${item.contracting_authority ? `<div class="dash-card__auth">${esc(item.contracting_authority)}</div>` : ""}
           ${item.notes ? `<div class="dash-card__notes">${esc(item.notes)}</div>` : ""}
@@ -6924,7 +6982,6 @@ function renderPipelineBoard() {
               ${stageSelectOptions}
             </select>
             <button class="btn btn--xs dash-card__view" data-key="${esc(key)}" title="Open tender">View</button>
-            <button class="btn btn--xs btn--danger dash-card__remove" data-key="${esc(key)}" title="Remove from pipeline">✕</button>
           </div>
         </div>`;
     }).join("");
@@ -19608,22 +19665,19 @@ function initSupplierIntelligenceEvents() {
   }
 
   if (txtSupplierCustom) {
-    const handleCustomSupplierLocation = () => {
+    const handleCustomSupplierLocation = async () => {
       const txt = txtSupplierCustom.value.trim();
       if (!txt) return;
-      const found = resolveCustomBuyerLocation(txt);
+      if (lblSupplierStatus) lblSupplierStatus.textContent = "Looking up location…";
+      const found = await resolveLocationAsync(txt);
       if (found) {
         _supplierFilterState.userLat = found.lat;
         _supplierFilterState.userLon = found.lon;
         _supplierFilterState.locationLabel = `${txt} (~${found.name})`;
-        if (lblSupplierStatus) lblSupplierStatus.innerHTML = `📍 Resolved to: <strong>${escapeHtml(found.name)}</strong>`;
+        if (lblSupplierStatus) lblSupplierStatus.innerHTML = `📍 Centered on <strong>${escapeHtml(found.name)}</strong> (${escapeHtml(txt)})`;
         refreshSuppliersNow();
-      } else {
-        if (lblSupplierStatus) lblSupplierStatus.innerHTML = `📍 Centered on UK / London (${escapeHtml(txt)})`;
-        _supplierFilterState.userLat = 51.5074;
-        _supplierFilterState.userLon = -0.1278;
-        _supplierFilterState.locationLabel = txt;
-        refreshSuppliersNow();
+      } else if (lblSupplierStatus) {
+        lblSupplierStatus.innerHTML = `⚠️ Couldn’t find “${escapeHtml(txt)}”. Enter a UK postcode (e.g. CM9 5ED) or a city name.`;
       }
     };
     txtSupplierCustom.addEventListener("change", handleCustomSupplierLocation);
@@ -19695,6 +19749,26 @@ function resolveCustomBuyerLocation(text) {
   if (postcodeMap[single]) return postcodeMap[single];
   return null;
 }
+// Resolves what the reader typed: a city name from the preset list, otherwise a UK postcode (full or
+// outward) looked up on the server. Resolves to null when neither matches, so callers say so instead of
+// quietly measuring from London.
+async function resolveLocationAsync(text) {
+  const clean = String(text || "").trim();
+  if (!clean) return null;
+  const lower = clean.toLowerCase();
+  for (const [key, preset] of Object.entries(UK_BUYER_CITY_COORDS)) {
+    if (lower === key || (lower.length >= 4 && key.startsWith(lower))) return preset;
+  }
+  try {
+    const res = await fetch(`/api/geocode?q=${encodeURIComponent(clean)}`, { credentials: "same-origin" });
+    if (res.ok) {
+      const d = await res.json();
+      if (d && d.found) return { lat: d.lat, lon: d.lon, name: d.name };
+    }
+  } catch (_) { /* fall through */ }
+  return null;
+}
+window.resolveLocationAsync = resolveLocationAsync;
 // Both are declared inside initProfile()'s closure (not this script's top level), so
 // planning.js -- a separate <script>, which has no access to that closure -- needs them
 // on window to reuse the same city list for its own "measure from" distance filter.
@@ -20539,22 +20613,19 @@ function initBuyerIntelligenceEvents() {
   }
 
   if (txtCustom) {
-    const handleCustomLocation = () => {
+    const handleCustomLocation = async () => {
       const txt = txtCustom.value.trim();
       if (!txt) return;
-      const found = resolveCustomBuyerLocation(txt);
+      if (lblStatus) lblStatus.textContent = "Looking up location…";
+      const found = await resolveLocationAsync(txt);
       if (found) {
         _buyerFilterState.userLat = found.lat;
         _buyerFilterState.userLon = found.lon;
         _buyerFilterState.locationLabel = `${txt} (~${found.name})`;
-        if (lblStatus) lblStatus.innerHTML = `📍 Resolved to: <strong>${escapeHtml(found.name)}</strong>`;
+        if (lblStatus) lblStatus.innerHTML = `📍 Centered on <strong>${escapeHtml(found.name)}</strong> (${escapeHtml(txt)})`;
         refreshBuyerIntelligenceView();
-      } else {
-        if (lblStatus) lblStatus.innerHTML = `📍 Centered on UK / London (${escapeHtml(txt)})`;
-        _buyerFilterState.userLat = 51.5074;
-        _buyerFilterState.userLon = -0.1278;
-        _buyerFilterState.locationLabel = txt;
-        refreshBuyerIntelligenceView();
+      } else if (lblStatus) {
+        lblStatus.innerHTML = `⚠️ Couldn’t find “${escapeHtml(txt)}”. Enter a UK postcode (e.g. CM9 5ED) or a city name.`;
       }
     };
     txtCustom.addEventListener("change", handleCustomLocation);

@@ -56,7 +56,7 @@ test("the request, the page filter, the filter badge and both notices all use it
   assert.ok(appSrc.includes("rows.filter((row) => matchRowToCounties(row, activeCountySelection()))"), "the page filter must use it");
   assert.ok(appSrc.includes("activeCountySelection().length > 0\n  );"), "hasActiveFilters must use it");
   assert.ok(appSrc.includes("!(activeCountySelection().length > 0)"), "the county note must only show for an active county filter");
-  assert.ok(appSrc.includes("state.meta?.county_filter, activeCountySelection().length,"), "the portal summary must pass the active count");
+  assert.ok(!appSrc.includes("SearchStatus.countyNoteHtml("), "the 'hidden by your county filter' banner stays removed");
   assert.ok(!/state\.selectedUkCounties\.join\(','\)/.test(appSrc), "the request must not send the raw saved selection");
 });
 
