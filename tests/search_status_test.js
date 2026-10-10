@@ -277,7 +277,7 @@ test("the results header shows the count only: no 'Sample only' or 'How this add
   const app = fs.readFileSync(path.join(__dirname, "..", "web", "app.js"), "utf8");
   assert.ok(!app.includes("How this adds up"), "the reconciliation line is back on the page");
   assert.ok(!app.includes("headline.note"), "the sample note is back on the page");
-  assert.ok(app.includes('wrap.classList.toggle("hidden", !chips && !note)'), "the portal summary box must hide when it has nothing to say");
+  assert.ok(app.includes('wrap.classList.toggle("hidden", !chips)'), "the portal summary box must hide when it has no chips");
   assert.ok(app.includes("el.title = recon"), "the counts stay available as the hover text of the total");
 });
 

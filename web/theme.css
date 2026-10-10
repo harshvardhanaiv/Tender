@@ -868,6 +868,11 @@ body.tf-shell :is(.table, .cards-wrap) .days-badge {
   font-weight: 600;
   text-align: inherit;
   font-variant-numeric: tabular-nums;
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 body.tf-shell :is(.table, .cards-wrap) .days-badge--critical { color: var(--neg) !important; }
 body.tf-shell :is(.table, .cards-wrap) .days-badge--soon { color: var(--gold) !important; }
