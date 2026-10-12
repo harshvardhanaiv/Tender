@@ -66,12 +66,12 @@ test("ticking the box sets the state, saves it and re-renders; unticking restore
   assert.equal(p.sandbox.state.hideLocationNotStated, false);
 });
 
-test("filteredAndSortedRows drops unstated rows only while the toggle is on, even with every county selected", () => {
+test("filteredAndSortedRows drops unstated rows only while the toggle is on and a county filter is active", () => {
   const src = cutFunction("filteredAndSortedRows");
   const m = src.match(/  \/\/ Filter out location not stated[\s\S]*?\n  \}\n/);
   assert.ok(m, "the hide-unstated block is missing from filteredAndSortedRows");
   const run = (on) => {
-    const sb = { state: { hideLocationNotStated: on }, isLocationUnstated: ctx.window.isLocationUnstated, rows: rowsOf() };
+    const sb = { state: { hideLocationNotStated: on }, isLocationUnstated: ctx.window.isLocationUnstated, activeCountySelection: () => ["Essex"], rows: rowsOf() };
     vm.createContext(sb);
     vm.runInContext("let rows = rows0;".replace("rows0", "this.rows") + m[0] + "; this.out = rows.map(r => r.title);", sb);
     return sb.out;
@@ -81,7 +81,7 @@ test("filteredAndSortedRows drops unstated rows only while the toggle is on, eve
 });
 
 test("the saved value is read on load", () => {
-  assert.match(read("app.js"), /state\.hideLocationNotStated = lsGet\(LS_HIDE_UNSTATED_LOCATION, false\) === true;/);
+  assert.match(read("app.js"), /state\.hideLocationNotStated = lsGet\(LS_HIDE_UNSTATED_LOCATION, true\) !== false;/);
 });
 
 (async () => {

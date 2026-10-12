@@ -272,7 +272,9 @@ function loadPrefs() {
     ? (typeof UK_COUNTIES !== "undefined" ? UK_COUNTIES.map(c => c.name) : [])
     : (Array.isArray(savedCounties) ? savedCounties : []);
 
-  state.hideLocationNotStated = lsGet(LS_HIDE_UNSTATED_LOCATION, false) === true;
+  // Default ON: with a county selected, a notice that names no place can't be shown to be in it, so it is hidden
+  // (it used to leak through, e.g. Swindon and Trafford notices under an Essex filter). The reader can turn it off.
+  state.hideLocationNotStated = lsGet(LS_HIDE_UNSTATED_LOCATION, true) !== false;
   state.statusFilter = lsGet(LS_STATUS_FILTER, "opportunities");
   syncStatusFilterUI();
 
@@ -5323,7 +5325,7 @@ function filteredAndSortedRows() {
   }
 
   // Filter out location not stated when toggle is enabled
-  if (state.hideLocationNotStated) {
+  if (state.hideLocationNotStated && activeCountySelection().length > 0) {
     rows = rows.filter((row) => !row.location_not_stated && (typeof isLocationUnstated !== "function" || !isLocationUnstated(row)));
   }
 
