@@ -1865,6 +1865,9 @@ const BACKEND_PORTAL_IDS = [
 ];
 
 function getActiveSelectedPortalsCount() {
+  if (countyAllowedPortals()) {
+    return PORTALS.filter(p => state.managedCountries.includes(p.country) && isPortalChosen(p.id)).length || 1;
+  }
   if (_selectedPortals && _selectedPortals.size > 0) {
     if (state.managedCountries && state.managedCountries.length > 0) {
       const validCountryPortals = new Set(
@@ -1883,7 +1886,8 @@ function getActiveSelectedPortalsCount() {
 }
 
 function getScopeValue() {
-  const activePortals = PORTALS.filter(p => state.managedCountries.includes(p.country));
+  // Portals the county selection rules out are never searched.
+  const activePortals = PORTALS.filter(p => state.managedCountries.includes(p.country) && isPortalEnabled(p.id));
   if (!_selectedPortals || _selectedPortals.size === 0) {
     const activeIds = activePortals.map(p => p.id).filter(id => BACKEND_PORTAL_IDS.includes(id));
     return activeIds.length > 0 ? activeIds.join(",") : "all";
@@ -1914,7 +1918,7 @@ function syncNativeScope() {
 }
 
 function buildPickerLabel() {
-  const activePortals = PORTALS.filter(p => state.managedCountries.includes(p.country));
+  const activePortals = PORTALS.filter(p => state.managedCountries.includes(p.country) && isPortalEnabled(p.id));
   if (!_selectedPortals || _selectedPortals.size === 0) {
     return "All portals";
   }
@@ -2201,11 +2205,12 @@ function renderPortalsInCountries() {
     if (countryPortals.length === 0) continue;
 
     const activePortals = countryPortals.map(p => p.id);
-    const checkedPortalsInGrp = activePortals.filter(id => !_selectedPortals || _selectedPortals.has(id));
-    totalActivePortals += countryPortals.length;
+    const checkedPortalsInGrp = activePortals.filter(id => isPortalChosen(id));
+    totalActivePortals += countryPortals.filter(p => isPortalEnabled(p.id)).length;
     checkedCount += checkedPortalsInGrp.length;
 
     const hasChecked = checkedPortalsInGrp.length > 0;
+    const groupEnabled = countryPortals.some(p => isPortalEnabled(p.id));
     const toggleLabel = hasChecked ? "Deselect" : "Select All";
     const toggleAction = hasChecked ? "none" : "all";
 
@@ -2218,7 +2223,7 @@ function renderPortalsInCountries() {
             <span>${esc(countryName)}</span>
             <span class="portal-result-count">(${countryPortals.length})</span>
           </div>
-          <button type="button" class="portal-country-toggle-btn" 
+          <button type="button" class="portal-country-toggle-btn" ${groupEnabled ? "" : "disabled"}
             onclick="toggleCountryPortalsSelection('${esc(countryName)}', '${toggleAction}')">${toggleLabel}</button>
         </div>
         <div class="portal-country-rows" style="display:flex; flex-direction:column; gap:2px;">
@@ -2228,7 +2233,8 @@ function renderPortalsInCountries() {
     const errors = state.meta?.errors || {};
 
     for (const p of countryPortals) {
-      const isChecked = !_selectedPortals || _selectedPortals.has(p.id);
+      const enabled = isPortalEnabled(p.id);
+      const isChecked = isPortalChosen(p.id);
 
       let progressIcon = "";
       let pauseResumeBtn = "";
@@ -2277,9 +2283,9 @@ function renderPortalsInCountries() {
       }
 
       html += `
-        <div class="portal-row">
+        <div class="portal-row${enabled ? "" : " portal-row--disabled"}"${enabled ? "" : ' title="Not available for the counties you selected"'}>
           <label class="portal-row-left" onclick="togglePortalSelection('${p.id}')">
-            <input type="checkbox" class="portal-checkbox-input" ${isChecked ? "checked" : ""} onclick="event.stopPropagation(); togglePortalSelection('${p.id}')" />
+            <input type="checkbox" class="portal-checkbox-input" ${isChecked ? "checked" : ""} ${enabled ? "" : "disabled"} onclick="event.stopPropagation(); togglePortalSelection('${p.id}')" />
             <span class="portal-label-text">${esc(p.label)}</span>
           </label>
           <div class="portal-row-right">
@@ -2342,7 +2348,7 @@ window.toggleManagedCountry = function (countryName) {
 };
 
 window.toggleCountryPortalsSelection = function (countryName, action) {
-  const countryPortals = PORTALS.filter(p => p.country === countryName);
+  const countryPortals = PORTALS.filter(p => p.country === countryName && isPortalEnabled(p.id));
   if (!_selectedPortals) {
     _selectedPortals = new Set(PORTALS.map(p => p.id));
   }
@@ -2364,6 +2370,7 @@ window.toggleCountryPortalsSelection = function (countryName, action) {
 };
 
 window.togglePortalSelection = function (portalId) {
+  if (!isPortalEnabled(portalId)) return; // greyed out by the county selection
   if (!_selectedPortals) {
     _selectedPortals = new Set(PORTALS.map(p => p.id));
   }
@@ -2934,12 +2941,49 @@ function countyRegionPortals() {
   });
 }
 
+// The portals the county selection allows, as a Set, or null when it narrows nothing (no county picked, or
+// counties from every nation). Picking an Ireland county allows only the Ireland portal; a Scottish county
+// allows the UK-wide portals plus Public Contracts Scotland, and so on. Everything else is disabled in the
+// list. The reader's own ticks are never rewritten: unticking is remembered, and widening the counties again
+// gives back exactly the choice they had.
+function countyAllowedPortals() {
+  if (typeof UK_COUNTIES === "undefined" || typeof PortalPrefs === "undefined") return null;
+  const { portalIds } = PortalPrefs.regionPortals({
+    selectedCounties: state.selectedUkCounties,
+    counties: UK_COUNTIES,
+    regionPortalIds: REGION_PORTAL_IDS,
+    currentSelected: null,
+    optInIds: [],
+  });
+  return portalIds;
+}
+
+function isPortalEnabled(id) {
+  const allowed = countyAllowedPortals();
+  return !allowed || allowed.has(id);
+}
+
+// Ticked by the reader (or by default) AND allowed by the county selection.
+function isPortalChosen(id) {
+  return isPortalEnabled(id) && (!_selectedPortals || _selectedPortals.has(id));
+}
+
+var _lastPortalAllowKey = "\u0000";
 function applyCountyRegionPortalScoping() {
   if (typeof UK_COUNTIES === "undefined") return;
 
   const { portalIds: relevantPortalIds, regions: regionsPresent } = countyRegionPortals();
 
   updatePortalScopeHint(regionsPresent);
+
+  // Redraw the portal list (and the scope sent with the search) only when the allowed set actually changed.
+  const key = String(PortalPrefs.regionKey(countyAllowedPortals()));
+  if (key !== _lastPortalAllowKey) {
+    _lastPortalAllowKey = key;
+    if (typeof renderPortalsInCountries === "function") renderPortalsInCountries();
+    if (typeof syncNativeScope === "function") syncNativeScope();
+    if (typeof updateSearchPanelSummary === "function") updateSearchPanelSummary();
+  }
 }
 
 function renderRmCountyMultiSelect(hasUk, hasIreland) {
@@ -5313,6 +5357,10 @@ function filteredAndSortedRows() {
     }
   }
 
+  const allowedByCounty = countyAllowedPortals();
+  if (allowedByCounty) {
+    activePortalSet = new Set([...(activePortalSet || PORTALS.map(p => p.id))].filter(id => allowedByCounty.has(id)));
+  }
   if (activePortalSet) {
     rows = rows.filter((row) => row.source && activePortalSet.has(row.source));
   } else if (state.sourceFilter && state.sourceFilter !== "all") {

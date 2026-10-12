@@ -43,7 +43,7 @@ function cutStatement(firstLine) {
 }
 
 const FUNCTIONS = [
-  "savePortalSelection", "reconcilePortalCatalogue", "countyRegionPortals",
+  "savePortalSelection", "reconcilePortalCatalogue", "countyRegionPortals", "countyAllowedPortals", "isPortalEnabled", "isPortalChosen",
   "applyCountyRegionPortalScoping", "populateFitProfileSelect", "autoSelectFitProfile", "handleCompanyProfileSelectionChange",
 ];
 const CODE = [
@@ -60,6 +60,8 @@ const LS_PORTAL = "tf_selected_portals";
 const LS_PROFILE = "tf_active_profile";
 let _selectedPortals = null;
 let _lastAppliedRegionPortalIds;
+var _lastPortalAllowKey = "\u0000";
+const renderPortalsInCountries = () => {};
 const state = { selectedUkCounties: [], userPrefs: {}, companyProfiles: [], activeProfileId: "" };
 const log = { prefs: [], ls: [], fetches: [], toasts: [], modalOpened: 0, scopeHints: 0 };
 const savePrefsToServer = (prefs) => { log.prefs.push(prefs); };

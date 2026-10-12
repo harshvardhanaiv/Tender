@@ -14469,3 +14469,8 @@ body.focus-mode-active.rm-drawer-expanded #resultsTotal {
 
 
 
+
+/* Portals ruled out by the selected counties: visible but not selectable */
+.portal-row--disabled { opacity: 0.45; cursor: not-allowed; }
+.portal-row--disabled * { cursor: not-allowed; }
+.portal-country-toggle-btn:disabled { opacity: 0.4; cursor: not-allowed; }
