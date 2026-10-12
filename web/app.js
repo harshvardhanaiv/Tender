@@ -8047,6 +8047,7 @@ async function loadPage(isNewSearch = false, isPoll = false) {
   const url = `/api/search?q=${encodeURIComponent(engQ)}&scope=${encodeURIComponent(scope)}&progressive=1${jobParam}${refresh}${langParam}${countiesParam}`;
   const cacheCountiesKey = `${searchCounties.join(",")}/${wholeNations.join(",")}`;
   if (isNewSearch) {
+    document.body.classList.remove("search-quiet");
     state.termFilter = null;
     // Searched before: show those results at once and keep searching the portals underneath.
     const hit = typeof SearchCache !== "undefined" ? SearchCache.lookup(engQ, scope, cacheCountiesKey) : null;
@@ -8055,6 +8056,8 @@ async function loadPage(isNewSearch = false, isPoll = false) {
       state.total = hit.total;
       _lastSettledRowCount = state.rows.length;
       state.instantFrom = hit.at;
+      // Already on screen: the portals are re-checked quietly, with no progress bar, pill or Stop button.
+      document.body.classList.add("search-quiet");
       const when = new Date(hit.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       setStatus(`Showing ${hit.assembled ? "results combined from your earlier searches" : "your saved results"} from ${when} while the portals are searched again…`);
       renderRows();
@@ -8062,6 +8065,7 @@ async function loadPage(isNewSearch = false, isPoll = false) {
       // "Search together" on saved / recent chips: these results are the answer, no live search.
       if (state._instantOnly) {
         state._instantOnly = false;
+        document.body.classList.remove("search-quiet");
         state.searchPhase = "complete";
         state.totalExact = true;
         state.hasMore = false;
@@ -8077,6 +8081,7 @@ async function loadPage(isNewSearch = false, isPoll = false) {
   const res = await fetch(url);
   if (myGeneration !== _searchGeneration) return; // superseded by a newer search while this was in flight
   if (!res.ok) {
+    document.body.classList.remove("search-quiet");
     setStatus(`Error: ${await res.text()}`);
     return;
   }
@@ -8128,6 +8133,7 @@ async function loadPage(isNewSearch = false, isPoll = false) {
       try { SearchCache.store(engQ, scope, cacheCountiesKey, incomingRows, state.total); } catch (e) { /* cache is best effort */ }
     }
     state.instantFrom = null;
+    document.body.classList.remove("search-quiet");
   }
 
   const apiScope = data.scope || "?";
