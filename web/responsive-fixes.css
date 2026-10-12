@@ -99,3 +99,8 @@ body.tf-shell .tf-keyword .sidebar-search-input { min-width: 0; text-overflow: e
 .search-chip--selected .search-chip__select { background: var(--accent, #4f46e5); border-color: var(--accent, #4f46e5); color: #fff; }
 .chip-multibar { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .chip-multibar__text { font-size: 12.5px; color: var(--mute, #64748b); }
+
+/* Results shown from saved results while the portals are re-checked in the background: no progress UI */
+body.search-quiet #searchProgressTrack,
+body.search-quiet #activeSearchKeywordBadge,
+body.search-quiet #status { display: none !important; }
