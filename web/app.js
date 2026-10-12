@@ -3644,7 +3644,12 @@ async function _searchSelectedChips() {
     _primeSearchInputsForChip(combo.q, combo.scope);
     setStatus("Loading your saved results…");
     renderSkeletonRows();
-    const parts = await Promise.all(chips.map(async (c) => ({ chip: c, rows: await _storedChipRows(c) })));
+    // Prefer what this browser already holds for each word (a finished search, e.g. all 3,153 "services");
+    // the server's saved copy can be partial, so it only fills in words the browser has not seen.
+    const parts = await Promise.all(chips.map(async (c) => {
+      const own = SearchCache.lookup(translateKeyword(c.q, "en"), scope, countiesKey);
+      return { chip: c, rows: own ? own.rows.map((r) => ({ ...r })) : await _storedChipRows(c) };
+    }));
     const lists = parts.map(({ chip, rows }) => {
       const terms = SearchCache.splitTerms(chip.q);
       return rows.map((r) => ({ ...r, matched_terms: [...new Set([...(r.matched_terms || []), ...terms])] }));
@@ -8114,7 +8119,10 @@ async function loadPage(isNewSearch = false, isPoll = false) {
   const _completedPortals = Math.max(0, _allPortalsCount - _stillLoadingSources.length);
   const _majorityGuardTimedOut = _searchStartedAt > 0 && (Date.now() - _searchStartedAt) >= MAJORITY_GUARD_TIMEOUT_MS;
   const majorityStillPending = (_completedPortals * 2 < _allPortalsCount) && !_majorityGuardTimedOut;
-  if (!(incomingPhase === "loading" && (incomingRows.length < _lastSettledRowCount || majorityStillPending))) {
+  // A combined (comma) search painted from saved results keeps that list, and its count, until every word is done.
+  const holdForTerms = incomingPhase === "loading" && state.instantFrom && state.rows.length
+    && typeof SearchCache !== "undefined" && SearchCache.splitTerms(engQ).length > 1;
+  if (!holdForTerms && !(incomingPhase === "loading" && (incomingRows.length < _lastSettledRowCount || majorityStillPending))) {
     state.rows = incomingRows;
   }
   state.total = data.total != null ? data.total : null;
