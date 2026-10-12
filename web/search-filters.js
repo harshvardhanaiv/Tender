@@ -62,6 +62,11 @@
         const matching = PORTALS.filter((p) => countries.includes(p.country));
         if (matching.length) available = matching;
       }
+      // portals the county selection rules out are not part of the count
+      if (typeof isPortalEnabled === "function") {
+        const enabled = available.filter((p) => isPortalEnabled(p.id));
+        if (enabled.length) available = enabled;
+      }
       const selected = typeof _selectedPortals === "undefined" || !_selectedPortals
         ? available.length
         : available.filter((p) => _selectedPortals.has(p.id)).length;
