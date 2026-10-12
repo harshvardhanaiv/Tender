@@ -3631,7 +3631,7 @@ async function _searchSelectedChips() {
     .map((c) => ({ q: c.dataset.q, scope: c.dataset.scope, id: c.dataset.id, kind: c.dataset.kind }));
   if (chips.length < 2) return;
   const combo = SearchCache.combineChips(chips);
-  _chipSelection.clear();
+  // The ticks stay on, so a further chip can be ticked and "Search together" run again with it added.
   renderSearchChips();
   if (combo.mixedScopes) _showToast("These searches use different fields, so the combined search looks in all fields.");
 
@@ -3689,6 +3689,7 @@ function _primeSearchInputsForChip(q, scope) {
 // Fast path: load a saved/recent search's cached results instantly instead of
 // re-scraping live. Falls back to a normal live search if the cache miss or errors.
 async function _openCachedSearch(kind, searchId, q, scope) {
+  if (_chipSelection.size) { _chipSelection.clear(); renderSearchChips(); } // opening one search on its own ends the combination
   if (!searchId) {
     runChipSearch(q, scope);
     return;
