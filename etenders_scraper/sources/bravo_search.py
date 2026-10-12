@@ -143,6 +143,10 @@ def _finalize_bravo_rows(
     if prefix_match:
         kw_clean = prefix_match.group(1).strip()
     filter_by_keyword = bool(kw_clean and kw_clean != "all" and len(kw_clean) >= 2)
+    # Public Contracts Scotland matches the keyword against the whole notice, but its result rows carry only a
+    # title and buyer, so a local text check dropped every row it had matched on hidden text ("software" -> 0).
+    if source_id == "pcs":
+        filter_by_keyword = False
 
     for row in raw_rows:
         title = (row.get("title") or "").strip()
@@ -155,7 +159,11 @@ def _finalize_bravo_rows(
 
         if filter_by_keyword:
             text_corpus = f"{title} {row.get('description', '')} {row.get('contracting_authority', '')} {row.get('supplier_name', '')} {row.get('awarded_supplier', '')}".lower()
-            if kw_clean not in text_corpus:
+            # The portal already searched for the keyword; this only guards against a portal that ignored it.
+            # Match the phrase OR any of its words (a two-word search such as "software development" never
+            # appears verbatim in a short list-row title, which left Public Contracts Scotland at "0 results").
+            words = [w for w in re.split(r"[^a-z0-9]+", kw_clean) if len(w) >= 3]
+            if kw_clean not in text_corpus and not any(w in text_corpus for w in words):
                 continue
 
         rid = row.get("resource_id") or row.get("detail_url") or row.get("title")
