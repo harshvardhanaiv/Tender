@@ -172,6 +172,8 @@ const $ = (id) => document.getElementById(id);
 
 // ── Persistence (recent + saved searches, view preference) ────────────────
 const LS_RECENT = "tf_recent_searches";
+// Saved / recent chips ticked to be searched together (keys are "kind:query|scope").
+const _chipSelection = new Set();
 const LS_SAVED = "tf_saved_searches";
 const LS_VIEW = "tf_results_view";
 const LS_PROFILE = "tf_active_profile";
@@ -3523,7 +3525,9 @@ function renderSearchChips() {
     for (const s of saved) {
       const scopeLabel = s.scope && s.scope !== "all" ? SOURCES_LABEL[s.scope] || s.scope : "All";
       const displayQ = translateKeyword(s.q, state.lang);
-      html += `<span class="search-chip search-chip--saved" data-kind="saved" data-id="${esc(s.id ?? "")}" data-q="${esc(s.q)}" data-scope="${esc(s.scope || "all")}" data-scope-label="${esc(scopeLabel)}">`
+      const sKey = `saved:${s.q}|${s.scope || "all"}`;
+      html += `<span class="search-chip search-chip--saved${_chipSelected(sKey) ? " search-chip--selected" : ""}" data-skey="${esc(sKey)}" data-kind="saved" data-id="${esc(s.id ?? "")}" data-q="${esc(s.q)}" data-scope="${esc(s.scope || "all")}" data-scope-label="${esc(scopeLabel)}">`
+        + `<button class="search-chip__select" data-select="1" aria-pressed="${_chipSelected(sKey)}" title="Select to search several together" aria-label="Select ${esc(displayQ)}">${_chipSelected(sKey) ? "✓" : "+"}</button>`
         + `<span class="search-chip__text">${esc(displayQ)}</span>`
         + `<button class="search-chip__remove" data-remove="1" data-q="${esc(s.q)}" data-scope="${esc(s.scope || "all")}" title="Remove saved search" aria-label="Remove">×</button>`
         + `</span>`;
@@ -3560,7 +3564,9 @@ function renderSearchChips() {
       const alertBtn = r.id != null
         ? `<button class="search-chip__alert${alertOn ? " search-chip__alert--on" : ""}" data-toggle-alert="1" data-id="${esc(r.id)}" title="${alertOn ? "Email alerts on for this search — click to turn off" : "Turn on email alerts for this search"}" aria-label="Toggle email alerts">${alertOn ? "🔔" : "🔕"}</button>`
         : "";
-      html += `<span class="search-chip" data-kind="recent" data-id="${esc(r.id ?? "")}" data-q="${esc(r.q)}" data-scope="${esc(r.scope || "all")}">`
+      const rKey = `recent:${r.q}|${r.scope || "all"}`;
+      html += `<span class="search-chip${_chipSelected(rKey) ? " search-chip--selected" : ""}" data-skey="${esc(rKey)}" data-kind="recent" data-id="${esc(r.id ?? "")}" data-q="${esc(r.q)}" data-scope="${esc(r.scope || "all")}">`
+        + `<button class="search-chip__select" data-select="1" aria-pressed="${_chipSelected(rKey)}" title="Select to search several together" aria-label="Select ${esc(displayQ)}">${_chipSelected(rKey) ? "✓" : "+"}</button>`
         + `<span class="search-chip__text">${esc(displayQ)}</span>`
         + alertBtn
         + `<button class="search-chip__remove" data-remove-recent="1" data-q="${esc(r.q)}" data-scope="${esc(r.scope || "all")}" title="Remove recent search" aria-label="Remove">×</button>`
@@ -3569,12 +3575,40 @@ function renderSearchChips() {
     html += `</div>`;
   }
 
+  const picked = _chipSelection.size;
+  if (picked) {
+    html += `<div class="chip-multibar" role="group" aria-label="Combine searches">`
+      + `<span class="chip-multibar__text">${picked} selected</span>`
+      + `<button type="button" class="btn btn--primary btn--small" data-multi-search="1"${picked < 2 ? " disabled" : ""}>Search together</button>`
+      + `<button type="button" class="btn btn--small" data-multi-clear="1">Clear</button>`
+      + `</div>`;
+  }
+
   elements.forEach(el => {
     el.innerHTML = html;
     el.classList.remove("hidden");
   });
 
   updateActiveChipHighlight();
+}
+
+function _chipSelected(key) { return _chipSelection.has(key); }
+function _toggleChipSelection(key) {
+  if (_chipSelection.has(key)) _chipSelection.delete(key);
+  else _chipSelection.add(key);
+  renderSearchChips();
+}
+function _searchSelectedChips() {
+  const first = document.querySelector("#rmSearchChips, #searchChips");
+  const chips = [...document.querySelectorAll(".search-chip[data-skey]")]
+    .filter((c) => _chipSelection.has(c.dataset.skey))
+    .map((c) => ({ q: c.dataset.q, scope: c.dataset.scope }));
+  if (!first || chips.length < 2) return;
+  const combo = SearchCache.combineChips(chips);
+  _chipSelection.clear();
+  renderSearchChips();
+  if (combo.mixedScopes) _showToast("These searches use different fields, so the combined search looks in all fields.");
+  runChipSearch(combo.q, combo.scope);
 }
 
 function _primeSearchInputsForChip(q, scope) {
@@ -3600,6 +3634,16 @@ async function _openCachedSearch(kind, searchId, q, scope) {
   if (!searchId) {
     runChipSearch(q, scope);
     return;
+  }
+  // Already in the browser's own cache: the normal search paints it at once and refreshes underneath.
+  if (typeof SearchCache !== "undefined") {
+    const eng = translateKeyword(parseKeywordQuery(q, scope || "all").query, "en");
+    const sc = activeCountySelection();
+    const key = `${sc.join(",")}/${(typeof fullySelectedNations === "function" ? fullySelectedNations(sc) : []).join(",")}`;
+    if (SearchCache.lookup(eng, getScopeValue() || "all", key)) {
+      runChipSearch(q, scope);
+      return;
+    }
   }
   const myToken = ++state._cacheOpenToken;
   _primeSearchInputsForChip(q, scope);
@@ -3729,6 +3773,22 @@ function runChipSearch(q, scope) {
 }
 
 function handleSearchChipsClick(e) {
+  const selectBtn = e.target.closest("[data-select]");
+  if (selectBtn) {
+    e.stopPropagation();
+    const k = selectBtn.closest(".search-chip")?.dataset.skey;
+    if (k) _toggleChipSelection(k);
+    return;
+  }
+  if (e.target.closest("[data-multi-search]")) { e.stopPropagation(); _searchSelectedChips(); return; }
+  if (e.target.closest("[data-multi-clear]")) { e.stopPropagation(); _chipSelection.clear(); renderSearchChips(); return; }
+  // Ctrl / Cmd / Shift-click also ticks a chip instead of running it
+  const modChip = (e.ctrlKey || e.metaKey || e.shiftKey) ? e.target.closest(".search-chip") : null;
+  if (modChip && modChip.dataset.skey && !e.target.closest("button")) {
+    e.preventDefault();
+    _toggleChipSelection(modChip.dataset.skey);
+    return;
+  }
   const alertToggleBtn = e.target.closest("[data-toggle-alert]");
   if (alertToggleBtn) {
     e.stopPropagation();
@@ -3886,6 +3946,15 @@ function renderSkeletonRows() {
 }
 
 document.addEventListener("click", (ev) => {
+  const termBtn = ev.target.closest && ev.target.closest(".term-chip[data-term]");
+  if (termBtn) {
+    const term = termBtn.dataset.term;
+    state.termFilter = state.termFilter === term ? null : term;
+    state.currentPage = 1;
+    renderRows();
+    updateResultsTotal();
+    return;
+  }
   const link = ev.target.closest && ev.target.closest("[data-show-all-status]");
   if (!link) return;
   ev.preventDefault();
@@ -3958,6 +4027,20 @@ function updateResultsTotal() {
 
   let html = `<div class="results-total__main">${esc(headline.main)}</div>`;
   html += `<div class="results-total__sub">${esc(sub)}${hiddenHint}</div>`;
+
+  // Comma search: one chip per term with how many of the shown tenders it accounts for
+  const searchTerms = typeof SearchCache !== "undefined" && (state.q || "").trim()
+    ? SearchCache.splitTerms(parseKeywordQuery(state.q, state.keywordScope || "all").query) : [];
+  if (searchTerms.length > 1) {
+    const picked = state.termFilter;
+    state.termFilter = null;
+    let base = [];
+    try { base = filteredAndSortedRows(); } finally { state.termFilter = picked; }
+    const counts = SearchCache.termCounts(base, searchTerms, rowHasTerm);
+    html += `<div class="results-terms" role="group" aria-label="Filter by search term">`
+      + counts.map((c) => `<button type="button" class="term-chip${picked === c.term ? " is-active" : ""}" data-term="${esc(c.term)}" aria-pressed="${picked === c.term}">${esc(c.term)} <b>${c.count.toLocaleString()}</b></button>`).join("")
+      + `</div>`;
+  }
   el.innerHTML = html;
 
   try {
@@ -5214,6 +5297,16 @@ function wordMatchLevel(row, query, titleOnly) {
   return some ? "some" : "none";
 }
 
+// Does this row belong to one term of a comma search? The server lists the terms it found in
+// `matched_terms`; otherwise the row's own text decides.
+function rowHasTerm(row, term) {
+  if (Array.isArray(row.matched_terms) && row.matched_terms.includes(term)) return true;
+  const words = (queryAlternatives(term)[0]) || [];
+  if (!words.length) return false;
+  const hay = rowSearchText(row);
+  return words.every((w) => hay.includes(w));
+}
+
 function matchRowToKeyword(row, query, scope = "all") {
   if (!row) return false;
   row._match_reason = null;
@@ -5372,6 +5465,11 @@ function filteredAndSortedRows() {
     for (const r of rows) {
       if (r) r._match_reason = null;
     }
+  }
+
+  // One term of a comma search picked from the chips above the results
+  if (state.termFilter && queryAlternatives(parsedKeyword.query).length > 1) {
+    rows = rows.filter((row) => rowHasTerm(row, state.termFilter));
   }
 
   // Filter by active selected portals / countries
@@ -7893,6 +7991,24 @@ async function loadPage(isNewSearch = false, isPoll = false) {
     ? `&counties=${encodeURIComponent(searchCounties.join(','))}${wholeNations.length ? `&nations=${encodeURIComponent(wholeNations.join(','))}` : ''}`
     : '';
   const url = `/api/search?q=${encodeURIComponent(engQ)}&scope=${encodeURIComponent(scope)}&progressive=1${jobParam}${refresh}${langParam}${countiesParam}`;
+  const cacheCountiesKey = `${searchCounties.join(",")}/${wholeNations.join(",")}`;
+  if (isNewSearch) {
+    state.termFilter = null;
+    // Searched before: show those results at once and keep searching the portals underneath.
+    const hit = typeof SearchCache !== "undefined" ? SearchCache.lookup(engQ, scope, cacheCountiesKey) : null;
+    if (hit) {
+      state.rows = hit.rows.map((r) => ({ ...r }));
+      state.total = hit.total;
+      _lastSettledRowCount = state.rows.length;
+      state.instantFrom = hit.at;
+      const when = new Date(hit.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setStatus(`Showing ${hit.assembled ? "results combined from your earlier searches" : "your saved results"} from ${when} while the portals are searched again…`);
+      renderRows();
+      try { updateResultsTotal(); } catch (e) { /* non-critical */ }
+    } else {
+      state.instantFrom = null;
+    }
+  }
   const res = await fetch(url);
   if (myGeneration !== _searchGeneration) return; // superseded by a newer search while this was in flight
   if (!res.ok) {
@@ -7943,6 +8059,10 @@ async function loadPage(isNewSearch = false, isPoll = false) {
   }
   if (incomingPhase === "complete") {
     _lastSettledRowCount = state.rows.length;
+    if (typeof SearchCache !== "undefined" && incomingRows.length) {
+      try { SearchCache.store(engQ, scope, cacheCountiesKey, incomingRows, state.total); } catch (e) { /* cache is best effort */ }
+    }
+    state.instantFrom = null;
   }
 
   const apiScope = data.scope || "?";

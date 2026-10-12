@@ -221,7 +221,87 @@ def _fetch_ie_batch(
     return batch, True
 
 
+def _row_identity(row: dict[str, Any]) -> str:
+    return str(row.get("resource_id") or row.get("detail_url") or row.get("url") or "") or (
+        f"{str(row.get('title') or '').lower()}|{str(row.get('contracting_authority') or '').lower()}"
+    )
+
+
+def merge_term_rows(per_term: list[tuple[str, list[dict[str, Any]]]]) -> list[dict[str, Any]]:
+    """Union of the rows each comma-separated term returned, de-duplicated, each row listing the terms that
+    found it (`matched_terms`). Rows found by more terms come first."""
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for term, rows in per_term:
+        for row in rows:
+            key = _row_identity(row)
+            if key not in merged:
+                merged[key] = row
+                row["matched_terms"] = []
+                order.append(key)
+            if term not in merged[key]["matched_terms"]:
+                merged[key]["matched_terms"].append(term)
+    ranked = sorted(range(len(order)), key=lambda i: (-len(merged[order[i]]["matched_terms"]), i))
+    return [merged[order[i]] for i in ranked]
+
+
+def fan_out_terms(keyword: str, fetch_one: Callable[[str], Any], *, max_workers: int = 2):
+    """Run `fetch_one(term)` for each comma-separated term (two at a time, so a portal is not hit by five
+    searches at once). Returns [(term, result_or_exception)] in term order; None when the keyword is a
+    single term, so the caller makes its one normal call."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tender_app.search_terms import split_terms
+
+    terms = split_terms(keyword)
+    if len(terms) <= 1:
+        return None
+
+    def _safe(term: str):
+        try:
+            return fetch_one(term)
+        except Exception as exc:  # noqa: BLE001
+            return exc
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        results = list(pool.map(_safe, terms))
+    return list(zip(terms, results))
+
+
 def _fetch_source_batch(
+    source_id: str,
+    cfg: dict[str, str],
+    keyword: str,
+    notes: dict[str, Any] | None = None,
+    *,
+    on_progress: Callable[[list[dict[str, Any]]], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> tuple[str, list[dict[str, Any]], str | None]:
+    """Everything one portal returns for `keyword`. A comma-separated keyword is searched term by term
+    and the results merged, except on Contracts Finder, which checks every term against one feed download."""
+    if cfg["type"] != "contracts_finder":
+        sub_notes: dict[str, dict[str, Any]] = {}
+
+        def one(term: str):
+            n: dict[str, Any] = {}
+            sub_notes[term] = n
+            return _fetch_source_batch_one(source_id, cfg, term, n)
+
+        fanned = fan_out_terms(keyword, one)
+        if fanned is not None:
+            good = [(t, r[1]) for t, r in fanned if not isinstance(r, Exception)]
+            errs = [str(r) for _, r in fanned if isinstance(r, Exception)] + [r[2] for _, r in fanned if not isinstance(r, Exception) and r[2]]
+            if not good:
+                raise next(r for _, r in fanned if isinstance(r, Exception))
+            if notes is not None:
+                avail = [n.get("available") for n in sub_notes.values() if n.get("available") is not None]
+                if avail:
+                    notes["available"] = sum(avail)
+            return source_id, merge_term_rows(good), (errs[0] if errs else None)
+    return _fetch_source_batch_one(source_id, cfg, keyword, notes, on_progress=on_progress, should_stop=should_stop)
+
+
+def _fetch_source_batch_one(
     source_id: str,
     cfg: dict[str, str],
     keyword: str,

@@ -86,6 +86,7 @@ from tender_app.blueprints.market_engagement_bp import init_market_engagement_bl
 from tender_app.blueprints.growth_bp import init_growth_blueprint
 from tender_app.email_notifier import init_email_scheduler
 from tender_app.security import ensure_csrf_token, validate_csrf
+from tender_app.search_terms import split_terms
 
 
 
@@ -621,11 +622,14 @@ def search_tenders_db(q="", limit=500):
         params = []
         where_clauses = []
 
-        q_clean = q.strip().lower() if q and q.strip() and q.strip().lower() != "all" else ""
-        if q_clean:
-            pattern = f"%{q_clean}%"
-            where_clauses.append("(LOWER(title) LIKE %s OR LOWER(contracting_authority) LIKE %s OR LOWER(description) LIKE %s OR LOWER(location) LIKE %s OR LOWER(raw_json) LIKE %s)")
-            params.extend([pattern, pattern, pattern, pattern, pattern])
+        terms = split_terms(q)
+        q_clean = terms[0] if terms else ""
+        _hit = lambda text: any(t in text for t in terms)  # noqa: E731
+        if terms:
+            one = "(LOWER(title) LIKE %s OR LOWER(contracting_authority) LIKE %s OR LOWER(description) LIKE %s OR LOWER(location) LIKE %s OR LOWER(raw_json) LIKE %s)"
+            where_clauses.append("(" + " OR ".join([one] * len(terms)) + ")")
+            for t in terms:
+                params.extend([f"%{t}%"] * 5)
 
         if where_clauses:
             query_sql += " WHERE " + " AND ".join(where_clauses)
@@ -645,14 +649,15 @@ def search_tenders_db(q="", limit=500):
                         auth = (r_obj.get("contracting_authority") or r_obj.get("authority_name") or "").lower()
                         desc = (r_obj.get("description") or r_obj.get("scope") or "").lower()
                         title = (r_obj.get("title") or "").lower()
-                        if q_clean in title:
+                        if _hit(title):
                             r_obj["_match_reason"] = "title"
-                        elif q_clean in sup:
+                        elif _hit(sup):
                             r_obj["_match_reason"] = "supplier name"
-                        elif q_clean in auth:
+                        elif _hit(auth):
                             r_obj["_match_reason"] = "authority"
-                        elif q_clean in desc:
+                        elif _hit(desc):
                             r_obj["_match_reason"] = "scope text"
+                        r_obj["matched_terms"] = [t for t in terms if t in f"{title} {sup} {auth} {desc}"]
                     rows.append(r_obj)
                 except Exception:
                     pass
@@ -666,13 +671,10 @@ def search_tenders_db(q="", limit=500):
                            contract_value, currency, date_signed, contract_duration, procurement_type,
                            notice_type, source_portal, notice_url
                     FROM contract_awards
-                    WHERE LOWER(supplier_name) LIKE {ph}
-                       OR LOWER(tender_title) LIKE {ph}
-                       OR LOWER(authority_name) LIKE {ph}
-                       OR LOWER(cpv_description) LIKE {ph}
+                    WHERE {" OR ".join([f"(LOWER(supplier_name) LIKE {ph} OR LOWER(tender_title) LIKE {ph} OR LOWER(authority_name) LIKE {ph} OR LOWER(cpv_description) LIKE {ph})"] * len(terms))}
                     LIMIT 100
                 """
-                cursor.execute(award_sql, [pattern, pattern, pattern, pattern])
+                cursor.execute(award_sql, [f"%{t}%" for t in terms for _ in range(4)])
                 award_rows = cursor.fetchall()
                 for ar in award_rows:
                     aid, sname, aname, ttitle, ccode, cdesc, cval, curr, dsigned, cdur, ptype, ntype, sportal, nurl = ar
@@ -694,7 +696,7 @@ def search_tenders_db(q="", limit=500):
                     if sname:
                         desc = f"Awarded supplier: {sname}. {desc}".strip()
                     val_str = f"£{float(cval):,.0f}" if cval else ""
-                    match_reason = "supplier name" if q_clean in (sname or "").lower() else "scope text" if q_clean in (cdesc or "").lower() else "authority" if q_clean in (aname or "").lower() else "title"
+                    match_reason = "supplier name" if _hit((sname or "").lower()) else "scope text" if _hit((cdesc or "").lower()) else "authority" if _hit((aname or "").lower()) else "title"
 
                     rows.append({
                         "id": f"award_{aid}",
@@ -2130,11 +2132,9 @@ def _is_invalid_tender_row(row: dict, query: str = "") -> bool:
         return True
 
     if query and query.strip() and query.strip().lower() != "all":
-        kw = query.strip().lower()
-        prefix_match = re.match(r"^(?:supplier|winner|contractor|buyer|authority|title):\s*(.*)$", kw, re.I)
-        if prefix_match:
-            kw = prefix_match.group(1).strip()
-        if kw and len(kw) >= 3:
+        for kw in split_terms(query):
+            if len(kw) < 3:
+                continue
             # Check if keyword is spliced into known template authority
             if kw in auth_lower and any(pat in auth_lower for pat in ["department of", "ministry of", "authority", "directorate", "agency"]):
                 if any(phrase in auth_lower for phrase in ["housing, local government &", "& technology", "executive agency for", "government digital &", "infrastructure &"]):
@@ -4252,28 +4252,30 @@ def create_app() -> Flask:
         total = len(rows)
 
         if q and q.strip() and q.strip().lower() != "all":
-            q_clean = q.strip().lower()
-            prefix_match = re.match(r"^(?:supplier|winner|contractor|buyer|authority|title):\s*(.*)$", q_clean, re.I)
-            if prefix_match:
-                q_clean = prefix_match.group(1).strip()
-            if q_clean and q_clean != "all":
+            q_terms = split_terms(q)
+            if q_terms:
                 for r in rows:
-                    if not r.get("_match_reason"):
-                        sup = (r.get("supplier_name") or r.get("awarded_supplier") or r.get("supplier") or r.get("winner") or "").lower()
-                        sub = (r.get("subcontractor") or r.get("framework_members") or "").lower()
-                        auth = (r.get("contracting_authority") or r.get("authority_name") or "").lower()
-                        desc = (r.get("description") or r.get("scope") or r.get("abstract") or "").lower()
-                        title = (r.get("title") or "").lower()
-                        if q_clean in title:
-                            r["_match_reason"] = "title"
-                        elif q_clean in sup:
-                            r["_match_reason"] = "supplier name"
-                        elif q_clean in sub:
-                            r["_match_reason"] = "subcontractor"
-                        elif q_clean in auth:
-                            r["_match_reason"] = "authority"
-                        elif q_clean in desc:
-                            r["_match_reason"] = "scope text"
+                    sup = (r.get("supplier_name") or r.get("awarded_supplier") or r.get("supplier") or r.get("winner") or "").lower()
+                    sub = (r.get("subcontractor") or r.get("framework_members") or "").lower()
+                    auth = (r.get("contracting_authority") or r.get("authority_name") or "").lower()
+                    desc = (r.get("description") or r.get("scope") or r.get("abstract") or "").lower()
+                    title = (r.get("title") or "").lower()
+                    # which of the comma-separated terms this row contains (the page shows them as chips)
+                    hits = [t for t in q_terms if t in f"{title} {sup} {sub} {auth} {desc}"]
+                    if hits and len(q_terms) > 1:
+                        r["matched_terms"] = sorted(set(hits) | set(r.get("matched_terms") or []), key=q_terms.index)
+                    if r.get("_match_reason"):
+                        continue
+                    if any(t in title for t in q_terms):
+                        r["_match_reason"] = "title"
+                    elif any(t in sup for t in q_terms):
+                        r["_match_reason"] = "supplier name"
+                    elif any(t in sub for t in q_terms):
+                        r["_match_reason"] = "subcontractor"
+                    elif any(t in auth for t in q_terms):
+                        r["_match_reason"] = "authority"
+                    elif any(t in desc for t in q_terms):
+                        r["_match_reason"] = "scope text"
 
         # Mark what the portals themselves returned for this query. A portal matches on text the list row does not carry
         # (an eTenders Ireland / NI row has only a title and a buyer), so the page must not drop these rows just because
