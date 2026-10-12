@@ -3598,16 +3598,63 @@ function _toggleChipSelection(key) {
   else _chipSelection.add(key);
   renderSearchChips();
 }
-function _searchSelectedChips() {
-  const first = document.querySelector("#rmSearchChips, #searchChips");
+// The scope and county parts of a results-cache key for the search the page would run right now.
+function _searchCacheKeys() {
+  const sc = activeCountySelection();
+  const nations = typeof fullySelectedNations === "function" ? fullySelectedNations(sc) : [];
+  return { scope: getScopeValue() || "all", countiesKey: `${sc.join(",")}/${nations.join(",")}` };
+}
+
+// Results already stored for one saved / recent search (server side), as page rows. [] when it has none.
+async function _storedChipRows(chip) {
+  if (!chip.id) return [];
+  const endpoint = chip.kind === "saved" ? `/api/saved-searches/${chip.id}/results` : `/api/recent-searches/${chip.id}/results`;
+  try {
+    const res = await fetch(endpoint);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.rows || []).map(normalizeRow);
+  } catch (e) {
+    return [];
+  }
+}
+
+async function _searchSelectedChips() {
   const chips = [...document.querySelectorAll(".search-chip[data-skey]")]
     .filter((c) => _chipSelection.has(c.dataset.skey))
-    .map((c) => ({ q: c.dataset.q, scope: c.dataset.scope }));
-  if (!first || chips.length < 2) return;
+    .map((c) => ({ q: c.dataset.q, scope: c.dataset.scope, id: c.dataset.id, kind: c.dataset.kind }));
+  if (chips.length < 2) return;
   const combo = SearchCache.combineChips(chips);
   _chipSelection.clear();
   renderSearchChips();
   if (combo.mixedScopes) _showToast("These searches use different fields, so the combined search looks in all fields.");
+
+  // Show the combined results at once: from this browser's cache if every part is there, otherwise from the
+  // results each saved / recent search already has on the server. The live search then runs underneath and
+  // replaces them (loadPage paints anything found in the cache before it asks the portals).
+  const { scope, countiesKey } = _searchCacheKeys();
+  const engQ = translateKeyword(combo.q, "en");
+  if (!SearchCache.lookup(engQ, scope, countiesKey)) {
+    _primeSearchInputsForChip(combo.q, combo.scope);
+    setStatus("Loading your saved results…");
+    renderSkeletonRows();
+    const parts = await Promise.all(chips.map(async (c) => ({ chip: c, rows: await _storedChipRows(c) })));
+    const lists = parts.map(({ chip, rows }) => {
+      const terms = SearchCache.splitTerms(chip.q);
+      return rows.map((r) => ({ ...r, matched_terms: [...new Set([...(r.matched_terms || []), ...terms])] }));
+    });
+    const merged = SearchCache.mergeRows(lists);
+    if (merged.length) {
+      // a row several searches share keeps every term that found it
+      const termsByRow = new Map();
+      lists.forEach((rows) => rows.forEach((r) => {
+        const id = SearchCache.rowIdentity(r);
+        termsByRow.set(id, [...new Set([...(termsByRow.get(id) || []), ...r.matched_terms])]);
+      }));
+      merged.forEach((r) => { r.matched_terms = termsByRow.get(SearchCache.rowIdentity(r)); });
+      SearchCache.store(engQ, scope, countiesKey, merged, merged.length);
+    }
+  }
   runChipSearch(combo.q, combo.scope);
 }
 
@@ -3638,9 +3685,8 @@ async function _openCachedSearch(kind, searchId, q, scope) {
   // Already in the browser's own cache: the normal search paints it at once and refreshes underneath.
   if (typeof SearchCache !== "undefined") {
     const eng = translateKeyword(parseKeywordQuery(q, scope || "all").query, "en");
-    const sc = activeCountySelection();
-    const key = `${sc.join(",")}/${(typeof fullySelectedNations === "function" ? fullySelectedNations(sc) : []).join(",")}`;
-    if (SearchCache.lookup(eng, getScopeValue() || "all", key)) {
+    const keys = _searchCacheKeys();
+    if (SearchCache.lookup(eng, keys.scope, keys.countiesKey)) {
       runChipSearch(q, scope);
       return;
     }
