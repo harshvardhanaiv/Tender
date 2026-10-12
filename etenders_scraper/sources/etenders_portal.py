@@ -119,8 +119,23 @@ def _search_with_first_page_check(
     ):
         row["source"] = source_id
         row["source_label"] = source_label
+        if _is_archived(row):
+            continue
         rows.append(row)
     return rows, False
+
+
+def _is_archived(row: dict[str, Any]) -> bool:
+    """The portal's search also returns its archive (eTenders NI answered 185 results, all 2015 notices).
+    A notice whose newest date is more than four years old is history, not something to bid on or list."""
+    import re
+    from datetime import date
+    years = [
+        int(y)
+        for key in ("date_published", "submission_deadline", "closing_date")
+        for y in re.findall(r"\b(19\d{2}|20\d{2})\b", str(row.get(key) or ""))
+    ]
+    return bool(years) and max(years) < date.today().year - 4
 
 
 def _captcha_failed(html: str) -> bool:

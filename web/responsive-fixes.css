@@ -1,0 +1,82 @@
+/* Layout and readability fixes found in QA: phone width, a wide table beside the details panel,
+   truncated headings and cramped controls. Loaded after theme.css / mobile.css. */
+
+.sr-only {
+  position: absolute !important; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* ── Headings that were cut off ("Supplier Intellig…", "Past winners and award histories for 159,111 sup…") ── */
+body.tf-shell :is(.profile-header__title, .profile-header__sub) {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  overflow-wrap: anywhere;
+}
+body.tf-shell .profile-header__title-row { flex-wrap: wrap; }
+
+/* ── Cramped controls ── */
+/* the keyword box kept room for the field itself: "softw" was all that showed */
+body.tf-shell .tf-keyword { flex: 1 1 360px; min-width: min(100%, 320px); }
+body.tf-shell .tf-keyword .sidebar-search-input { min-width: 0; text-overflow: ellipsis; }
+/* Summary / Clarifications / Bid Response: one even row that wraps instead of squeezing */
+.details-panel__btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.details-panel__btn-row .btn { flex: 1 1 auto; white-space: nowrap; min-width: max-content; }
+
+/* ── Table beside the open details panel (1,420px of columns in an 807px area) ── */
+.table-wrap { container-type: inline-size; container-name: results; }
+@container results (max-width: 1000px) {
+  .table :is(.col-source, .col-ai-score, .col-procedure, .col-status) { display: none; }
+  .table col.col-title, .table th.col-title { width: 240px !important; }
+  .table col.col-authority, .table th.col-authority { width: 160px !important; }
+}
+@container results (max-width: 860px) {
+  .table col.col-title, .table th.col-title { width: 210px !important; }
+  .table col.col-authority, .table th.col-authority { width: 140px !important; }
+  .table col.col-value, .table th.col-value { width: 84px !important; }
+  .table col.col-published, .table th.col-published { width: 84px !important; }
+  .table col.col-days, .table th.col-days { width: 80px !important; }
+}
+
+/* ── Phone ── */
+.tf-mobile-filters-btn { display: none; }
+@media (max-width: 640px) {
+  body.tf-shell .tf-mobile-filters-btn {
+    display: inline-flex; align-items: center; gap: 6px; flex: none;
+    height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; font-weight: 600;
+  }
+  body.tf-shell .tf-mobile-filters-btn[aria-expanded="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* collapsed: only the keyword box and the Filters button; the chips and tabs open on demand */
+  body.tf-shell #focusPillBar.tf-filterbar:not(.is-open) > *:not(.tf-keyword):not(.tf-mobile-filters-btn):not(.tf-filterbar__actions) {
+    display: none !important;
+  }
+  body.tf-shell #focusPillBar.tf-filterbar { row-gap: 6px; }
+  body.tf-shell #focusPillBar .tf-keyword { flex: 1 1 100%; min-width: 0; }
+
+  /* the results card sizes to its rows. The table area was a zero-height flex child, which at 321px
+     collapsed to nothing and left no way to scroll to the results */
+  body.tf-shell .card--main { height: auto !important; min-height: 0 !important; overflow: visible !important; }
+  body.tf-shell .card--main .table-wrap {
+    flex: none !important; height: auto !important; min-height: 280px;
+    max-height: none !important; overflow-x: auto !important; overflow-y: visible !important;
+  }
+  /* compact header */
+  body.tf-shell .tf-cardhead { padding: 6px 10px; gap: 6px; flex-wrap: wrap; }
+  body.tf-shell .tf-tabs { padding: 0 10px; gap: 8px; flex-wrap: wrap; }
+  body.tf-shell .results-total__main { font-size: 15px; }
+  body.tf-shell .portal-summary { max-height: 5.5em; overflow: auto; }
+
+  /* pagination: one row, not First / Prev / 1 / 2 / Next / Last stacked over the first card */
+  body.tf-shell .pagination-bar {
+    position: static !important; flex-direction: row !important; flex-wrap: nowrap !important;
+    align-items: center !important; justify-content: space-between !important;
+    gap: 8px !important; padding: 6px 10px !important; text-align: left !important;
+  }
+  body.tf-shell .pagination-bar .pg-info { flex: 1 1 auto; min-width: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  body.tf-shell .pagination-bar .pg-controls { width: auto !important; flex: none; flex-wrap: nowrap !important; gap: 8px !important; }
+  body.tf-shell .pagination-bar :is(.pg-size-wrap, .pg-jump-wrap, .pg-numbers, #pgFirst, #pgLast) { display: none !important; }
+  body.tf-shell .pagination-bar .pg-nav { display: flex; flex-wrap: nowrap; gap: 6px; }
+  body.tf-shell .pagination-bar .pg-nav-btn { min-height: 32px; padding: 0 10px; }
+}

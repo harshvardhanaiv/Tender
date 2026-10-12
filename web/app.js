@@ -3885,6 +3885,14 @@ function renderSkeletonRows() {
   }
 }
 
+document.addEventListener("click", (ev) => {
+  const link = ev.target.closest && ev.target.closest("[data-show-all-status]");
+  if (!link) return;
+  ev.preventDefault();
+  const pill = document.querySelector('.rm-pill[data-status="all"]');
+  if (pill) pill.click();
+});
+
 function updateResultsTotal() {
   const el = $("resultsTotal");
   if (!el) return;
@@ -3930,8 +3938,26 @@ function updateResultsTotal() {
     ? SearchStatus.reconciliationText(state.meta?.reconciliation, filteredCount) : "";
   el.title = recon;
 
+  // Rows the Opportunities / Awarded tab is hiding: say so, with a way to see them (the count used to read
+  // "35 tenders" while hundreds of closed notices sat behind the tab with no hint).
+  let hiddenHint = "";
+  const tabFilter = state.statusFilter;
+  if ((tabFilter === "opportunities" || tabFilter === "awards") && (state.q || "").trim()) {
+    try {
+      state.statusFilter = "all";
+      const withAll = filteredAndSortedRows().length;
+      const hidden = withAll - filteredCount;
+      if (hidden > 0) {
+        hiddenHint = ` · <a href="#" class="results-total__hint" data-show-all-status="1">${hidden.toLocaleString()} ${tabFilter === "opportunities" ? "closed" : "open"} hidden — see ${tabFilter === "opportunities" ? "Awarded / All" : "Opportunities / All"}</a>`;
+      }
+    } finally {
+      state.statusFilter = tabFilter;
+      filteredAndSortedRows(); // restore the per-row match labels for the real filter
+    }
+  }
+
   let html = `<div class="results-total__main">${esc(headline.main)}</div>`;
-  html += `<div class="results-total__sub">${esc(sub)}</div>`;
+  html += `<div class="results-total__sub">${esc(sub)}${hiddenHint}</div>`;
   el.innerHTML = html;
 
   try {
@@ -4615,6 +4641,13 @@ function isClosedTender(row) {
     status.includes("unsuccessful")
   ) {
     return true;
+  }
+
+  // A notice with no deadline that was published over a year ago cannot still be open for bids (Find a
+  // Tender 2021-2022 notices were listed under Opportunities as "Active" with "No deadline").
+  if (!row.submission_deadline && !row.deadline_date && typeof days !== "number") {
+    const pub = typeof parseDate === "function" ? parseDate(row.date_published) : null;
+    if (pub && Date.now() - pub.getTime() > 365 * 86400000) return true;
   }
 
   return false;
@@ -6040,7 +6073,9 @@ function buildResultCard(row) {
   const meta = document.createElement("div");
   meta.className = "result-card__meta";
   const authority = row.contracting_authority || "";
-  const value = row.estimated_value_eur || row.estimated_value || "";
+  let value = row.estimated_value_eur || row.estimated_value || "";
+  // a dash or "n/a" is no value: omit the row the same way every portal does (Sell2Wales showed "VALUE –")
+  if (/^[\s–—-]*$|^(n\/?a|none|not (stated|available)|tbc|nil)$/i.test(String(value).trim())) value = "";
   const published = row.date_published || "";
   const deadline = row.submission_deadline || "";
   const cardSup = (row.supplier_name || row.awarded_supplier || row.winner || "").trim();

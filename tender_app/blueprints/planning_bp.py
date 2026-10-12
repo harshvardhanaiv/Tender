@@ -383,6 +383,22 @@ def _charged_search(built: dict[str, Any], page: int, per_page: int):
         conn.close()
 
     total = rows[0].pop("_total") if rows else 0
+    # The same application is often registered twice with different reference numbers (a resubmission, or a
+    # parent and a linked record): same authority, site and wording, listed back to back. Show it once.
+    seen_apps: set[tuple] = set()
+    unique_rows = []
+    for r in rows:
+        key = (
+            r.get("authority"),
+            " ".join(str(r.get("description") or "").lower().split()),
+            " ".join(str(r.get("address") or "").lower().split()),
+            str(r.get("start_date") or ""),
+        )
+        if key[1] and key in seen_apps:
+            continue
+        seen_apps.add(key)
+        unique_rows.append(r)
+    rows = unique_rows
     results = []
     for r in rows:
         r.pop("_total", None)

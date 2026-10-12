@@ -446,6 +446,9 @@ _VALID_COMPANY_NUMBER_SQL = """(
 )"""
 
 
+_SME_IMPLAUSIBLE_TOTAL_GBP = 100_000_000
+
+
 def _shape_supplier_rows(cursor, raw_rows, sme_only: bool, vcse_only: bool) -> list[dict[str, Any]]:
     """Turn result rows into the API's supplier dicts (classification + contact clean-up)."""
     suppliers = []
@@ -456,6 +459,10 @@ def _shape_supplier_rows(cursor, raw_rows, sme_only: bool, vcse_only: bool) -> l
         sme_st, vcse_st, _ = classify_supplier_real_data(
             cname, cnum, scraped_sme=r.get("sme_status"), scraped_vcse=r.get("vcse_status")
         )
+        # A supplier with hundreds of millions of pounds of awards is not an SME (turnover cap about EUR 50m),
+        # whatever a scraped flag says: Scott Aerospace showed "SME" beside GBP 2.33bn.
+        if sme_st == "SME" and float(r.get("total_value") or 0) > _SME_IMPLAUSIBLE_TOTAL_GBP:
+            sme_st = "Non-SME Enterprise"
         # Strict filtering: exclude unclassified & non-SME / non-VCSE when those filters are active
         if sme_only and sme_st != "SME":
             continue
@@ -890,74 +897,6 @@ def suppliers_map():
     except Exception as ex:
         import traceback
         traceback.print_exc()
-        return jsonify({"ok": False, "error": str(ex)}), 500
-    finally:
-        conn.close()
-
-
-@suppliers_bp.route("/api/suppliers", methods=["GET"])
-@suppliers_bp.route("/api/suppliers/all", methods=["GET"])
-def get_all_suppliers():
-    """Fetch all supplier records without pagination limits."""
-    conn = _get_connection()
-    cursor = conn.cursor()
-
-    try:
-        sql = f"""
-            WITH {DEDUPED_AWARDS_CTE_SQL}
-            SELECT s.id, s.company_number, s.name, s.address, s.email, s.phone, s.website, s.region, s.sme_status, s.vcse_status, s.created_at,
-                   COUNT(a.id) as total_awards,
-                   COALESCE(SUM(CASE WHEN (a.is_framework IS NULL OR a.is_framework = 0) AND a.contract_value <= {SINGLE_AWARD_STATS_CEILING_GBP} THEN a.contract_value ELSE 0 END), 0) as total_value,
-                   COALESCE(AVG(CASE WHEN (a.is_framework IS NULL OR a.is_framework = 0) AND a.contract_value <= {SINGLE_AWARD_STATS_CEILING_GBP} THEN a.contract_value ELSE NULL END), 0) as avg_value,
-                   COALESCE(SUM(CASE WHEN a.is_framework = 1 THEN a.contract_value ELSE 0 END), 0) as framework_total_ceiling,
-                   COUNT(CASE WHEN a.is_framework = 1 THEN 1 ELSE NULL END) as framework_appointments_count
-            FROM suppliers s
-            LEFT JOIN deduped_awards a ON {JOIN_SUPPLIER_AWARD_SQL}
-            WHERE {CF_SUPPLIER_EXISTS_SQL} AND {SUPPLIER_NAME_NOT_PLACEHOLDER_SQL}
-            GROUP BY s.id, s.company_number, s.name, s.address, s.email, s.phone, s.website, s.region, s.sme_status, s.vcse_status, s.created_at
-            ORDER BY total_value DESC, total_awards DESC;
-        """
-        _execute(cursor, conn, sql)
-        raw_rows = cursor.fetchall()
-
-        suppliers = []
-        for raw_r in raw_rows:
-            r = _row_to_dict(cursor, raw_r)
-            cname = r.get("name", "")
-            cnum = r.get("company_number", "")
-            raw_sme = r.get("sme_status")
-            raw_vcse = r.get("vcse_status")
-
-            sme_st, vcse_st, _ = classify_supplier_real_data(
-                cname, cnum, scraped_sme=raw_sme, scraped_vcse=raw_vcse
-            )
-
-            cnum_valid = normalize_ch_company_number(cnum)
-            suppliers.append({
-                "id": r.get("id"),
-                "company_number": cnum_valid or "Not available",
-                "name": cname,
-                "address": clean_contact_field(r.get("address")),
-                "email": clean_contact_field(r.get("email")),
-                "phone": clean_contact_field(r.get("phone")),
-                "website": clean_contact_field(r.get("website")),
-                "region": r.get("region", "UK"),
-                "sme_status": sme_st,
-                "vcse_status": vcse_st,
-                "total_awards": r.get("total_awards", 0),
-                "total_value": float(r.get("total_value") or 0),
-                "avg_value": float(r.get("avg_value") or 0),
-                "framework_total_ceiling": float(r.get("framework_total_ceiling") or 0),
-                "framework_appointments_count": int(r.get("framework_appointments_count") or 0)
-            })
-
-        return jsonify({
-            "ok": True,
-            "suppliers": suppliers,
-            "total": len(suppliers),
-            "attribution": OGL_V3_ATTRIBUTION
-        })
-    except Exception as ex:
         return jsonify({"ok": False, "error": str(ex)}), 500
     finally:
         conn.close()

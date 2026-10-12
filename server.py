@@ -3146,17 +3146,38 @@ def create_app() -> Flask:
         """Handle deep-linked alert preference changes (e.g. cadence=daily, cadence=weekly, cadence=off)."""
         cadence = (request.args.get("cadence") or request.form.get("cadence") or "daily").lower()
         link_user = (request.args.get("user") or request.args.get("username") or "").strip()
-        username = link_user or session.get("username") or ""
+        session_user = (session.get("username") or "").strip()
+        username = link_user or session_user
 
-        # This route is reachable without a session (email links). A logged-in user may change
-        # their own settings; otherwise the link must carry a valid signature, except pausing,
-        # which stays open so unsubscribing works from emails sent before links were signed.
-        if username and cadence != "off" and (session.get("username") or "").lower() != username.lower():
-            import hmac as _hmac
-            from tender_app.email_svc import alert_pref_token
-            expected = alert_pref_token(username)
-            if not expected or not _hmac.compare_digest(expected, request.args.get("token") or ""):
-                username = ""
+        # Who may change what:
+        #  - an emailed link carrying a valid signature for that user (works signed in or out);
+        #  - pausing (cadence=off) from a link with no session, which stays open so unsubscribing works from
+        #    emails sent before links were signed;
+        #  - a signed-in user changing their own settings, but only by POST (the before_request hook then
+        #    checks the CSRF token). A plain GET never changes a signed-in user's settings, otherwise any
+        #    page could trigger it with an <img> or a link.
+        import hmac as _hmac
+        from tender_app.email_svc import alert_pref_token
+        expected = alert_pref_token(username) if username else ""
+        signed_link = bool(expected) and _hmac.compare_digest(expected, request.args.get("token") or "")
+        own_post = request.method == "POST" and bool(session_user) and session_user.lower() == username.lower()
+        open_pause = request.method == "GET" and not session_user and cadence == "off"
+        if not (signed_link or own_post or open_pause):
+            if session_user and request.method == "GET":
+                # signed in but no signature: ask for a confirmation that is submitted as a POST
+                from tender_app.security import ensure_csrf_token
+                from html import escape as _esc
+                token = ensure_csrf_token()
+                label = "pause" if cadence == "off" else f"set to {_esc(cadence)}"
+                return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Confirm — TenderFlow</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="font-family:Inter,-apple-system,sans-serif;display:flex;justify-content:center;padding:40px">
+<form method="post" action="/api/alerts/preference?csrf_token={_esc(token)}" style="max-width:420px;text-align:center">
+<h2>Confirm change</h2><p>Do you want to {label} your email alerts?</p>
+<input type="hidden" name="cadence" value="{_esc(cadence)}">
+<button type="submit" style="padding:10px 20px;border-radius:8px;border:0;background:#4f46e5;color:#fff;font-weight:600;cursor:pointer">Confirm</button>
+<p><a href="/">Cancel</a></p></form></body></html>"""
+            username = ""
 
         if username:
             try:
@@ -3437,6 +3458,21 @@ def create_app() -> Flask:
         finally:
             conn.close()
         return redirect("/")
+
+    @app.before_request
+    def reject_nul_characters():
+        # A NUL byte in a search term makes Postgres raise ("A string literal cannot contain NUL"), which
+        # surfaced as a 500 with raw database wording (and a bare HTML page on the planning search).
+        # Refuse it up front with a plain 400 for every route.
+        try:
+            values = list(request.args.values()) + (list(request.form.values()) if request.mimetype == "application/x-www-form-urlencoded" else [])
+        except Exception:
+            values = []
+        if any("\x00" in v for v in values) or "\x00" in request.path:
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Invalid characters in the request."}), 400
+            return ("Invalid characters in the request.", 400)
+        return None
 
     @app.before_request
     def buyer_workspace_gate():
@@ -4182,6 +4218,35 @@ def create_app() -> Flask:
             seen_source_titles.add(key)
             deduped.append(r)
         rows = deduped
+
+        # P1c: The same notice published on two portals (Find a Tender and Contracts Finder both carry
+        # framework and YPO notices). Same normalised title + same buyer = one tender; the first row is kept
+        # and remembers the other portals in `also_on`.
+        def _norm_key(txt):
+            return re.sub(r"[^a-z0-9]+", " ", str(txt or "").lower()).strip()
+        seen_cross: dict[tuple[str, str], dict] = {}
+        cross_deduped: list[dict] = []
+        for r in rows:
+            t_key = _norm_key(r.get("title"))
+            a_key = _norm_key(r.get("contracting_authority") or r.get("authority_name"))
+            if len(t_key) < 15 or not a_key:
+                cross_deduped.append(r)
+                continue
+            first = seen_cross.get((t_key, a_key))
+            if first is None:
+                seen_cross[(t_key, a_key)] = r
+                cross_deduped.append(r)
+                continue
+            src = (r.get("source") or "").strip()
+            if src and src != (first.get("source") or "").strip():
+                also = first.setdefault("also_on", [])
+                if src not in also:
+                    also.append(src)
+            # keep whichever copy carries the deadline / value if the kept one lacks them
+            for fld in ("submission_deadline", "value", "estimated_value", "description"):
+                if not first.get(fld) and r.get(fld):
+                    first[fld] = r[fld]
+        rows = cross_deduped
         _c4 = count_by_source(rows)
 
         total = len(rows)
