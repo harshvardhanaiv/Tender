@@ -591,8 +591,11 @@ def search_contracts_finder(
     full scan could not finish (rate limit, errors), the rows found are still returned and the
     reason is appended to `notes` -- callers should show it, because the rows are then only the
     newest part of the feed."""
+    from tender_app.search_terms import split_terms
+
     session = _new_session()
-    keyword_lower = keyword.strip().lower()
+    # "a, b" is a OR b: the feed is downloaded once and every term is checked against it
+    terms = split_terms(keyword)
     matched_rows: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -603,10 +606,14 @@ def search_contracts_finder(
         for search_blob, row in entries:
             if row["ocid"] in seen:
                 continue
-            if keyword_lower and keyword_lower not in search_blob:
+            hits = [t for t in terms if t in search_blob]
+            if terms and not hits:
                 continue
             seen.add(row["ocid"])
-            matched_rows.append(dict(row))  # callers add fields to rows, so never hand out the cached dict
+            out_row = dict(row)  # callers add fields to rows, so never hand out the cached dict
+            if len(terms) > 1:
+                out_row["matched_terms"] = hits
+            matched_rows.append(out_row)
             if max_results and len(matched_rows) >= max_results:
                 return matched_rows
         if on_progress and len(matched_rows) > before:

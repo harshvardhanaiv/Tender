@@ -15,6 +15,8 @@ from .registry import (
     _fetch_ni_portal,
     _fetch_source_batch,
     _interleave_sources,
+    fan_out_terms,
+    merge_term_rows,
     _sort_key,
 )
 
@@ -182,6 +184,34 @@ def _sources_for_scope(scope: str) -> dict[str, dict[str, str]]:
 
 
 def _fetch_source_first_page(
+    source_id: str, cfg: dict[str, str], keyword: str, notes: dict[str, Any] | None = None
+) -> tuple[str, list[dict[str, Any]], str | None, int | None]:
+    """First page per portal. A comma-separated keyword is searched term by term and merged (Contracts
+    Finder checks all terms against one feed instead)."""
+    if cfg["type"] != "contracts_finder":
+        sub_notes: dict[str, dict[str, Any]] = {}
+
+        def one(term: str):
+            n: dict[str, Any] = {}
+            sub_notes[term] = n
+            return _fetch_source_first_page_one(source_id, cfg, term, n)
+
+        fanned = fan_out_terms(keyword, one)
+        if fanned is not None:
+            good = [(t, r) for t, r in fanned if not isinstance(r, Exception)]
+            if not good:
+                raise next(r for _, r in fanned if isinstance(r, Exception))
+            if notes is not None:
+                avail = [n.get("available") for n in sub_notes.values() if n.get("available") is not None]
+                if avail:
+                    notes["available"] = sum(avail)
+            errs = [r[2] for _, r in good if r[2]] + [str(r) for _, r in fanned if isinstance(r, Exception)]
+            hints = [r[3] for _, r in good if r[3] is not None]
+            return source_id, merge_term_rows([(t, r[1]) for t, r in good]), (errs[0] if errs and not any(r[1] for _, r in good) else None), (sum(hints) if hints else None)
+    return _fetch_source_first_page_one(source_id, cfg, keyword, notes)
+
+
+def _fetch_source_first_page_one(
     source_id: str, cfg: dict[str, str], keyword: str, notes: dict[str, Any] | None = None
 ) -> tuple[str, list[dict[str, Any]], str | None, int | None]:
     """One page per portal. `notes`, when given, receives extra facts about the answer (`available`:
