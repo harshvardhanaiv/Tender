@@ -25,6 +25,14 @@ body.tf-shell .tf-keyword .sidebar-search-input { min-width: 0; text-overflow: e
 
 /* ── Table beside the open details panel (1,420px of columns in an 807px area) ── */
 .table-wrap { container-type: inline-size; container-name: results; }
+/* 1366px screen with no details panel: the table area is ~1,114px and the twelve columns want 1,420px */
+@container results (max-width: 1180px) {
+  .table :is(.col-procedure, .col-status) { display: none; }
+  .table col.col-title, .table th.col-title { width: 270px !important; min-width: 0 !important; }
+  .table col.col-authority, .table th.col-authority { width: 170px !important; min-width: 0 !important; }
+  .table col.col-source, .table th.col-source { width: 100px !important; min-width: 0 !important; }
+  .table col.col-fit, .table th.col-fit { width: 64px !important; min-width: 0 !important; }
+}
 @container results (max-width: 1000px) {
   .table :is(.col-source, .col-ai-score, .col-procedure, .col-status) { display: none; }
   .table col.col-title, .table th.col-title { width: 240px !important; }

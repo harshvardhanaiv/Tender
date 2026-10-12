@@ -101,7 +101,9 @@
     if (terms.length > 1) {
       terms.forEach((t) => {
         const own = rows.filter((r) => Array.isArray(r.matched_terms) && r.matched_terms.includes(t));
-        if (own.length) put([t], own, own.length);
+        // a word's own finished search is the better copy: only fill a gap or replace a smaller one
+        const prev = map.get(entryKey(scope, countiesKey, [t]));
+        if (own.length && !(prev && Array.isArray(prev.rows) && prev.rows.length >= own.length)) put([t], own, own.length);
       });
     }
     return written;

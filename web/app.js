@@ -3666,8 +3666,6 @@ async function _searchSelectedChips() {
       SearchCache.store(engQ, scope, countiesKey, merged, merged.length);
     }
   }
-  // Only skip the live search when stored results were found to show.
-  state._instantOnly = !!SearchCache.lookup(engQ, scope, countiesKey);
   runChipSearch(combo.q, combo.scope);
 }
 
@@ -8061,27 +8059,17 @@ async function loadPage(isNewSearch = false, isPoll = false) {
       state.total = hit.total;
       _lastSettledRowCount = state.rows.length;
       state.instantFrom = hit.at;
+      state._instantRows = state.rows;
       // Already on screen: the portals are re-checked quietly, with no progress bar, pill or Stop button.
       document.body.classList.add("search-quiet");
       const when = new Date(hit.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       setStatus(`Showing ${hit.assembled ? "results combined from your earlier searches" : "your saved results"} from ${when} while the portals are searched again…`);
       renderRows();
       try { updateResultsTotal(); } catch (e) { /* non-critical */ }
-      // "Search together" on saved / recent chips: these results are the answer, no live search.
-      if (state._instantOnly) {
-        state._instantOnly = false;
-        document.body.classList.remove("search-quiet");
-        state.searchPhase = "complete";
-        state.totalExact = true;
-        state.hasMore = false;
-        setStatus(`Showing ${state.rows.length} results combined from your saved searches (from ${when}). Press Search to refresh from the portals.`);
-        updateStopButton();
-        return;
-      }
     } else {
       state.instantFrom = null;
+      state._instantRows = null;
     }
-    state._instantOnly = false;
   }
   const res = await fetch(url);
   if (myGeneration !== _searchGeneration) return; // superseded by a newer search while this was in flight
@@ -8122,10 +8110,18 @@ async function loadPage(isNewSearch = false, isPoll = false) {
   // A combined (comma) search painted from saved results keeps that list, and its count, until every word is done.
   const holdForTerms = incomingPhase === "loading" && state.instantFrom && state.rows.length
     && typeof SearchCache !== "undefined" && SearchCache.splitTerms(engQ).length > 1;
-  if (!holdForTerms && !(incomingPhase === "loading" && (incomingRows.length < _lastSettledRowCount || majorityStillPending))) {
-    state.rows = incomingRows;
+  let shownRows = incomingRows;
+  if (incomingPhase === "complete" && state._instantRows && state._instantRows.length) {
+    // A portal that answers "nothing" on the refresh must not wipe the rows it gave earlier.
+    const answered = new Set(incomingRows.map((r) => r.source));
+    const kept = state._instantRows.filter((r) => r.source && !answered.has(r.source));
+    if (kept.length) shownRows = incomingRows.concat(kept);
   }
-  state.total = data.total != null ? data.total : null;
+  if (incomingPhase === "complete") state._instantRows = null;
+  if (!holdForTerms && !(incomingPhase === "loading" && (incomingRows.length < _lastSettledRowCount || majorityStillPending))) {
+    state.rows = shownRows;
+  }
+  state.total = data.total != null ? data.total + (shownRows.length - incomingRows.length) : null;
   state.totalExact = data.totalExact !== false;
   state.hasMore = Boolean(data.hasMore);
   state.meta = data.meta || null;
@@ -8137,8 +8133,8 @@ async function loadPage(isNewSearch = false, isPoll = false) {
   }
   if (incomingPhase === "complete") {
     _lastSettledRowCount = state.rows.length;
-    if (typeof SearchCache !== "undefined" && incomingRows.length) {
-      try { SearchCache.store(engQ, scope, cacheCountiesKey, incomingRows, state.total); } catch (e) { /* cache is best effort */ }
+    if (typeof SearchCache !== "undefined" && shownRows.length) {
+      try { SearchCache.store(engQ, scope, cacheCountiesKey, shownRows, state.total); } catch (e) { /* cache is best effort */ }
     }
     state.instantFrom = null;
     document.body.classList.remove("search-quiet");
@@ -8436,7 +8432,26 @@ function updateSearchProgressUI() {
 
 async function pollSearchProgress() {
   if (!state.jobId || state.searchPhase === "complete" || state.searchPaused) return;
-  await loadPage(false, true);
+  try {
+    await loadPage(false, true);
+    state._pollFailures = 0;
+  } catch (err) {
+    // The server went away mid-search: retry a few times, then say so instead of an endless progress strip.
+    state._pollFailures = (state._pollFailures || 0) + 1;
+    if (state._pollFailures < 4) {
+      stopSearchPoll();
+      state.pollTimer = setTimeout(() => pollSearchProgress(), 3000);
+      return;
+    }
+    state._pollFailures = 0;
+    stopSearchPoll();
+    state.searchPhase = "stopped";
+    document.body.classList.remove("search-quiet");
+    state.jobId = null;
+    try { updateStopButton(); updateSearchProgressUI(); updateActiveSearchKeywordBadge(); } catch (e) { /* non-critical */ }
+    setStatus("Lost contact with the server, so this search stopped. Showing what was found so far. Press Search to try again.");
+    _showToast("Lost contact with the server. Search stopped.", "error");
+  }
 }
 
 $("btnCloseDetails")?.addEventListener("click", closeDetailsPanel);
