@@ -36,7 +36,9 @@ _FIRST_PAGE_BUDGET_OVERRIDES = {"procontract": 75.0, "etenders_ni": 100.0, "cont
 # Public Contracts Scotland answers slowly (2.5 to 3 minutes for a broad word on live, ~2 MB of page state per result page),
 # so it gets 3 minutes for its first page and 10 minutes to finish listing (every other portal has 150 s), and keeps the rows
 # it had if it still runs out.
-_FULL_LIST_BUDGET_OVERRIDES = {"pcs": 600.0}
+# Contracts Finder has no keyword filter, so a cold search downloads its whole 180-day feed (about 400 pages) in three
+# parallel windows, roughly 3 to 4 minutes, streaming matches into the results as they arrive.
+_FULL_LIST_BUDGET_OVERRIDES = {"pcs": 600.0, "contracts_finder": 420.0}
 WATCHDOG_TICK_SEC = 0.5
 
 
@@ -513,7 +515,18 @@ def _portal_worker(
             if not completed:
                 return  # stopped part-way: keep the rows found so far, don't cache a partial list
         else:
-            sid, full_batch, full_err = _fetch_source_batch(source_id, cfg, keyword, full_notes)
+            if source_id == "contracts_finder":
+                # a cold Contracts Finder scan takes minutes: show matches as the feed downloads
+                def _push_cf_partial(partial: list[dict[str, Any]]) -> None:
+                    _update_job_portal(job, sources, source_id, partial, progress="fetching_all")
+
+                sid, full_batch, full_err = _fetch_source_batch(
+                    source_id, cfg, keyword, full_notes,
+                    on_progress=_push_cf_partial,
+                    should_stop=lambda: job.cancelled or source_id in job.cancelled_sources,
+                )
+            else:
+                sid, full_batch, full_err = _fetch_source_batch(source_id, cfg, keyword, full_notes)
             if full_notes:
                 with job.lock:
                     job.meta.setdefault("portal_notes", {}).setdefault(source_id, {}).update(full_notes)

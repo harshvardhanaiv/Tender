@@ -82,6 +82,15 @@ _WARM_CHECK_SECS = 5 * 60
 _SNAPSHOT_VERSION = 1  # bump when the entry/row shape changes so old snapshots are ignored
 _MIN_FEED_ENTRIES = 200  # a real 180-day scan is thousands of notices; far fewer means a degraded API
 _feed_cache: dict[str, Any] = {"key": None, "at": 0.0, "entries": []}
+# The scan is split into this many date windows fetched at the same time (each is its own cursor chain).
+# One sequential chain took 6-9 minutes, longer than a search will wait; three at once is about a third
+# of that while staying well inside what the API tolerates (it throttles hard above a few requests a second).
+_SCAN_WORKERS = 3
+# The scan in progress, readable while it runs so a search can show matches as pages arrive instead of
+# waiting for the whole feed: `entries` only ever grows, `running` goes False when the scan has ended.
+_partial: dict[str, Any] = {"key": None, "entries": [], "running": False, "finished_at": 0.0, "complete": False, "reason": ""}
+_STREAM_START_WAIT_SECS = 30  # how long a search waits for a scan to start before giving up on streaming
+_STREAM_MAX_WAIT_SECS = 15 * 60
 _feed_lock = threading.Lock()  # held for the length of a scan: one download at a time
 _refresh_guard = threading.Lock()  # at most one background refresh thread
 _refresh_state = {"failures": 0, "next_allowed": 0.0}
@@ -125,19 +134,25 @@ def _fetch_release_page(session: requests.Session, params: dict[str, Any]) -> tu
     raise last_exc
 
 
-def _iter_release_pages(session: requests.Session, state: dict[str, Any]):
+def _iter_release_pages(
+    session: requests.Session,
+    state: dict[str, Any],
+    window: tuple[datetime, datetime] | None = None,
+):
     """Yield the latest tender notices one API page at a time, until the feed runs out.
 
     Sets state["complete"] only when the feed genuinely ended, so the caller can tell a full
     scan from one cut short by a rate limit or error (state["reason"] then says why, for the
     warning the user sees). A failure before any page arrives raises; after that, the pages
     already yielded are kept."""
-    since_date = datetime.utcnow() - timedelta(days=_LOOKBACK_DAYS)
+    since_date = window[0] if window else datetime.utcnow() - timedelta(days=_LOOKBACK_DAYS)
     params: dict[str, Any] = {
         "publishedFrom": since_date.strftime("%Y-%m-%dT%H:%M:%S"),
         "stages": "tender",
         "limit": 100,
     }
+    if window:
+        params["publishedTo"] = window[1].strftime("%Y-%m-%dT%H:%M:%S")
     cursor = None
     fetched_any = False
 
@@ -297,15 +312,48 @@ def _scan_feed(
     returned but not reused, so the next search tries again. Why a scan fell short is appended to
     `note` so the search can tell the user its results are partial instead of presenting them as
     complete."""
-    state: dict[str, Any] = {"complete": False}
     entries: list[tuple[str, dict[str, Any]]] = []
     seen: set[str] = set()
-    for page in _iter_release_pages(session, state):
-        for release in page:
-            entry = _release_to_entry(release, source_id, source_label)
-            if entry and entry[1]["ocid"] not in seen:
-                seen.add(entry[1]["ocid"])
-                entries.append(entry)
+    guard = threading.Lock()
+    now = datetime.utcnow()
+    span = timedelta(days=_LOOKBACK_DAYS) / _SCAN_WORKERS
+    windows = [(now - span * (i + 1), now - span * i) for i in range(_SCAN_WORKERS)]
+    states: list[dict[str, Any]] = [{"complete": False} for _ in windows]
+    errors: list[Exception] = []
+    _partial.update(key=key, entries=entries, running=True, complete=False, reason="")
+
+    def _scan_window(idx: int) -> None:
+        sess = session if idx == 0 else _new_session()
+        try:
+            for page in _iter_release_pages(sess, states[idx], windows[idx]):
+                for release in page:
+                    entry = _release_to_entry(release, source_id, source_label)
+                    if not entry:
+                        continue
+                    with guard:
+                        if entry[1]["ocid"] in seen:
+                            continue
+                        seen.add(entry[1]["ocid"])
+                        entries.append(entry)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+            states[idx].setdefault("reason", f"a request failed ({str(exc)[:100]})")
+
+    threads = [threading.Thread(target=_scan_window, args=(i,), daemon=True, name=f"CFScan{i}") for i in range(len(windows))]
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        if errors and not entries:
+            raise errors[0]  # nothing arrived at all: the API is not serving data
+        state: dict[str, Any] = {"complete": all(st.get("complete") for st in states)}
+        reasons = [st["reason"] for st in states if st.get("reason")]
+        if reasons:
+            state["reason"] = reasons[0]
+    finally:
+        _partial.update(running=False, finished_at=time.time())
+    _partial.update(complete=state["complete"], reason=state.get("reason", ""))
     cached = False
     if state["complete"]:
         cached = _worth_caching(key, entries)
@@ -381,10 +429,10 @@ def _refresh_feed(key: str) -> None:
             _note_refresh_result(_feed_cache["key"] == key and _feed_cache["at"] > before)
 
 
-def _start_background_refresh(key: str) -> None:
+def _start_background_refresh(key: str, force: bool = False) -> None:
     """Refresh the shared cache in a background thread: at most one at a time, and not while
     backing off after failed attempts (see _note_refresh_result)."""
-    if not _refresh_allowed():
+    if not force and not _refresh_allowed():
         return
     if not _refresh_guard.acquire(blocking=False):
         return
@@ -494,7 +542,33 @@ def _entry_batches(
             if page_count >= max_preview_pages:
                 break
     else:
-        yield _all_feed_entries(session, source_id, source_label, notes)
+        # Nothing cached: scan in the background (parallel windows, see _scan_feed) and hand matches over
+        # as pages arrive. A search used to block here until the whole feed was down (6-9 minutes), so the
+        # portal's time limit cut it off with only the preview rows.
+        started = time.time()
+        _start_background_refresh(key, force=True)
+        idx = 0
+        deadline = started + _STREAM_MAX_WAIT_SECS
+        seen_scan = False
+        while time.time() < deadline:
+            p = _partial
+            if p["key"] == key and (p["running"] or p["finished_at"] >= started):
+                seen_scan = True
+                running = p["running"]  # read before the entries: anything added after is picked up next lap
+                ents = p["entries"]
+                n = len(ents)
+                if n > idx:
+                    yield ents[idx:n]
+                    idx = n
+                if not running:
+                    if notes is not None and not p["complete"]:
+                        notes.append(p["reason"] or f"it returned only {len(ents)} notices")
+                    break
+            elif time.time() - started > _STREAM_START_WAIT_SECS:
+                break
+            time.sleep(0.5)
+        if not seen_scan:
+            yield _all_feed_entries(session, source_id, source_label, notes)
 
 
 def search_contracts_finder(
@@ -504,8 +578,13 @@ def search_contracts_finder(
     source_label: str,
     max_results: int | None = None,
     notes: list[str] | None = None,
+    on_progress: Any = None,
+    should_stop: Any = None,
 ) -> list[dict[str, Any]]:
     """Search UK Contracts Finder tender notices from the last 180 days.
+
+    on_progress(rows_so_far) is called after each batch of the feed that added matches, so a caller can
+    show results while a cold scan is still running; should_stop() abandons the search.
 
     The OCDS API has no keyword parameter, so the notice feed is scanned in full (or, for a
     preview, until max_results matches are found) and filtered by keyword client-side. When the
@@ -518,6 +597,9 @@ def search_contracts_finder(
     seen: set[str] = set()
 
     for entries in _entry_batches(session, source_id, source_label, preview=bool(max_results), notes=notes):
+        if should_stop and should_stop():
+            return matched_rows
+        before = len(matched_rows)
         for search_blob, row in entries:
             if row["ocid"] in seen:
                 continue
@@ -527,6 +609,8 @@ def search_contracts_finder(
             matched_rows.append(dict(row))  # callers add fields to rows, so never hand out the cached dict
             if max_results and len(matched_rows) >= max_results:
                 return matched_rows
+        if on_progress and len(matched_rows) > before:
+            on_progress(list(matched_rows))
 
     return matched_rows
 

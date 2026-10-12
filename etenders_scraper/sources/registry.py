@@ -222,7 +222,13 @@ def _fetch_ie_batch(
 
 
 def _fetch_source_batch(
-    source_id: str, cfg: dict[str, str], keyword: str, notes: dict[str, Any] | None = None
+    source_id: str,
+    cfg: dict[str, str],
+    keyword: str,
+    notes: dict[str, Any] | None = None,
+    *,
+    on_progress: Callable[[list[dict[str, Any]]], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> tuple[str, list[dict[str, Any]], str | None]:
     """Everything one portal returns for `keyword`: (source id, rows, warning). `notes`, when given,
     receives extra facts about the answer (`available`: how many notices the portal says match)."""
@@ -261,6 +267,8 @@ def _fetch_source_batch(
             source_label=cfg["label"],
             max_results=None,
             notes=notes,
+            on_progress=on_progress,
+            should_stop=should_stop,
         )
         # A scan cut short by a rate limit still returns the newest notices it got; say so, or the
         # search shows them as the complete result (Rounds 24-26: "completed" with a handful of rows).
