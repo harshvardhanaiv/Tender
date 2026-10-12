@@ -3619,7 +3619,8 @@ async function _storedChipRows(chip) {
     const res = await fetch(endpoint);
     if (!res.ok) return [];
     const data = await res.json();
-    return (data.rows || []).map(normalizeRow);
+    // These rows are what that search returned, so the page keeps them even when the word is not in the visible fields
+    return (data.rows || []).map(normalizeRow).map((r) => (r._portal_hit === undefined ? { ...r, _portal_hit: true } : r));
   } catch (e) {
     return [];
   }
@@ -5506,9 +5507,17 @@ function filteredAndSortedRows() {
       // A single-word search keeps every portal hit; with several words a hit must contain at least one of
       // them, otherwise it is a loose fuzzy result (a "software development" search returning a boiler contract).
       if (parsedKeyword.scope === "all" && row._portal_hit) {
-        const multi = queryAlternatives(parsedKeyword.query).reduce((n, w) => n + w.length, 0) > 1;
+        // A comma search is judged term by term, exactly as that term would be on its own: the terms this row
+        // was found for (or all of them when the row does not say) decide, so "services, housing" keeps every
+        // row a plain "services" search keeps.
+        const allTerms = typeof SearchCache !== "undefined" ? SearchCache.splitTerms(parsedKeyword.query) : [parsedKeyword.query];
+        const mine = Array.isArray(row.matched_terms) ? allTerms.filter((t) => row.matched_terms.includes(t)) : [];
+        const relevant = mine.length ? mine : allTerms;
+        const wordCount = (t) => queryAlternatives(t).reduce((n, w) => n + w.length, 0);
+        const multi = relevant.every((t) => wordCount(t) > 1);
         if (multi) {
-          const level = wordMatchLevel(row, parsedKeyword.query, false);
+          const level = relevant.map((t) => wordMatchLevel(row, t, false))
+            .reduce((best, l) => (l === "all" || best === "all" ? "all" : (l === "some" || best === "some" ? "some" : "none")), "none");
           // title-only portals (no description on the row) may have matched on text we cannot see, so a partial
           // word match is tolerated there; a row with a description that lacks the words is simply off-topic.
           const hasDesc = extractTextFromField(row.description || row.abstract || row.summary || row.scope).length > 40;
