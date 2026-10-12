@@ -1587,6 +1587,12 @@ function showStagePopover(anchorEl, row) {
 }
 
 function pushRecentSearch(q, scope) {
+  // "a, b" is two searches: remember each word on its own, never the combined text
+  const parts = String(q || "").split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    parts.slice(0, 5).reverse().forEach((p) => pushRecentSearch(p, scope));
+    return;
+  }
   const term = (q || "").trim();
   if (!term) return;
   const entry = { q: term, scope: scope || "all", id: null, emailAlertsEnabled: true, lastRefreshedAt: null };
@@ -3655,6 +3661,8 @@ async function _searchSelectedChips() {
       SearchCache.store(engQ, scope, countiesKey, merged, merged.length);
     }
   }
+  // Only skip the live search when stored results were found to show.
+  state._instantOnly = !!SearchCache.lookup(engQ, scope, countiesKey);
   runChipSearch(combo.q, combo.scope);
 }
 
@@ -8051,9 +8059,20 @@ async function loadPage(isNewSearch = false, isPoll = false) {
       setStatus(`Showing ${hit.assembled ? "results combined from your earlier searches" : "your saved results"} from ${when} while the portals are searched again…`);
       renderRows();
       try { updateResultsTotal(); } catch (e) { /* non-critical */ }
+      // "Search together" on saved / recent chips: these results are the answer, no live search.
+      if (state._instantOnly) {
+        state._instantOnly = false;
+        state.searchPhase = "complete";
+        state.totalExact = true;
+        state.hasMore = false;
+        setStatus(`Showing ${state.rows.length} results combined from your saved searches (from ${when}). Press Search to refresh from the portals.`);
+        updateStopButton();
+        return;
+      }
     } else {
       state.instantFrom = null;
     }
+    state._instantOnly = false;
   }
   const res = await fetch(url);
   if (myGeneration !== _searchGeneration) return; // superseded by a newer search while this was in flight
