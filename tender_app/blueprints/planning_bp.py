@@ -12,6 +12,7 @@ estimated.
 from __future__ import annotations
 
 import math
+import re
 import threading
 from datetime import date
 from typing import Any
@@ -101,6 +102,31 @@ def _with_breakdown(row: dict[str, Any]) -> dict[str, Any]:
     serialized = _serialize(row)
     serialized["lead_score_breakdown"] = explain_lead_score(row)
     return serialized
+
+
+# EIA scoping / screening requests and Habitats Regulations consultations are not development proposals: they are
+# not "approved outline applications" and are not leads worth a top score.
+_CONSULTATION_RE = re.compile(
+    r"(screening|scoping)\s+(opinion|request|direction)|\b(eia|environmental impact assessment)\s+(screening|scoping)"
+    r"|habitats?\s+regulations?(\s+assessment)?|regulation\s+(63|68)\b|\bhra\b\s+(consultation|screening)",
+    re.I,
+)
+_CONSULTATION_SCORE_CAP = 25
+
+
+def _mark_consultation(row: dict[str, Any]) -> dict[str, Any]:
+    if not _CONSULTATION_RE.search(str(row.get("description") or "")):
+        return row
+    row["is_consultation"] = True
+    row["app_type"] = "Consultation / screening request"
+    if row.get("app_state") in ("Permitted", "Conditions", "Approved"):
+        row["app_state"] = "Consultation"
+    try:
+        if row.get("lead_score") is not None and float(row["lead_score"]) > _CONSULTATION_SCORE_CAP:
+            row["lead_score"] = _CONSULTATION_SCORE_CAP
+    except (TypeError, ValueError):
+        pass
+    return row
 
 
 def _fetch_dicts(cursor) -> list[dict[str, Any]]:
@@ -406,7 +432,7 @@ def _charged_search(built: dict[str, Any], page: int, per_page: int):
             r["distance_km"] = round(r["distance_km"], 2)
         else:
             r.pop("distance_km", None)
-        results.append(_with_breakdown(r))
+        results.append(_mark_consultation(_with_breakdown(r)))
 
     return jsonify({
         "results": results,

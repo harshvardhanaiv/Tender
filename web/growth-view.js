@@ -247,9 +247,17 @@
     const chips = [badge(`${ICONS[s.type] || ""}${esc(t.label)}`, t.tone)];
     if (state.opted_out) chips.push(badge("Do not contact", "bad"));
     if (state.dismissed) chips.push(badge("Dismissed", "muted"));
-    (state.campaigns || []).forEach((c) =>
+    // campaigns with the same name collapse into one tag ("In: Name ×3") instead of repeating it
+    const byName = new Map();
+    (state.campaigns || []).forEach((c) => {
+      const k = String(c.name || "").trim().toLowerCase();
+      if (!byName.has(k)) byName.set(k, { first: c, n: 0, ids: new Set() });
+      const g = byName.get(k);
+      if (!g.ids.has(c.id)) { g.ids.add(c.id); g.n += 1; }
+    });
+    byName.forEach((g) =>
       chips.push(
-        `<button type="button" class="gs-badge gs-badge--accent gs-badge--link" data-action="open-campaign" data-id="${esc(c.id)}" title="Open this campaign">In: ${esc(c.name)}</button>`
+        `<button type="button" class="gs-badge gs-badge--accent gs-badge--link" data-action="open-campaign" data-id="${esc(g.first.id)}" title="${g.n > 1 ? g.n + " campaigns share this name: " : ""}Open this campaign">In: ${esc(g.first.name)}${g.n > 1 ? " ×" + g.n : ""}</button>`
       )
     );
     const select = target.targetable

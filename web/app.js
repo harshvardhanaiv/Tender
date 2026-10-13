@@ -67,10 +67,66 @@ function closeCreditsModal() {
 const ALERT_DAYS = 10;
 const EXPECTED_API_VERSION = 6;
 
+// The name a plan is shown under everywhere ("standard" / "advance" are internal keys)
+function planDisplayName(plan) {
+  const p = String(plan || "free").toLowerCase();
+  if (p === "advance" || p === "teams" || p === "pro") return "Teams";
+  if (p === "standard" || p === "solo") return "Solo";
+  return "Free";
+}
+
+// Turnover is a number of millions: "Unknown", "n/a" and other words are blank, "1,250.5" becomes "1250.5"
+function cleanTurnoverValue(v) {
+  const n = parseFloat(String(v == null ? "" : v).replace(/,/g, "").replace(/[^\d.]/g, ""));
+  return isNaN(n) ? "" : String(n);
+}
+
+// "Measure from" starts at the active company profile's postcode instead of London, unless the reader has already
+// chosen a place for that screen (its label is no longer the London default).
+let _originSeededFor = "";
+async function seedOriginFromProfile() {
+  try {
+    const meta = getActiveProfileMeta();
+    const pc = String((meta && meta.postcode) || "").trim();
+    if (!pc || _originSeededFor === pc || typeof resolveLocationAsync !== "function") return;
+    _originSeededFor = pc;
+    const found = await resolveLocationAsync(pc);
+    if (!found) return;
+    const targets = [
+      [typeof _buyerFilterState !== "undefined" ? _buyerFilterState : null, "lblLocationStatus"],
+      [typeof _supplierFilterState !== "undefined" ? _supplierFilterState : null, "lblSupplierLocationStatus"],
+    ];
+    targets.forEach(([st, lblId]) => {
+      if (!st || st.locationLabel !== "London") return; // the reader already picked a place
+      st.userLat = found.lat;
+      st.userLon = found.lon;
+      st.locationLabel = pc;
+      const lbl = $(lblId);
+      if (lbl) lbl.textContent = `Measuring distance from ${pc} (your company profile)`;
+    });
+  } catch (e) { /* the default stays London */ }
+}
+
 function storageKey(key) {
   const uid = (typeof state !== "undefined" && state && state.username) ? state.username : 'guest';
   const cleanKey = key.startsWith("tf_") ? key.substring(3) : key;
   return `tf_${uid}_${cleanKey}`;
+}
+
+// Logout: nothing of this user's stays in the browser for the next person to sign in (their searches and cached
+// lists, the browser's results cache, and any AI key typed into the settings).
+function clearUserBrowserData() {
+  try {
+    ["ai_provider", "ai_api_key", "ai_model"].forEach((k) => localStorage.removeItem(k));
+    const prefix = storageKey("x").slice(0, -1); // tf_<user>_
+    const doomed = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(prefix) && /swr_|recent|saved|credit|plan|profile/i.test(k)) doomed.push(k);
+    }
+    doomed.forEach((k) => localStorage.removeItem(k));
+  } catch (e) { /* storage blocked: nothing to clear */ }
+  try { if (typeof SearchCache !== "undefined") SearchCache.clear(); } catch (e) { /* best effort */ }
 }
 
 // ── Stale-while-revalidate ──────────────────────────────────────────────────────────────────────
@@ -686,7 +742,7 @@ function updateCreditDisplay() {
   if (btn) {
     btn.classList.remove("topbar-btn--loading");
     // Icon-only by default; the balance slides out on hover (see .topbar-btn__credits-label in styles.css).
-    btn.title = `${state.creditBalance.toLocaleString()} credits · Plan: ${state.plan} — click to buy credits`;
+    btn.title = `${state.creditBalance.toLocaleString()} credits · Plan: ${planDisplayName(state.plan)} — click to buy credits`;
   }
   updatePlanBadge();
 }
@@ -4857,6 +4913,8 @@ function getRowMatchRole(row) {
 }
 
 function shouldGroupMatchRoles(rows, scope, query) {
+  // A column sort orders the whole list; the match groups (title / supplier / description) only apply to the default order
+  if (state.sort) return false;
   const parsed = parseKeywordQuery(query, scope || state.keywordScope || "all");
   if (parsed.scope !== "all") return false;
   if (!parsed.query || parsed.query === "all" || parsed.query === "*") return false;
@@ -7774,13 +7832,13 @@ function renderDetailsHtml(d, row) {
 async function search() {
   state._cacheOpenToken++; // invalidate any in-flight background refresh from a cached-search open
   const q = ($("rmSearchKeywordInput")?.value || $("q")?.value || state.q || "").trim();
-  if (!q) {
+  if (!q || (q.length < 2 && !/^[\u0080-\uFFFF]$/.test(q))) {
     const qEl = $("rmSearchKeywordInput") || $("q");
     if (qEl) {
       qEl.classList.add("input--invalid");
       qEl.focus();
     }
-    await showAlert("Please enter a search keyword (minimum 1 character) to search for tenders.", "Search Criteria");
+    await showAlert("Please enter a search keyword of at least 2 characters to search for tenders.", "Search Criteria");
     return;
   }
 
@@ -7898,6 +7956,7 @@ async function stopSearch() {
       body: JSON.stringify({ jobId: state.jobId })
     });
     stopSearchPoll();
+    state._userStopped = true;
     state.searchPhase = "stopped";
     state.searchPaused = false;
     updateStopButton();
@@ -7915,6 +7974,7 @@ async function stopSearch() {
 
 async function resumeSearch() {
   if (!state.jobId) return;
+  state._userStopped = false;
   try {
     const res = await fetch("/api/search/resume", {
       method: "POST",
@@ -8019,6 +8079,7 @@ async function loadPage(isNewSearch = false, isPoll = false) {
   state.scope = getScopeValue() || state.scope || "all";
   const scope = state.scope || "all";
   if (isNewSearch) {
+    state._userStopped = false;
     stopSearchPoll();
     state.jobId = null;
     state.total = null;
@@ -8138,7 +8199,8 @@ async function loadPage(isNewSearch = false, isPoll = false) {
   state.hasMore = Boolean(data.hasMore);
   state.meta = data.meta || null;
   state.jobId = data.jobId || null;
-  state.searchPhase = incomingPhase;
+  // A search the reader stopped stays "stopped" (the server reports the stopped job as complete)
+  state.searchPhase = (isPoll && state._userStopped && incomingPhase !== "loading") ? "stopped" : incomingPhase;
   updateStopButton();
   if (state.total == null && state.meta?.total != null) {
     state.total = state.meta.total;
@@ -8958,6 +9020,11 @@ function closeAnalyseModal() {
   if (runningTask) {
     cpShowToast("Analysis is running in the background. Monitor it in the Active Tasks panel.", "info");
   }
+  // Opened with "View" from History: closing it goes back to History, not to Tender search
+  if (state._returnToHistory) {
+    state._returnToHistory = false;
+    try { openHistoryModal(); } catch (e) { /* non-critical */ }
+  }
 }
 
 async function openSummaryModal(row, isRefresh = false) {
@@ -9666,6 +9733,7 @@ $("btnLogout")?.addEventListener("click", async () => {
   try {
     const res = await fetch("/api/logout", { method: "POST" });
     sessionStorage.removeItem("tf_csrf");
+    clearUserBrowserData();
     if (res.ok) {
       window.location.href = "/login.html";
     } else {
@@ -9784,8 +9852,8 @@ function updateExplanationText() {
   if (state.dateFilterPreset === "all") {
     el.textContent = "Showing all tenders";
   } else if (state.dateFilterPreset === "custom") {
-    const sliderStart = $("dateSliderStart");
-    const sliderEnd = $("dateSliderEnd");
+    const sliderStart = $("dateSliderStart") || $("rmDateSliderStart");
+    const sliderEnd = $("dateSliderEnd") || $("rmDateSliderEnd");
     if (sliderStart && sliderEnd && state.dateFilterActive && state.dateFilterValueMin !== null && state.dateFilterValueMax !== null) {
       const dStart = new Date(state.dateFilterValueMin);
       const dEnd = new Date(state.dateFilterValueMax);
@@ -9821,45 +9889,34 @@ function updateDateSliderBounds() {
     return parseDate(dateStr);
   }).filter(Boolean);
 
-  const sliderStart = $("dateSliderStart");
-  const sliderEnd = $("dateSliderEnd");
-
-  if (!sliderStart || !sliderEnd) return;
+  const sliderSets = [["dateSliderStart", "dateSliderEnd"], ["rmDateSliderStart", "rmDateSliderEnd"]]
+    .map(([a, b]) => [$(a), $(b)]).filter(([a, b]) => a && b);
+  if (!sliderSets.length) return;
 
   let minTime, maxTime;
   if (dates.length > 0) {
-    const timestamps = dates.map(d => d.getTime());
-    minTime = Math.min(...timestamps);
-    maxTime = Math.max(...timestamps);
+    // not Math.min(...) over every row: thousands of arguments overflow the stack
+    minTime = Infinity; maxTime = -Infinity;
+    dates.forEach((d) => { const t = d.getTime(); if (t < minTime) minTime = t; if (t > maxTime) maxTime = t; });
   } else {
     const now = new Date();
     minTime = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     maxTime = minTime + (30 * 24 * 60 * 60 * 1000);
   }
 
-  // Set sliders min/max/step
-  sliderStart.min = minTime;
-  sliderStart.max = maxTime;
-  sliderStart.step = 24 * 60 * 60 * 1000;
-
-  sliderEnd.min = minTime;
-  sliderEnd.max = maxTime;
-  sliderEnd.step = 24 * 60 * 60 * 1000;
-
   // If slider values haven't been set, or are out of bounds
   if (state.dateFilterValueMin === null || state.dateFilterValueMin < minTime || state.dateFilterValueMin > maxTime) {
-    sliderStart.value = minTime;
     state.dateFilterValueMin = minTime;
-  } else {
-    sliderStart.value = state.dateFilterValueMin;
   }
-
   if (state.dateFilterValueMax === null || state.dateFilterValueMax < minTime || state.dateFilterValueMax > maxTime) {
-    sliderEnd.value = maxTime;
     state.dateFilterValueMax = maxTime;
-  } else {
-    sliderEnd.value = state.dateFilterValueMax;
   }
+  // both the sidebar and the top-bar sliders get the same range and values
+  sliderSets.forEach(([start, end]) => {
+    [start, end].forEach((el) => { el.min = minTime; el.max = maxTime; el.step = 24 * 60 * 60 * 1000; });
+    start.value = state.dateFilterValueMin;
+    end.value = state.dateFilterValueMax;
+  });
 
   // Update slider container visibility
   const sliderContainer = $("customSliderContainer");
@@ -9876,47 +9933,48 @@ function updateDateSliderBounds() {
 }
 
 function updateDateSliderDisplay() {
-  const sliderStart = $("dateSliderStart");
-  const sliderEnd = $("dateSliderEnd");
-  const valStartSpan = $("dateSliderStartVal");
-  const valEndSpan = $("dateSliderEndVal");
-  if (!sliderStart || !sliderEnd || !valStartSpan || !valEndSpan) return;
+  const fmt = (t) => new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  ["", "rm"].forEach((pre) => {
+    const idp = pre ? "rmDateSlider" : "dateSlider";
+    const sliderStart = $(`${idp}Start`);
+    const sliderEnd = $(`${idp}End`);
+    const valStartSpan = $(`${idp}StartVal`);
+    const valEndSpan = $(`${idp}EndVal`);
+    if (!sliderStart || !sliderEnd || !valStartSpan || !valEndSpan) return;
+    const valStart = parseInt(sliderStart.value);
+    const valEnd = parseInt(sliderEnd.value);
+    const fmtStart = fmt(valStart);
+    const fmtEnd = fmt(valEnd);
+    valStartSpan.textContent = fmtStart;
+    valEndSpan.textContent = fmtEnd;
+
+    // Update dynamic floating tooltips above the thumbs
+    const tooltipStart = $(`${idp}StartTooltip`);
+    const tooltipEnd = $(`${idp}EndTooltip`);
+    if (tooltipStart && tooltipEnd) {
+      const min = parseInt(sliderStart.min) || valStart;
+      const max = parseInt(sliderStart.max) || valEnd;
+      const range = max - min || 1;
+      const startPercent = ((valStart - min) / range) * 100;
+      const endPercent = ((valEnd - min) / range) * 100;
+
+      tooltipStart.textContent = fmtStart;
+      tooltipStart.style.left = `calc(${startPercent}% + ${(8 - startPercent * 0.16)}px)`;
+
+      tooltipEnd.textContent = fmtEnd;
+      tooltipEnd.style.left = `calc(${endPercent}% + ${(8 - endPercent * 0.16)}px)`;
+
+      // Avoid overlap if thumbs are close
+      tooltipEnd.style.bottom = (endPercent - startPercent) < 15 ? "42px" : "24px";
+      tooltipStart.style.bottom = "24px";
+    }
+  });
+
+  const sliderStart = $("dateSliderStart") || $("rmDateSliderStart");
+  const sliderEnd = $("dateSliderEnd") || $("rmDateSliderEnd");
+  if (!sliderStart || !sliderEnd) return;
   const valStart = parseInt(sliderStart.value);
   const valEnd = parseInt(sliderEnd.value);
-
-  const dStart = new Date(valStart);
-  const fmtStart = dStart.toLocaleDateString("en-GB", { day: 'numeric', month: 'short', year: 'numeric' });
-  valStartSpan.textContent = fmtStart;
-
-  const dEnd = new Date(valEnd);
-  const fmtEnd = dEnd.toLocaleDateString("en-GB", { day: 'numeric', month: 'short', year: 'numeric' });
-  valEndSpan.textContent = fmtEnd;
-
-  // Update dynamic floating tooltips above the thumbs
-  const tooltipStart = $("dateSliderStartTooltip");
-  const tooltipEnd = $("dateSliderEndTooltip");
-  if (tooltipStart && tooltipEnd) {
-    const min = parseInt(sliderStart.min) || valStart;
-    const max = parseInt(sliderStart.max) || valEnd;
-    const range = max - min || 1;
-    const startPercent = ((valStart - min) / range) * 100;
-    const endPercent = ((valEnd - min) / range) * 100;
-
-    tooltipStart.textContent = fmtStart;
-    tooltipStart.style.left = `calc(${startPercent}% + ${(8 - startPercent * 0.16)}px)`;
-
-    tooltipEnd.textContent = fmtEnd;
-    tooltipEnd.style.left = `calc(${endPercent}% + ${(8 - endPercent * 0.16)}px)`;
-
-    // Avoid overlap if thumbs are close
-    const isClose = (endPercent - startPercent) < 15;
-    if (isClose) {
-      tooltipEnd.style.bottom = "42px";
-    } else {
-      tooltipEnd.style.bottom = "24px";
-    }
-    tooltipStart.style.bottom = "24px";
-  }
 
   const btnReset = $("btnResetDate");
   if (btnReset) {
@@ -13390,7 +13448,7 @@ function cpCollectData() {
       reg_number: cpFieldValue("cpRegNumber"),
       vat_number: cpFieldValue("cpVatNumber"),
       duns_number: cpFieldValue("cpDunsNumber"),
-      turnover: cpFieldValue("cpTurnover"),
+      turnover: cleanTurnoverValue(cpFieldValue("cpTurnover")),
       is_see: seeVal,
       is_voc: vocVal,
       website: cpFieldValue("cpWebsite"),
@@ -13438,7 +13496,7 @@ function cpPopulateForm(profile) {
   setVal("cpRegNumber", meta.reg_number);
   setVal("cpVatNumber", meta.vat_number);
   setVal("cpDunsNumber", meta.duns_number);
-  setVal("cpTurnover", meta.turnover);
+  setVal("cpTurnover", cleanTurnoverValue(meta.turnover));
   setVal("cpWebsite", meta.website);
   setVal("cpContactName", meta.contact_name);
   setVal("cpEmail", meta.email);
@@ -14229,7 +14287,7 @@ async function setDefaultCompanyProfile(id) {
       else if (!$("cpEnterpriseType")?.value) setVal("cpEnterpriseType", "micro");
       if (d.business_type) setVal("cpBusinessType", d.business_type);
       else if (!$("cpBusinessType")?.value) setVal("cpBusinessType", "J");
-      setVal("cpTurnover", d.turnover);
+      setVal("cpTurnover", cleanTurnoverValue(d.turnover));
       setVal("cpWebsite", d.website || website);
       setVal("cpAddr1", d.addr1);
       setVal("cpCity", d.city);
@@ -15121,6 +15179,7 @@ async function loadCompanyProfiles() {
       state.companyProfiles = data.profiles || [];
       const defaultProf = state.companyProfiles.find(p => p.is_default) || state.companyProfiles[0];
       state.defaultProfileId = defaultProf ? String(defaultProf.id) : "";
+      setTimeout(() => { seedOriginFromProfile(); }, 0);
 
       // Prioritize the designated default profile from database across the whole app
       if (defaultProf && defaultProf.is_default) {
@@ -15476,6 +15535,7 @@ function renderHistoryList() {
 async function loadHistoryItem(id) {
   try {
     closeHistoryModal();
+    state._returnToHistory = true;
     const res = await fetch(`/api/analyses/${id}`);
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || "Failed to retrieve history item");
@@ -15557,6 +15617,7 @@ async function loadHistoryItem(id) {
       wireTabNavigation();
     }
   } catch (err) {
+    state._returnToHistory = false;
     await showAlert("Error loading cached record: " + err.message);
   }
 }
@@ -16954,7 +17015,7 @@ function openProfile(targetSection = "") {
 
   // Fill user details in "My Account"
   $("profileEmail").textContent = state.username || "—";
-  $("profilePlan").textContent = state.plan.toUpperCase() || "—";
+  $("profilePlan").textContent = planDisplayName(state.plan);
   $("profileCredits").textContent = state.creditBalance != null ? `${state.creditBalance} cr` : "—";
   $("profileRole").textContent = state.role ? state.role.toUpperCase() : "—";
 
@@ -21983,6 +22044,7 @@ function initProfileDropdown() {
     try {
       await fetch("/api/logout", { method: "POST" });
     } catch {/* ignore */ }
+    clearUserBrowserData();
     window.location.href = "/login.html";
   });
 
