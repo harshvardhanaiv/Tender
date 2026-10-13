@@ -123,7 +123,14 @@ def _mark_consultation(row: dict[str, Any]) -> dict[str, Any]:
         row["app_state"] = "Consultation"
     try:
         if row.get("lead_score") is not None and float(row["lead_score"]) > _CONSULTATION_SCORE_CAP:
+            before = float(row["lead_score"])
             row["lead_score"] = _CONSULTATION_SCORE_CAP
+            # The detail breakdown must add up to the capped score: the cap is a negative line (points removed), as
+            # for the other caps in explain_lead_score, so the parts plus "cap" equal the score shown.
+            breakdown = row.get("lead_score_breakdown")
+            if isinstance(breakdown, dict):
+                breakdown["cap"] = round(float(breakdown.get("cap") or 0) + (_CONSULTATION_SCORE_CAP - before), 2)
+            row["low_value_reason"] = "consultation"
     except (TypeError, ValueError):
         pass
     return row

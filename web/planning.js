@@ -398,6 +398,7 @@
     if (b.cap) {
       const capLabel = app.low_value_reason === "minor_works" ? "Minor works cap"
         : app.low_value_reason === "paperwork" ? "Paperwork cap"
+        : app.low_value_reason === "consultation" ? "Consultation / screening cap"
         : "Capped at 100";
       rows.push(`
         <div class="planning-score-row planning-score-row--cap">
@@ -410,7 +411,7 @@
       <section class="planning-section">
         <h4>Lead score: ${esc(app.lead_score)} / 100</h4>
         <div class="planning-score-rows">${rows.join("")}</div>
-        <p class="planning-score-note">A ranking, not a value estimate. Larger, approved, early-stage and recent schemes rank higher. Householder-scale works and follow-up paperwork such as discharge of conditions are capped at 30.</p>
+        <p class="planning-score-note">A ranking, not a value estimate. Larger, approved, early-stage and recent schemes rank higher. Householder-scale works and follow-up paperwork such as discharge of conditions are capped at 30; screening, scoping and Habitats Regulations consultations at 25.</p>
       </section>`;
   }
 
