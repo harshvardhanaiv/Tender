@@ -216,7 +216,7 @@ const state = {
   searchPhase: "complete",
   pollTimer: null,
   sort: null,   // null | "value_asc" | "value_desc"
-  dateFilterType: "deadline", // "deadline" | "published"
+  dateFilterType: "published", // "deadline" | "published" -- the top-bar control is labelled Published
   dateFilterActive: false,
   dateFilterValueMin: null,
   dateFilterValueMax: null,
@@ -4464,9 +4464,19 @@ function formatDeadline(row) {
 }
 
 function formatDaysLeft(row) {
-  const days = row.days_until_deadline;
-  const urgency = row.deadline_urgency || "unknown";
+  let days = row.days_until_deadline;
+  let urgency = row.deadline_urgency || "unknown";
   const deadline = row.submission_deadline || "";
+  // The stored count was worked out when the search ran; a result kept from yesterday must count from today (N2)
+  if (days != null && urgency !== "unknown") {
+    const dl = parseDate(String(deadline).split(" ")[0]);
+    if (dl) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      days = Math.round((dl.getTime() - today.getTime()) / 86400000);
+      if (days < 0) urgency = "past";
+    }
+  }
 
   if (days == null || urgency === "unknown") {
     const pubDate = parseDate(row.date_published);
@@ -20199,7 +20209,28 @@ const UK_BUYER_CITY_COORDS = {
   "sheffield": { lat: 53.3811, lon: -1.4701, name: "Sheffield" },
   "liverpool": { lat: 53.4084, lon: -2.9916, name: "Liverpool" },
   "nottingham": { lat: 52.9548, lon: -1.1581, name: "Nottingham" },
-  "southampton": { lat: 50.9097, lon: -1.4044, name: "Southampton" }
+  "southampton": { lat: 50.9097, lon: -1.4044, name: "Southampton" },
+  "chelmsford": { lat: 51.7356, lon: 0.4685, name: "Chelmsford" },
+  "colchester": { lat: 51.8959, lon: 0.8919, name: "Colchester" },
+  "maldon": { lat: 51.7312, lon: 0.6773, name: "Maldon" },
+  "cork": { lat: 51.8985, lon: -8.4756, name: "Cork" },
+  "limerick": { lat: 52.6638, lon: -8.6267, name: "Limerick" },
+  "galway": { lat: 53.2707, lon: -9.0568, name: "Galway" },
+  "luton": { lat: 51.8787, lon: -0.42, name: "Luton" },
+  "milton keynes": { lat: 52.0406, lon: -0.7594, name: "Milton Keynes" },
+  "oxford": { lat: 51.752, lon: -1.2577, name: "Oxford" },
+  "cambridge": { lat: 52.2053, lon: 0.1218, name: "Cambridge" },
+  "norwich": { lat: 52.6309, lon: 1.2974, name: "Norwich" },
+  "ipswich": { lat: 52.0567, lon: 1.1482, name: "Ipswich" },
+  "leicester": { lat: 52.6369, lon: -1.1398, name: "Leicester" },
+  "coventry": { lat: 52.4068, lon: -1.5197, name: "Coventry" },
+  "reading": { lat: 51.4543, lon: -0.9781, name: "Reading" },
+  "brighton": { lat: 50.8225, lon: -0.1372, name: "Brighton" },
+  "plymouth": { lat: 50.3755, lon: -4.1427, name: "Plymouth" },
+  "exeter": { lat: 50.7184, lon: -3.5339, name: "Exeter" },
+  "aberdeen": { lat: 57.1497, lon: -2.0943, name: "Aberdeen" },
+  "swindon": { lat: 51.5558, lon: -1.7797, name: "Swindon" },
+  "winchester": { lat: 51.0632, lon: -1.308, name: "Winchester" }
 };
 
 function resolveCustomBuyerLocation(text) {
