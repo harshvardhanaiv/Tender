@@ -123,17 +123,32 @@ async function seedOriginFromProfile() {
     _originSeededFor = pc;
     const found = await resolveLocationAsync(pc);
     if (!found) return;
+    window._profileOrigin = { lat: found.lat, lon: found.lon, pc };
     const targets = [
-      [window._buyerFilterState || null, "lblLocationStatus"],
-      [window._supplierFilterState || null, "lblSupplierLocationStatus"],
+      [window._buyerFilterState || null, "lblLocationStatus", "selBuyerLocationCity"],
+      [window._supplierFilterState || null, "lblSupplierLocationStatus", "selSupplierLocationCity"],
     ];
-    targets.forEach(([st, lblId]) => {
+    targets.forEach(([st, lblId, selId]) => {
       if (!st || st.locationLabel !== "London") return; // the reader already picked a place
       st.userLat = found.lat;
       st.userLon = found.lon;
       st.locationLabel = pc;
       const lbl = $(lblId);
       if (lbl) lbl.textContent = `Measuring distance from ${pc} (your company profile)`;
+      // the dropdown said "London (Default)" while the distance was measured from the profile postcode (N5)
+      const sel = $(selId);
+      if (sel) {
+        const london = sel.querySelector("option[value='London']");
+        if (london) london.textContent = "London";
+        let opt = sel.querySelector("option[value='profile']");
+        if (!opt) {
+          opt = document.createElement("option");
+          opt.value = "profile";
+          sel.insertBefore(opt, sel.firstChild);
+        }
+        opt.textContent = `${pc} (your company profile)`;
+        sel.value = "profile";
+      }
     });
   } catch (e) { /* the default stays London */ }
 }
@@ -1384,7 +1399,7 @@ function resetAllFilters() {
   if ($("keywordScopeSelect")) $("keywordScopeSelect").value = "all";
   if ($("rmKeywordScopeSelect")) $("rmKeywordScopeSelect").value = "all";
   if (typeof updateScopeLabelAndHint === "function") updateScopeLabelAndHint("all");
-  _collapsedMatchGroups.clear();
+  _resetCollapsedMatchGroups();
   const qInput = $("q");
   if (qInput) qInput.value = "";
   if ($("rmSearchInput")) $("rmSearchInput").value = "";
@@ -5001,7 +5016,12 @@ function shouldGroupMatchRoles(rows, scope, query) {
   return false;
 }
 
-const _collapsedMatchGroups = new Set();
+// Rows that match only because a supplier's name has the word start folded away (D19); the group header shows the count
+const _collapsedMatchGroups = new Set(["supplier"]);
+function _resetCollapsedMatchGroups() {
+  _collapsedMatchGroups.clear();
+  _collapsedMatchGroups.add("supplier");
+}
 window.toggleMatchGroupCollapse = function (role) {
   if (_collapsedMatchGroups.has(role)) {
     _collapsedMatchGroups.delete(role);
@@ -5409,7 +5429,7 @@ function setKeywordScope(scope, syncInputPrefix = false) {
     }
   }
 
-  _collapsedMatchGroups.clear();
+  _resetCollapsedMatchGroups();
   if (typeof renderRows === "function") renderRows();
   if (typeof updateResultsTotal === "function") updateResultsTotal();
   if (typeof updateRightmoveResultsCount === "function") updateRightmoveResultsCount();
@@ -7960,7 +7980,7 @@ async function search() {
 
   state.q = q;
   syncKeywordScopeFromInput(q);
-  _collapsedMatchGroups.clear();
+  _resetCollapsedMatchGroups();
   state.scope = getScopeValue();
   syncNativeScope();
   pushRecentSearch(q, state.scope);
@@ -8269,7 +8289,7 @@ async function loadPage(isNewSearch = false, isPoll = false) {
   }
   if (isNewSearch) {
     refreshCredits();
-    _collapsedMatchGroups.clear();
+    _resetCollapsedMatchGroups();
   }
   const data = await res.json();
   const incomingRows = (data.rows || []).map(normalizeRow);
@@ -20148,6 +20168,13 @@ function initSupplierIntelligenceEvents() {
           txtSupplierCustom.focus();
         }
         if (lblSupplierStatus) lblSupplierStatus.textContent = "Enter a UK postcode or city name below";
+      } else if (val === "profile" && window._profileOrigin) {
+        if (txtSupplierCustom) txtSupplierCustom.classList.add("hidden");
+        _supplierFilterState.userLat = window._profileOrigin.lat;
+        _supplierFilterState.userLon = window._profileOrigin.lon;
+        _supplierFilterState.locationLabel = window._profileOrigin.pc;
+        if (lblSupplierStatus) lblSupplierStatus.textContent = `Measuring distance from ${window._profileOrigin.pc} (your company profile)`;
+        refreshSuppliersNow();
       } else if (val === "gps") {
         if (txtSupplierCustom) txtSupplierCustom.classList.add("hidden");
         if (lblSupplierStatus) lblSupplierStatus.innerHTML = `📍 Active: <strong>Your GPS</strong> (${_supplierFilterState.userLat.toFixed(2)}, ${_supplierFilterState.userLon.toFixed(2)})`;
@@ -21118,6 +21145,13 @@ function initBuyerIntelligenceEvents() {
           txtCustom.focus();
         }
         if (lblStatus) lblStatus.textContent = "Enter a UK postcode or city name below";
+      } else if (val === "profile" && window._profileOrigin) {
+        if (txtCustom) txtCustom.classList.add("hidden");
+        _buyerFilterState.userLat = window._profileOrigin.lat;
+        _buyerFilterState.userLon = window._profileOrigin.lon;
+        _buyerFilterState.locationLabel = window._profileOrigin.pc;
+        if (lblStatus) lblStatus.textContent = `Measuring distance from ${window._profileOrigin.pc} (your company profile)`;
+        refreshBuyerIntelligenceView();
       } else if (val === "gps") {
         if (txtCustom) txtCustom.classList.add("hidden");
         if (lblStatus) lblStatus.innerHTML = `📍 Active: <strong>Your GPS</strong> (${_buyerFilterState.userLat.toFixed(2)}, ${_buyerFilterState.userLon.toFixed(2)})`;
