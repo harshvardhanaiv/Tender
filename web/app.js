@@ -3619,7 +3619,7 @@ function renderSearchChips() {
     for (const s of saved) {
       const scopeLabel = s.scope && s.scope !== "all" ? SOURCES_LABEL[s.scope] || s.scope : "All";
       const displayQ = translateKeyword(s.q, state.lang);
-      const sKey = `saved:${s.q}|${s.scope || "all"}`;
+      const sKey = _chipKey("saved", s.q);
       html += `<span class="search-chip search-chip--saved${_chipSelected(sKey) ? " search-chip--selected" : ""}" data-skey="${esc(sKey)}" data-kind="saved" data-id="${esc(s.id ?? "")}" data-q="${esc(s.q)}" data-scope="${esc(s.scope || "all")}" data-scope-label="${esc(scopeLabel)}">`
         + `<button class="search-chip__select" data-select="1" aria-pressed="${_chipSelected(sKey)}" title="Select to search several together" aria-label="Select ${esc(displayQ)}">${_chipSelected(sKey) ? "✓" : "+"}</button>`
         + `<span class="search-chip__text">${esc(displayQ)}</span>`
@@ -3658,7 +3658,7 @@ function renderSearchChips() {
       const alertBtn = r.id != null
         ? `<button class="search-chip__alert${alertOn ? " search-chip__alert--on" : ""}" data-toggle-alert="1" data-id="${esc(r.id)}" title="${alertOn ? "Email alerts on for this search — click to turn off" : "Turn on email alerts for this search"}" aria-label="Toggle email alerts">${alertOn ? "🔔" : "🔕"}</button>`
         : "";
-      const rKey = `recent:${r.q}|${r.scope || "all"}`;
+      const rKey = _chipKey("recent", r.q);
       html += `<span class="search-chip${_chipSelected(rKey) ? " search-chip--selected" : ""}" data-skey="${esc(rKey)}" data-kind="recent" data-id="${esc(r.id ?? "")}" data-q="${esc(r.q)}" data-scope="${esc(r.scope || "all")}">`
         + `<button class="search-chip__select" data-select="1" aria-pressed="${_chipSelected(rKey)}" title="Select to search several together" aria-label="Select ${esc(displayQ)}">${_chipSelected(rKey) ? "✓" : "+"}</button>`
         + `<span class="search-chip__text">${esc(displayQ)}</span>`
@@ -3669,6 +3669,11 @@ function renderSearchChips() {
     html += `</div>`;
   }
 
+  const liveKeys = new Set([
+    ...saved.map((x) => _chipKey("saved", x.q)),
+    ...recent.map((x) => _chipKey("recent", x.q)),
+  ]);
+  [..._chipSelection].forEach((k) => { if (!liveKeys.has(k)) _chipSelection.delete(k); });
   const picked = _chipSelection.size;
   if (picked) {
     html += `<div class="chip-multibar" role="group" aria-label="Combine searches">`
@@ -3686,6 +3691,11 @@ function renderSearchChips() {
   updateActiveChipHighlight();
 }
 
+// One key per chip: the word only (ignoring case and spacing). A search can change a chip's scope or its
+// server id, and a key that included those would orphan the tick.
+function _chipKey(kind, q) {
+  return `${kind}:${String(q == null ? "" : q).trim().replace(/\s+/g, " ").toLowerCase()}`;
+}
 function _chipSelected(key) { return _chipSelection.has(key); }
 function _toggleChipSelection(key) {
   if (_chipSelection.has(key)) _chipSelection.delete(key);
