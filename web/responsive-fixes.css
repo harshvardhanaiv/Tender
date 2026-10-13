@@ -127,3 +127,6 @@ body.search-quiet #status { display: none !important; }
   .table col.col-ai-score, .table th.col-ai-score { width: 92px !important; min-width: 0 !important; }
 }
 .table th.col-ai-score .sort-label, .table th.col-ai-score { overflow-wrap: anywhere; word-break: normal; }
+@container results (max-width: 1180px) {
+  .table col.col-ai-score, .table th.col-ai-score { width: 108px !important; }
+}

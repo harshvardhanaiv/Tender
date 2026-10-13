@@ -37,6 +37,20 @@ def parse_deadline(value: str | None) -> date | None:
             except ValueError:
                 continue
 
+    # "12-Nov-26", "12-Nov-2026 17:00", "12 Nov 2026" (Public Contracts Scotland and others)
+    m = re.search(r"\b(\d{1,2})[-\s]([A-Za-z]{3,9})\.?[-\s,]+(\d{2}|\d{4})\b", text)
+    if m:
+        mon = m.group(2)[:3].title()
+        months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        if mon in months:
+            y = int(m.group(3))
+            if y < 100:
+                y += 2000
+            try:
+                return date(y, months.index(mon) + 1, int(m.group(1)))
+            except ValueError:
+                return None
+
     m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", text)
     if m:
         d, mo, y = (int(m.group(i)) for i in range(1, 4))

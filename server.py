@@ -4287,9 +4287,9 @@ def create_app() -> Flask:
             if generate_tender_id(r) in live_tender_ids:
                 r["_portal_hit"] = True
 
-        # A search of chosen portals ("a,b,c") returns those portals' tenders only: the list also holds tenders saved by
+        # A search of one or more chosen portals ("a" or "a,b,c") returns those portals' tenders only: the list also holds tenders saved by
         # earlier searches of other portals, which the page would otherwise have to download and then discard.
-        if scope and scope != "all" and "," in scope:
+        if scope and scope != "all":
             _wanted = {x.strip() for x in scope.split(",") if x.strip()}
             if _wanted:
                 rows = [r for r in rows if not r.get("source") or r.get("source") in _wanted]
@@ -5328,6 +5328,8 @@ Return this JSON structure:
         username = session.get("username", "admin")
         lang = (body.get("lang") or request.args.get("lang", "en")).strip().lower()
         summary_type = f"summary_{lang}" if lang != "en" else "summary"
+        # The company the reader had selected, so History can list the summary under it
+        summary_company = str(body.get("company") or "").strip()[:200]
 
         # Check cache first
         refresh = body.get("refresh", False)
@@ -5473,7 +5475,7 @@ Return ONLY valid JSON with no markdown fences:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO analyses (username, source, resource_id, tender_title, company, files_json, type, analysis_json) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (username, source, resource_id, title, "", "[]", summary_type, json.dumps(summary_data))
+                    (username, source, resource_id, title, summary_company, "[]", summary_type, json.dumps(summary_data))
                 )
                 conn.commit()
                 cursor.close()

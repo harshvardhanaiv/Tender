@@ -2038,7 +2038,7 @@ function buildPickerLabel() {
   if (count === activePortals.length) {
     return "All portals";
   }
-  return `${count} portals selected`;
+  return `${count} of ${activePortals.length} portals selected`;
 }
 
 function updatePickerLabel() {
@@ -4483,6 +4483,21 @@ function formatDaysLeft(row) {
   let urgency = row.deadline_urgency || "unknown";
   const deadline = row.submission_deadline || "";
   // The stored count was worked out when the search ran; a result kept from yesterday must count from today (N2)
+  // A deadline the server could not read ("12-Nov-26") is counted here
+  if ((days == null || urgency === "unknown") && deadline) {
+    const m = String(deadline).match(/\b(\d{1,2})[-\s]([A-Za-z]{3,9})\.?[-\s,]+(\d{2}|\d{4})\b/);
+    const mi = m ? ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(m[2].slice(0, 3).toLowerCase()) : -1;
+    if (m && mi >= 0) {
+      const y = parseInt(m[3], 10) < 100 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10);
+      const dl = _calendarDate(y, mi + 1, parseInt(m[1], 10));
+      if (dl) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        days = Math.round((dl.getTime() - today.getTime()) / 86400000);
+        urgency = days < 0 ? "past" : days <= 10 ? "critical" : days <= 30 ? "soon" : "normal";
+      }
+    }
+  }
   if (days != null && urgency !== "unknown") {
     const dl = parseDate(String(deadline).split(" ")[0]);
     if (dl) {
@@ -9245,7 +9260,7 @@ async function openSummaryModal(row, isRefresh = false) {
     const res = await fetch(`/api/summary${langParam}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tender: activeRow, refresh: isRefresh }),
+      body: JSON.stringify({ tender: activeRow, refresh: isRefresh, company: (getActiveProfile()?.name || "").trim() }),
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || "Failed to generate summary");
@@ -13272,6 +13287,7 @@ $("btnCloseHistoryModal")?.addEventListener("click", closeHistoryModal);
 $("historySearchInput")?.addEventListener("input", renderHistoryList);
 $("historyCompanyFilter")?.addEventListener("change", (e) => {
   const val = e.target.value || "all";
+  state._historyFilterTouched = true;
   state.historyCompanyFilter = val;
   e.target.classList.toggle("is-set", val !== "all");
   const match = (state.companyProfiles || []).find(p => p.name === val);
@@ -15458,6 +15474,7 @@ function openHistoryModal() {
   const defProfile = (state.companyProfiles || []).find(p => p.is_default) ||
                      (state.companyProfiles || []).find(p => String(p.id) === String(state.defaultProfileId || state.activeProfileId));
   const defName = defProfile?.name?.trim() || "";
+  state._historyFilterTouched = false;
   state.historyCompanyFilter = defName || "all";
   if ($("historyCompanyFilter")) {
     $("historyCompanyFilter").value = state.historyCompanyFilter;
@@ -15490,6 +15507,11 @@ function populateHistoryCompanyFilter() {
                      (state.companyProfiles || []).find(p => String(p.id) === String(state.defaultProfileId || state.activeProfileId));
   const defName = defProfile?.name?.trim() || "";
 
+  // The modal can open before the profiles have loaded (default unknown, filter "all"); until the reader picks a
+  // company themselves, the default company is applied as soon as it is known
+  if (defName && !state._historyFilterTouched && (!state.historyCompanyFilter || state.historyCompanyFilter === "all")) {
+    state.historyCompanyFilter = defName;
+  }
   const currentVal = state.historyCompanyFilter || defName || "all";
   const companies = new Set();
   (state.companyProfiles || []).forEach(p => {
@@ -15567,7 +15589,12 @@ function renderHistoryList() {
       filtered = filtered.filter(item => !item.company || !item.company.trim());
     } else {
       const target = state.historyCompanyFilter.toLowerCase().trim();
-      filtered = filtered.filter(item => (item.company || "").toLowerCase().trim() === target);
+      // Items with no company (summaries made before the company was recorded) belong to no company in particular,
+      // so they stay in the list for whichever company is selected
+      filtered = filtered.filter(item => {
+        const c = (item.company || "").toLowerCase().trim();
+        return !c || c === target;
+      });
     }
   }
 
