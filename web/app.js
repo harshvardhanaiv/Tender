@@ -5360,7 +5360,9 @@ function wordMatchLevel(row, query, titleOnly) {
 // `matched_terms`; otherwise the row's own text decides.
 function rowHasTerm(row, term) {
   if (Array.isArray(row.matched_terms) && row.matched_terms.includes(term)) return true;
-  const words = (queryAlternatives(term)[0]) || [];
+  let words = (queryAlternatives(term)[0]) || [];
+  // a term made only of ignored words ("services") still has to count the rows that contain it
+  if (!words.length) words = String(term || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 2).map(queryWordStem);
   if (!words.length) return false;
   const hay = rowSearchText(row);
   return words.every((w) => hay.includes(w));
