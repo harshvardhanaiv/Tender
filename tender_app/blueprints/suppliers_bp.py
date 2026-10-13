@@ -130,6 +130,22 @@ def _dedup_recurring_awards(award_dicts: list[dict[str, Any]]) -> list[dict[str,
     return _apportion_shared_values(deduped)
 
 
+def supplier_win_counts(awards: list[dict[str, Any]]) -> dict[str, int]:
+    """One definition of a supplier's wins, used by the list card, the profile tiles and the executive summary.
+
+    `awards` are the supplier's de-duplicated awards. A win is every non-framework award, whatever its value: a value
+    above SINGLE_AWARD_STATS_CEILING_GBP is untrustworthy and is left out of the money (total, average) but the supplier
+    still won the contract. The card (supplier_stats: total_awards - framework_appointments_count) counted it, while the
+    profile tile counted only awards inside the ceiling, so the same supplier read 33 on the card and 31 in the profile
+    (D21). `valued_direct_awards` is the number the average value is divided by."""
+    total = len(awards)
+    framework = sum(1 for a in awards if a.get("is_framework"))
+    valued = sum(1 for a in awards
+                 if not a.get("is_framework") and float(a.get("contract_value") or 0) <= SINGLE_AWARD_STATS_CEILING_GBP)
+    return {"total_awards": total, "direct_awards": total - framework,
+            "framework_appointments": framework, "valued_direct_awards": valued}
+
+
 def _is_valid_cnum_for_award_join(cnum: str | None) -> bool:
     if not cnum:
         return False
@@ -1163,7 +1179,8 @@ def get_supplier_detail(identifier: str):
                 "notice_url": a.get("notice_url")
             })
 
-        total_awards = len(awards)
+        win_counts = supplier_win_counts(awards)
+        total_awards = win_counts["total_awards"]
         avg_value = total_value / direct_awards_count if direct_awards_count > 0 else 0.0
 
         top_authorities = sorted(authority_stats.values(), key=lambda x: (x["count"], x["total_value"]), reverse=True)
@@ -1177,7 +1194,9 @@ def get_supplier_detail(identifier: str):
             "end_date": end_date,
             "metrics": {
                 "total_awards": total_awards,
-                "direct_awards": direct_awards_count,
+                # every non-framework award, as on the list card; the average value uses only the awards with a trusted value
+                "direct_awards": win_counts["direct_awards"],
+                "valued_direct_awards": direct_awards_count,
                 "total_value": total_value,
                 "avg_value": avg_value,
                 "framework_appointments": framework_appointments_count,
@@ -1267,10 +1286,12 @@ def get_supplier_executive_summary(identifier: str):
         total_value = sum(float(a.get("contract_value") or 0) for a in direct_awards_in_ceiling)
         framework_total_ceiling = sum(float(a.get("contract_value") or 0) for a in framework_awards)
 
-        total_awards = len(awards)
-        direct_count = len(direct_awards_in_ceiling)
-        fw_count = len(framework_awards)
-        avg_value = total_value / direct_count if direct_count > 0 else 0.0
+        win_counts = supplier_win_counts(awards)
+        total_awards = win_counts["total_awards"]
+        direct_count = win_counts["direct_awards"]            # the same count the list card and the profile show
+        valued_count = win_counts["valued_direct_awards"]     # awards whose value is trusted (the sum and average use these)
+        fw_count = win_counts["framework_appointments"]
+        avg_value = total_value / valued_count if valued_count > 0 else 0.0
         non_comp_awards, known_route_awards = _competition_stats(awards)
         non_comp_pct = round((non_comp_awards / known_route_awards * 100), 1) if known_route_awards > 0 else 0.0
 
@@ -1288,6 +1309,8 @@ def get_supplier_executive_summary(identifier: str):
         top_authorities = sorted(auth_map.values(), key=lambda x: (x["count"], x["total_value"]), reverse=True)
 
         win_bullet = f"🏆 **Win Track Record**: Secured {direct_count} direct contract award(s) totaling £{total_value:,.2f} (Avg contract size: £{avg_value:,.2f})."
+        if valued_count != direct_count:
+            win_bullet += f" The total and average use the {valued_count} with a published value we trust."
         if fw_count > 0:
             win_bullet += f" Also appointed to {fw_count} framework agreement(s) (Shared Framework Ceiling: £{framework_total_ceiling:,.2f})."
 
