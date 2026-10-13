@@ -31,16 +31,18 @@ test("the preview offers Add one when the buyer has no address", () => {
   assert.ok(!has.includes("focus-email"));
 });
 
-test("the builder note says TenderFlow sends nothing and has no Outreach panel", () => {
+test("the builder note says what Send mail does and shows the Outreach panel with no create-draft button", () => {
   const detail = {
     campaign: { id: 1, name: "C", channel: "email", channel_label: "Email", status: "draft", subject: "S", body: "B", category_label: "Cat", profile_name: "P" },
     targets: [{ id: 1, buyer_name: "Alpha", signal_type: "renewal", included: true, status: "not_sent", contact_email: "a@b.example", opted_out: false }],
     sender: { company_name: "Me" }, warnings: [], eligible: 1,
   };
   const html = V.builderPane({ status: "ok", detail, draft: { subject: "S", body: "B" }, dirty: false, options: { channels: [], merge_fields: [] } });
-  assert.match(html, /TenderFlow sends nothing/);
-  assert.ok(!/Outreach/.test(html), "no Outreach wording in the builder");
-  assert.ok(!html.includes("outreach-push"));
+  assert.match(html, /use Send mail to send through Outreach/);
+  assert.match(html, /Send to Outreach/);
+  assert.ok(!/TenderFlow sends nothing/.test(html), "the old claim is gone");
+  assert.ok(!html.includes("outreach-push"), "there is no create-draft button any more");
+  assert.ok(!/Create drafts/.test(html));
 });
 
 let failed = 0;

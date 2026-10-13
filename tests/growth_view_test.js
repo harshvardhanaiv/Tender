@@ -290,7 +290,7 @@ test("the campaigns table", () => {
 
 test("no campaigns yet, loading, failing and the do-not-contact list", () => {
   const none = V.campaignsPane({ status: "ok", list: [], suppressions: [{ key: "BLABY", name: "Blaby District Council", created_at: "2026-10-01T09:00:00" }], suppressionsOpen: true });
-  has(none, "No campaigns yet", "Nothing is sent from TenderFlow", "Do-not-contact list (1)", " open", "Blaby District Council", "1 Oct 2026", 'data-action="remove-suppression"', 'data-key="BLABY"');
+  has(none, "No campaigns yet", "or send it through Outreach", "Do-not-contact list (1)", " open", "Blaby District Council", "1 Oct 2026", 'data-action="remove-suppression"', 'data-key="BLABY"');
   has(V.campaignsPane({ status: "loading", list: null }), "Loading campaigns…");
   has(V.campaignsPane({ status: "error", error: "Down" }), "Down", 'data-action="reload-campaigns"');
   lacks(V.campaignsPane({ status: "ok", list: [], suppressions: [] }), "Do-not-contact");
