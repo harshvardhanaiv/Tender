@@ -3968,6 +3968,9 @@ function handleSearchChipsClick(e) {
   const chip = e.target.closest(".search-chip");
   if (!chip) return;
 
+  // While chips are ticked, clicking another chip adds it to the selection instead of opening it alone
+  if (_chipSelection.size && chip.dataset.skey) { _toggleChipSelection(chip.dataset.skey); return; }
+
   // Highlight clicked recent chip, clear others
   if (chip.dataset.kind === "recent") {
     const allRecent = document.querySelectorAll(".search-chip[data-kind='recent']");
@@ -5844,6 +5847,16 @@ function filteredAndSortedRows() {
       if (da === -1) return 1;
       if (db === -1) return -1;
       return state.sort === "published_asc" ? da - db : db - da;
+    }
+    if (!state.sort) {
+      // Default order: newest tender first (rows with no date last); equal dates keep the API order
+      const da = parseDate(a.date_published || a.award_date)?.getTime() ?? -1;
+      const db = parseDate(b.date_published || b.award_date)?.getTime() ?? -1;
+      if (da !== db) {
+        if (da === -1) return 1;
+        if (db === -1) return -1;
+        return db - da;
+      }
     }
     return 0; // Stable sort: preserves original API result order
   });
