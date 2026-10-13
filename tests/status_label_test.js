@@ -16,7 +16,7 @@ function cut(first, lastPattern) {
   return lines.slice(start, end + 1).join("\n");
 }
 const CODE = [
-  cut("function parseDate(", /^}/), cut("function isDeadlinePassed(", /^}/),
+  cut("function _calendarDate(", /^}/), cut("function parseDate(", /^}/), cut("function isDeadlinePassed(", /^}/),
   cut("function isClosedTender(", /^}/), cut("function statusLabel(", /^}/),
   'this.statusLabel = statusLabel;',
 ].join("\n");

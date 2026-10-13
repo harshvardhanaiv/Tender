@@ -4439,31 +4439,43 @@ function formatDaysLeft(row) {
   return `<span class="days-badge ${cls}" title="Deadline: ${esc(deadline)}">${esc(label)}</span>`;
 }
 
+// A calendar date built from year / month / day, or null when the combination does not exist. `new Date(2026, 24, 3)`
+// and `new Date(2026, 1, 30)` do not fail, they roll over into another month, which used to turn "03/25/2026" into
+// January 2028 and "31/04/2026" into 1 May without a word (D05).
+function _calendarDate(y, m, d) {
+  if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return null;
+  const dt = new Date(y, m - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d ? dt : null;
+}
+
 function parseDate(str) {
   if (!str) return null;
   const s = String(str).trim();
   if (!s || s === "—" || s.toLowerCase() === "tbc" || s.toLowerCase() === "n/a") return null;
 
-  // Try YYYY-MM-DD
-  let match = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  // ISO: YYYY-MM-DD (a time part is ignored); a day that does not exist is not a date
+  let match = s.match(/^(\d{4})-(\d{2})-(\d{2})(?![\d])/);
+  if (match) return _calendarDate(parseInt(match[1], 10), parseInt(match[2], 10), parseInt(match[3], 10));
+
+  // YYYY/MM/DD and YYYYMMDD
+  match = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})(?![\d])/) || s.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (match) return _calendarDate(parseInt(match[1], 10), parseInt(match[2], 10), parseInt(match[3], 10));
+
+  // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY (and a two-digit year). Day first, as the portals publish; only when that
+  // is not a real date (a month of 25) is it read as MM/DD/YYYY, so "03/25/2026" is 25 March and "31/04/2026" is not a date.
+  match = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4}|\d{2})(?![\d])/);
   if (match) {
-    return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
+    const a = parseInt(match[1], 10), b = parseInt(match[2], 10);
+    let y = parseInt(match[3], 10);
+    if (match[3].length === 2) y += 2000;
+    return _calendarDate(y, b, a) || _calendarDate(y, a, b);
   }
 
-  // Try DD/MM/YYYY
-  match = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (match) {
-    return new Date(parseInt(match[3]), parseInt(match[2]) - 1, parseInt(match[1]));
-  }
-
-  // Try DD-MM-YYYY
-  match = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
-  if (match) {
-    return new Date(parseInt(match[3]), parseInt(match[2]) - 1, parseInt(match[1]));
-  }
+  // "5th March 2026" -> "5 March 2026" for the standard parser
+  const plain = s.replace(/(\d)(?:st|nd|rd|th)\b/i, "$1");
 
   // Fallback to standard Date parsing
-  const d = new Date(s);
+  const d = new Date(plain);
   return isNaN(d.getTime()) ? null : d;
 }
 
