@@ -2180,9 +2180,9 @@ function renderProfileCountries() {
     const portals = PORTALS.filter(p => p.country === c.name);
     let portalText = "";
     if (c.name === "United Kingdom") {
-      portalText = "5 portals · Find a Tender, Contracts Finder, PCS, Sell2Wales, eTenders NI";
+      portalText = "5 portals available · Find a Tender, Contracts Finder, PCS, Sell2Wales, eTenders NI";
     } else if (c.name === "Ireland") {
-      portalText = "1 portal · Ireland eTenders (Gov.ie)";
+      portalText = "1 portal available · Ireland eTenders (Gov.ie)";
     } else {
       const pLabels = portals.map(p => p.label.split("(")[0].trim()).join(", ");
       portalText = `${c.portalCount} portal${c.portalCount > 1 ? "s" : ""} · ${pLabels}`;
@@ -4171,7 +4171,7 @@ function updateResultsTotal(rowsNow) {
   const checkedPortalsCount = checkedPortals.length;
   const checkedCountriesCount = new Set(checkedPortals.map(p => p.country)).size;
 
-  // Once a search is over this counts the portals that ANSWERED ("Across 2 of 3 portals"), not the
+  // Once a search is over this counts the portals that ANSWERED ("2 of 3 portals answered"), not the
   // portals that were selected; with no search information it falls back to the selection.
   const portalList = (state.q || "").trim() && state.jobId ? currentPortalList() : [];
   const sub = typeof SearchStatus !== "undefined"

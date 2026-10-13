@@ -71,7 +71,7 @@
         ? available.length
         : available.filter((p) => _selectedPortals.has(p.id)).length;
       const allPortals = selected === available.length;
-      setChip("chipPortals", allPortals ? "All portals" : `${selected} of ${available.length} portals`, !allPortals);
+      setChip("chipPortals", allPortals ? "All portals" : `${selected} of ${available.length} portals selected`, !allPortals);
     }
 
     // Published date

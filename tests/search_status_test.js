@@ -90,11 +90,11 @@ test("headerSub counts the portals that answered, not the portals that were sele
   const all = S.portalList(metaOf({}), labelOf);
   assert.equal(S.headerSub(all, 3, 1, false), "Across 3 portals in 1 country");
   const one = S.portalList(metaOf({ procontract: "timeout" }), labelOf);
-  assert.equal(S.headerSub(one, 3, 1, false), "Across 2 of 3 portals in 1 country");
+  assert.equal(S.headerSub(one, 3, 1, false), "2 of 3 portals answered in 1 country");
   const zeroIsAnAnswer = S.portalList(metaOf({ find_tender: "empty" }), labelOf);
   assert.equal(S.headerSub(zeroIsAnAnswer, 3, 2, false), "Across 3 portals in 2 countries", "'0 results' is an answer");
   const stopped = S.portalList(metaOf({ find_tender: "stopped", procontract: "error" }), labelOf);
-  assert.equal(S.headerSub(stopped, 3, 1, false), "Across 1 of 3 portals in 1 country");
+  assert.equal(S.headerSub(stopped, 3, 1, false), "1 of 3 portals answered in 1 country");
   assert.equal(S.headerSub(one, 3, 1, true), "Across 3 portals in 1 country", "while searching nothing has failed yet");
   assert.equal(S.headerSub([], 4, 2, false), "Across 4 portals in 2 countries", "no portal information: the selected portals");
   assert.equal(S.headerSub(S.portalList({ portal_results: { a: result("a", "ok") } }, labelOf), 1, 1, false), "Across 1 portal in 1 country");

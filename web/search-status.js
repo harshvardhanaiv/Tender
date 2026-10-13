@@ -93,14 +93,14 @@
   }
 
   /* The results header's second line. Once the search is over it counts the portals that answered, not
-     the portals that were selected: "Across 2 of 3 portals in 1 country". */
+     the portals that were selected: "2 of 3 portals answered in 1 country". */
   function headerSub(list, selectedCount, countriesCount, searching) {
     const total = list.length || selectedCount;
     let n = total;
     let text;
     if (list.length && !searching) {
       n = list.filter((p) => p.status === "ok" || p.status === "empty").length;
-      text = n < total ? `Across ${n} of ${plural(total, "portal")}` : `Across ${plural(total, "portal")}`;
+      text = n < total ? `${n} of ${plural(total, "portal")} answered` : `Across ${plural(total, "portal")}`;
     } else {
       text = `Across ${plural(total, "portal")}`;
     }
