@@ -124,8 +124,8 @@ async function seedOriginFromProfile() {
     const found = await resolveLocationAsync(pc);
     if (!found) return;
     const targets = [
-      [typeof _buyerFilterState !== "undefined" ? _buyerFilterState : null, "lblLocationStatus"],
-      [typeof _supplierFilterState !== "undefined" ? _supplierFilterState : null, "lblSupplierLocationStatus"],
+      [window._buyerFilterState || null, "lblLocationStatus"],
+      [window._supplierFilterState || null, "lblSupplierLocationStatus"],
     ];
     targets.forEach(([st, lblId]) => {
       if (!st || st.locationLabel !== "London") return; // the reader already picked a place
@@ -365,6 +365,7 @@ function loadPrefs() {
   // (it used to leak through, e.g. Swindon and Trafford notices under an Essex filter). The reader can turn it off.
   state.hideLocationNotStated = lsGet(LS_HIDE_UNSTATED_LOCATION, true) !== false;
   state.statusFilter = lsGet(LS_STATUS_FILTER, "opportunities");
+  if (state.statusFilter === "awarded") state.statusFilter = "awards"; // older saved value
   syncStatusFilterUI();
 
   // Restore keyword scope selection (persisted so it survives refresh)
@@ -564,7 +565,7 @@ async function loadPrefsFromServer() {
     // Status filter
     if (p.status_filter !== undefined) {
       localStorage.setItem(storageKey(LS_STATUS_FILTER), JSON.stringify(p.status_filter));
-      state.statusFilter = p.status_filter;
+      state.statusFilter = p.status_filter === "awarded" ? "awards" : p.status_filter;
       syncStatusFilterUI();
     }
     // Active profile
@@ -1206,12 +1207,12 @@ function initRightmoveFocusFilters() {
         statusContainer.querySelectorAll(".rm-pill").forEach(p => p.classList.remove("active"));
         pill.classList.add("active");
         const st = pill.dataset.status || "opportunities";
-        state.statusFilter = st;
+        state.statusFilter = st === "awarded" ? "awards" : st; // the filters below know the Awarded tab as "awards"
         const chkOpp = $("chkOpportunities");
         const chkAwarded = $("chkAwarded");
         if (chkOpp && chkAwarded) {
           if (st === "opportunities") { chkOpp.checked = true; chkAwarded.checked = false; }
-          else if (st === "awarded") { chkOpp.checked = false; chkAwarded.checked = true; }
+          else if (st === "awarded" || st === "awards") { chkOpp.checked = false; chkAwarded.checked = true; }
           else { chkOpp.checked = true; chkAwarded.checked = true; }
         }
         lsSet(LS_STATUS_FILTER, state.statusFilter);
@@ -7213,7 +7214,9 @@ function bindTrackPanelNotes(row) {
 
 function dashDaysLeft(deadline, now = Date.now()) {
   if (!deadline) return null;
-  return Math.ceil((new Date(deadline) - now) / 86400000);
+  let d = new Date(deadline);
+  if (isNaN(d) && typeof parseDate === "function") d = parseDate(deadline) || d; // "18/11/2026 12:00:00" is not a Date string
+  return Math.ceil((d - now) / 86400000);
 }
 
 function populatePipelinePortalFilter() {
@@ -8291,7 +8294,18 @@ async function loadPage(isNewSearch = false, isPoll = false) {
     // A portal that answers "nothing" on the refresh must not wipe the rows it gave earlier.
     const answered = new Set(incomingRows.map((r) => r.source));
     const kept = state._instantRows.filter((r) => r.source && !answered.has(r.source));
-    if (kept.length) shownRows = incomingRows.concat(kept);
+    let extra = kept;
+    // A portal that failed or timed out on the refresh may have sent only part of its list: keep the rows it
+    // gave before that this refresh did not bring back, so a partial refresh never shows fewer tenders.
+    const prog = data.meta?.source_progress || {};
+    const errs = data.meta?.errors || {};
+    const failed = new Set(Object.keys(prog).filter((id) => prog[id] === "error" || prog[id] === "timeout").concat(Object.keys(errs)));
+    if (failed.size && typeof SearchCache !== "undefined") {
+      const have = new Set(incomingRows.map((r) => SearchCache.rowIdentity(r)));
+      const lost = state._instantRows.filter((r) => failed.has(r.source) && answered.has(r.source) && !have.has(SearchCache.rowIdentity(r)));
+      extra = extra.concat(lost);
+    }
+    if (extra.length) shownRows = incomingRows.concat(extra);
   }
   if (incomingPhase === "complete") state._instantRows = null;
   if (!holdForTerms && !(incomingPhase === "loading" && (incomingRows.length < _lastSettledRowCount || majorityStillPending))) {
@@ -17718,6 +17732,7 @@ function tfRequestGpsLocation(btn, statusEl, onSuccess) {
 // Map / proximity state (mirrors the buyer equivalents at _buyerFilterState etc.)
 let _activeSupplierTab = "list"; // "list" | "map"
 let _supplierFilterState = { radius: 0, userLat: 51.5074, userLon: -0.1278, locationLabel: "London" };
+window._supplierFilterState = _supplierFilterState; // seedOriginFromProfile() sits outside this closure
 let _supplierLeafletMap = null;
 let _supplierMapMarkersLayer = null;
 let _supplierMapRadiusCircle = null;
@@ -20264,6 +20279,7 @@ let _buyerFilterState = {
   category: "all",
   feedSort: "best_match"
 };
+window._buyerFilterState = _buyerFilterState; // seedOriginFromProfile() sits outside this closure
 
 let _activeBuyerTab = "feed";
 let _buyerDebounceTimer = null;
