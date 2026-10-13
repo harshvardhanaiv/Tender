@@ -65,6 +65,16 @@ def api_save_company_profile():
         conn = _get_db()
         cursor = conn.cursor()
 
+        # Names are unique per user regardless of case ("ACME LTD" and "Acme Ltd" are the same company)
+        cursor.execute(
+            "SELECT id FROM company_profiles WHERE username = %s AND LOWER(TRIM(name)) = LOWER(%s) AND id <> %s LIMIT 1",
+            (username, name, int(profile_id) if str(profile_id or "").isdigit() else -1),
+        )
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return jsonify({"ok": False, "error": f"A profile named \"{name}\" already exists. Choose a different name."}), 409
+
         # If user has no existing profiles, this new profile becomes default automatically
         cursor.execute("SELECT COUNT(*) FROM company_profiles WHERE username = %s", (username,))
         existing_count = cursor.fetchone()[0]
@@ -1113,15 +1123,20 @@ def api_pipeline():
         rows = cur.fetchall()
         cur.close()
         conn.close()
-        items = [
-            {
+        items = []
+        seen_same = set()
+        for r in rows:
+            # one tender saved under two keys (the same notice reached by two routes) is listed once, newest first
+            same = (str(r[1] or "").strip().lower(), str(r[2] or "").strip().lower(), str(r[3] or "").strip().lower())
+            if same[0] and same in seen_same:
+                continue
+            seen_same.add(same)
+            items.append({
                 "tender_key": r[0], "title": r[1], "source": r[2],
                 "contracting_authority": r[3], "submission_deadline": r[4],
                 "estimated_value": r[5], "stage": r[6], "notes": r[7] or "",
                 "fit_score": r[8], "fit_band": r[9], "updated_at": str(r[10]),
-            }
-            for r in rows
-        ]
+            })
         return jsonify({"items": items})
     body = request.get_json(silent=True) or {}
     tender_key = (body.get("tender_key") or "").strip()
@@ -1132,6 +1147,20 @@ def api_pipeline():
         return jsonify({"error": f"invalid stage; must be one of {_PIPELINE_STAGES}"}), 400
     conn = _get_db()
     cur = conn.cursor()
+    # The same tender already tracked under another key (same title, portal and buyer) is updated, not added again
+    _title = str(body.get("title") or "").strip()
+    if _title and _title.lower() != "view notice":
+        cur.execute(
+            """SELECT tender_key FROM pipeline WHERE username=%s AND tender_key<>%s
+               AND LOWER(TRIM(title))=LOWER(%s) AND LOWER(TRIM(source))=LOWER(%s)
+               AND LOWER(TRIM(COALESCE(contracting_authority,'')))=LOWER(%s)
+               ORDER BY updated_at DESC LIMIT 1""",
+            (username, tender_key, _title, str(body.get("source") or "").strip(),
+             str(body.get("contracting_authority") or "").strip()),
+        )
+        _dup = cur.fetchone()
+        if _dup:
+            tender_key = _dup[0]
     fields = (
         body.get("title", ""), body.get("source", ""),
         body.get("contracting_authority", ""), body.get("submission_deadline", ""),

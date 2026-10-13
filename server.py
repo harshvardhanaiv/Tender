@@ -87,6 +87,7 @@ from tender_app.blueprints.growth_bp import init_growth_blueprint
 from tender_app.email_notifier import init_email_scheduler
 from tender_app.security import ensure_csrf_token, validate_csrf
 from tender_app.search_terms import split_terms
+from tender_app.text_fix import fix_row_text
 
 
 
@@ -4284,6 +4285,14 @@ def create_app() -> Flask:
             if generate_tender_id(r) in live_tender_ids:
                 r["_portal_hit"] = True
 
+        # A search of chosen portals ("a,b,c") returns those portals' tenders only: the list also holds tenders saved by
+        # earlier searches of other portals, which the page would otherwise have to download and then discard.
+        if scope and scope != "all" and "," in scope:
+            _wanted = {x.strip() for x in scope.split(",") if x.strip()}
+            if _wanted:
+                rows = [r for r in rows if not r.get("source") or r.get("source") in _wanted]
+                total = len(rows)
+
         # Filter by Counties if specified
         counties_raw = request.args.get("counties", "").strip()
         whole_nations = [n.strip() for n in request.args.get("nations", "").split(",") if n.strip() in NATION_HINTS]
@@ -4314,6 +4323,10 @@ def create_app() -> Flask:
                     "hidden_by_source": hidden_by_source,
                     "unstated_total": unstated_count,
                 }
+
+        # Undo wrong-charset damage in the text fields ("â" for an en dash) before the rows reach the page
+        for _r in rows:
+            fix_row_text(_r)
 
         # Recalculate source counts and total in meta to reflect all deduplicated combined rows
         source_counts = {}

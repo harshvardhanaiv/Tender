@@ -440,12 +440,44 @@ def _total_pages(html: str) -> int | None:
     return None
 
 
+_GENERIC_TITLES = {"view notice", "view", "view notice details", "view details", "notice", "details", "more", "read more"}
+
+
+def _is_generic_title(title: str) -> bool:
+    return re.sub(r"[\s\W]+", " ", (title or "").lower()).strip() in _GENERIC_TITLES
+
+
+def _title_from_text(text: str) -> str:
+    """First line of a result's own text that reads like a title (not the link text, a label or a date)."""
+    for line in re.split(r"[\n\r]+", text or ""):
+        line = line.strip()
+        if len(line) < 8 or _is_generic_title(line) or re.match(r"^[\w /]{2,30}:", line):
+            continue
+        if re.match(r"^[\d/.\-: ]+$", line):
+            continue
+        return line[:200]
+    return ""
+
+
+def _fix_generic_titles(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A "View Notice" link is not a title: take the notice's own text (its abstract) instead."""
+    for row in rows:
+        if not _is_generic_title(row.get("title") or ""):
+            continue
+        better = _title_from_text(str(row.get("description") or "")) or _title_from_text(str(row.get("_container_text") or ""))
+        if better:
+            row["title"] = better
+    for row in rows:
+        row.pop("_container_text", None)
+    return rows
+
+
 def _parse_results_html(html: str, site_root: str) -> list[dict[str, Any]]:
     soup = BeautifulSoup(html, "lxml")
     cards = soup.select(".search-result")
     if cards:
-        return [_parse_search_result_card(card, site_root) for card in cards]
-    return _parse_search_view_links(soup, site_root)
+        return _fix_generic_titles([_parse_search_result_card(card, site_root) for card in cards])
+    return _fix_generic_titles(_parse_search_view_links(soup, site_root))
 
 
 def _parse_search_result_card(card: Tag, site_root: str) -> dict[str, Any]:
@@ -496,6 +528,7 @@ def _parse_search_view_links(soup: BeautifulSoup, site_root: str) -> list[dict[s
         }
         if container:
             _apply_label_text(row, container.get_text("\n", strip=True))
+            row["_container_text"] = container.get_text("\n", strip=True)
         rows.append(row)
     return rows
 
