@@ -2038,7 +2038,7 @@ function buildPickerLabel() {
   if (count === activePortals.length) {
     return "All portals";
   }
-  return `${count} portals selected`;
+  return `${count} of ${activePortals.length} portals selected`;
 }
 
 function updatePickerLabel() {
@@ -4483,6 +4483,21 @@ function formatDaysLeft(row) {
   let urgency = row.deadline_urgency || "unknown";
   const deadline = row.submission_deadline || "";
   // The stored count was worked out when the search ran; a result kept from yesterday must count from today (N2)
+  // A deadline the server could not read ("12-Nov-26") is counted here
+  if ((days == null || urgency === "unknown") && deadline) {
+    const m = String(deadline).match(/\b(\d{1,2})[-\s]([A-Za-z]{3,9})\.?[-\s,]+(\d{2}|\d{4})\b/);
+    const mi = m ? ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(m[2].slice(0, 3).toLowerCase()) : -1;
+    if (m && mi >= 0) {
+      const y = parseInt(m[3], 10) < 100 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10);
+      const dl = _calendarDate(y, mi + 1, parseInt(m[1], 10));
+      if (dl) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        days = Math.round((dl.getTime() - today.getTime()) / 86400000);
+        urgency = days < 0 ? "past" : days <= 10 ? "critical" : days <= 30 ? "soon" : "normal";
+      }
+    }
+  }
   if (days != null && urgency !== "unknown") {
     const dl = parseDate(String(deadline).split(" ")[0]);
     if (dl) {

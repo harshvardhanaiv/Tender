@@ -4287,9 +4287,9 @@ def create_app() -> Flask:
             if generate_tender_id(r) in live_tender_ids:
                 r["_portal_hit"] = True
 
-        # A search of chosen portals ("a,b,c") returns those portals' tenders only: the list also holds tenders saved by
+        # A search of one or more chosen portals ("a" or "a,b,c") returns those portals' tenders only: the list also holds tenders saved by
         # earlier searches of other portals, which the page would otherwise have to download and then discard.
-        if scope and scope != "all" and "," in scope:
+        if scope and scope != "all":
             _wanted = {x.strip() for x in scope.split(",") if x.strip()}
             if _wanted:
                 rows = [r for r in rows if not r.get("source") or r.get("source") in _wanted]
