@@ -406,7 +406,7 @@
     const list = m.list || [];
     if (!list.length) {
       return (
-        empty("No campaigns yet", "Start one from a signal: tick the buyers you want to approach and choose Create campaign. Nothing is sent from TenderFlow: you export the list and send it from your own mail or Mailchimp.") +
+        empty("No campaigns yet", "Start one from a signal: tick the buyers you want to approach and choose Create campaign. You export the list and send it from your own mail or Mailchimp, or send it through Outreach.") +
         suppressionsBlock(m.suppressions, m.suppressionsOpen)
       );
     }
@@ -435,6 +435,15 @@
       .join("");
   }
 
+  // Where to look for the address: the buyer's own notice names a contact. TenderFlow has no buyer email data
+  // of its own (notices that were searched carry none), so the reader copies it from there.
+  function noticeLink(t) {
+    const link = (t.links || []).map((l) => safeUrl(l && l.url)).find(Boolean);
+    return link
+      ? `<div class="gs-hint">No address yet. <a class="gs-link" href="${esc(link)}" target="_blank" rel="noreferrer noopener">Find the contact on the notice ↗</a></div>`
+      : `<div class="gs-hint">No address yet. Look on the buyer's website or the notice for a procurement inbox.</div>`;
+  }
+
   function targetRow(t) {
     const dim = !t.included || t.opted_out;
     return (
@@ -444,6 +453,7 @@
       `<div class="gs-target__sig">${badge(esc(t.signal_label), (TYPES[t.signal_type] || {}).tone)} <span>${esc(t.headline || "")}</span></div></td>` +
       `<td><input type="email" class="gs-input gs-input--sm" data-field="contact_email" data-id="${esc(t.id)}" value="${esc(t.contact_email || "")}" placeholder="procurement@…" autocomplete="off" aria-label="Contact email for ${esc(t.buyer_name)}">` +
       (t.personal_email ? `<div class="gs-hint gs-hint--warn">Looks like a named person's address. Use a role-based inbox such as procurement@ where you can.</div>` : "") +
+      (!t.contact_email && !t.opted_out ? noticeLink(t) : "") +
       `</td><td><select class="gs-select gs-select--sm" data-field="status" data-id="${esc(t.id)}" aria-label="Status for ${esc(t.buyer_name)}">${statusOptions(t.status)}</select></td>` +
       `<td><button type="button" class="gs-icon-btn" data-action="remove-target" data-id="${esc(t.id)}" aria-label="Remove ${esc(t.buyer_name)} from this campaign" title="Remove">×</button></td></tr>`
     );
@@ -467,7 +477,7 @@
     if (p.unknown && p.unknown.length) issues.push(`Not a merge field: ${p.unknown.map((n) => "{{" + esc(n) + "}}").join(", ")}.`);
     return (
       `<div class="gs-preview__head"><span>Preview for</span>${picker}</div>` +
-      `<div class="gs-preview__to">To: ${p.to ? esc(p.to) : '<i>no email address yet</i>'}</div>` +
+      `<div class="gs-preview__to">To: ${p.to ? esc(p.to) : `<i>no email address yet</i> <button type="button" class="gs-link" data-action="focus-email" data-id="${esc(p.target_id)}">Add one</button>`}</div>` +
       `<div class="gs-preview__subject"><b>Subject:</b> ${esc(p.subject)}</div><pre class="gs-preview__body">${esc(p.body)}</pre>` +
       (issues.length ? `<ul class="gs-warnings">${issues.map((i) => `<li>${i}</li>`).join("")}</ul>` : "")
     );
@@ -527,8 +537,76 @@
       `<div class="gs-actions"><button type="button" class="gs-btn gs-btn--sm" data-action="export" data-format="csv"${eligible ? "" : " disabled"}>Export CSV</button>` +
       `<button type="button" class="gs-btn gs-btn--sm" data-action="export" data-format="mailchimp"${eligible ? "" : " disabled"}>Mailchimp audience (CSV)</button>` +
       `<button type="button" class="gs-btn gs-btn--sm" data-action="copy-mailchimp">Copy message for Mailchimp</button></div><div id="gsMcBox"></div>` +
-      note("Send only to published, role-based public sector inboxes (such as procurement@), keep a clear way to opt out in every message, and never add a named person's address you found elsewhere. This is guidance, not legal advice. TenderFlow sends nothing: export the list and send it from your own mail or Mailchimp, then record the result here.", "info") +
+      outreachPanel(m.outreach, eligible, m.dirty, d.targets.filter((t) => t.included && !t.opted_out && !t.contact_email).length) +
+      note("Send only to published, role-based public sector inboxes (such as procurement@), keep a clear way to opt out in every message, and never add a named person's address you found elsewhere. This is guidance, not legal advice. Export the list and send it from your own mail or Mailchimp, or use Send mail to send through Outreach; either way, record replies here.", "info") +
       `</section></div>`
+    );
+  }
+
+  // ── Send mail through Outreach (one email campaign per buyer, made and approved so Outreach sends it) ──
+  function outreachDraftRow(d) {
+    const sentOut = d.outreach_id && String(d.approval || "").toLowerCase() === "approved";
+    const state = !d.outreach_id ? badge("Not sent", "warn") : sentOut ? badge(esc(d.status || "Sent"), "good") : badge("Made, not sent", "warn");
+    return (
+      `<tr><td>${esc(d.buyer)}</td><td><code>${esc(d.outreach_id || "")}</code></td><td>${state}</td>` +
+      `<td>${esc(d.approval || "–")}</td><td class="gs-num">${d.sent == null ? "–" : esc(d.sent)}</td>` +
+      `<td class="gs-num">${d.replies == null ? "–" : esc(d.replies)}</td></tr>` +
+      (d.error ? `<tr><td colspan="6" class="gs-hint gs-hint--warn">${esc(d.error)}</td></tr>` : "")
+    );
+  }
+
+  function outreachResult(r) {
+    if (!r) return "";
+    const lines = [];
+    if (r.sent && r.sent.length) lines.push(`<li>${esc(plural(r.sent.length, "email"))} handed to Outreach to send (${r.mode === "live" ? "live" : "test"} mode).</li>`);
+    // the reason for each failure is shown against its buyer in the table below, so it is not repeated here
+    if (r.failed && r.failed.length) lines.push(`<li>${esc(plural(r.failed.length, "email"))} could not be sent. The reason is shown against ${r.failed.length === 1 ? "the buyer" : "each buyer"} below.</li>`);
+    if (r.stopped && !(r.failed || []).some((f) => f.reason === r.stopped)) lines.push(`<li>Stopped: ${esc(r.stopped)}</li>`);
+    if (r.deferred) lines.push(`<li>${esc(plural(r.deferred, "buyer"))} still to send. Choose Send mail again.</li>`);
+    (r.skipped || []).forEach((s) => lines.push(`<li class="gs-hint">${esc(s.buyer)} was left out: ${esc(s.reason)}</li>`));
+    return lines.length ? `<ul class="gs-warnings gs-outreach__result">${lines.join("")}</ul>` : "";
+  }
+
+  function outreachPanel(o, eligible, dirty, noEmail) {
+    const head = `<div class="gs-card__title gs-card__title--sub">Send to Outreach</div>`;
+    if (!o || o.status === "idle" || (o.status === "loading" && !o.info)) {
+      return head + `<p class="gs-hint" id="gsOutreach">Checking Outreach…</p>`;
+    }
+    const info = o.info || {};
+    const drafts = o.drafts || [];
+    const table = drafts.length
+      ? `<div class="gs-tablewrap"><table class="gs-table gs-table--outreach"><thead><tr><th>Buyer</th><th>Outreach id</th><th>State</th><th>Approval</th><th class="gs-num">Sent</th><th class="gs-num">Replies</th></tr></thead><tbody>${drafts.map(outreachDraftRow).join("")}</tbody></table></div>`
+      : "";
+    if (!info.ready) {
+      return (
+        head +
+        `<div id="gsOutreach"><p class="gs-hint gs-hint--warn">${esc(info.problem || o.error || "Outreach is not available.")}</p>${table}</div>`
+      );
+    }
+    const mode = info.mode === "live" ? badge("Live key", "warn") : badge("Test mode", "good");
+    const credits = info.wallet && info.wallet.credits != null ? ` · ${esc(info.wallet.credits)} credits in Outreach` : "";
+    const cap = info.max_per_push || 25;
+    const canPush = eligible > 0 && !dirty && !o.pushing;
+    return (
+      head +
+      `<div id="gsOutreach"><p class="gs-hint">${mode} Connected${credits}. ` +
+      (info.mode === "live"
+        ? "Live key: Send mail emails the buyers from your connected Outreach mailbox."
+        : "Test key: Outreach pretends everything, charges nothing and sends nothing real.") +
+      `</p>` +
+      `<label class="gs-inline"><input type="checkbox" data-field="outreach-personal"${o.personal ? " checked" : ""}> Include addresses that look like a named person's</label>` +
+      `<div class="gs-actions"><button type="button" class="gs-btn gs-btn--primary gs-btn--sm" data-action="outreach-send"${canPush ? "" : " disabled"}>${o.pushing ? "Sending…" : "Send mail"}</button>` +
+      `<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-refresh"${drafts.some((d) => d.outreach_id) && !o.refreshing ? "" : " disabled"}>${o.refreshing ? "Checking…" : "Refresh status"}</button>` +
+      `</div>` +
+      (dirty ? `<p class="gs-hint gs-hint--warn">Save the message first: the saved message is what gets sent.</p>` : "") +
+      (noEmail
+        ? `<p class="gs-hint gs-hint--warn">${esc(plural(noEmail, "buyer"))} ${noEmail === 1 ? "has" : "have"} no email address yet and will be left out. ` +
+          `<button type="button" class="gs-link" data-action="focus-email">Add addresses</button> in the Buyers table above.</p>`
+        : "") +
+      `<p class="gs-hint">Each buyer gets their own email, filled in for them and sent from your connected Outreach mailbox (up to ${esc(cap)} at a time). A buyer is never emailed twice, and Outreach's daily limits and warm-up decide when each one actually goes.</p>` +
+      outreachResult(o.last) +
+      table +
+      `</div>`
     );
   }
 
@@ -597,6 +675,7 @@
     esc, safeUrl, fmtDate, fmtMoney, fmtMoneyShort, plural, inDays, parseServerTime, timeAgo, fitBand, filenameFromDisposition, insertAt,
     hasCategory, defaultFilters, filtersBody, signalsQuery, campaignKeys,
     signalCard, signalsPane, selectionBar, campaignsPane, builderPane, previewHtml, warningsHtml, mailchimpBox, targetRow, mergeChips, performancePane,
+    outreachPanel, outreachDraftRow, outreachResult,
     suppressionsBlock, fitParts, funnelBars, countsLine, TYPES, TARGET_STATUS, CAMPAIGN_STATUS,
   };
   root.GrowthView = api;

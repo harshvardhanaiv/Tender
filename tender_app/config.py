@@ -134,6 +134,14 @@ COMPANY_PROFILE_TIMEOUT_SECONDS = float(os.environ.get("COMPANY_PROFILE_TIMEOUT_
 # sidebar item is not shown.
 ENABLE_GROWTH_STUDIO = os.environ.get("ENABLE_GROWTH_STUDIO", "1") == "1"
 
+# Growth Studio -> Outreach by Aivhub (tender_app/outreach_client.py). One company key, held on the
+# server only. Without a key the "Send to Outreach" panel says it is not connected. A live (sk_live_)
+# key is refused unless OUTREACH_ALLOW_LIVE=1, so the first version cannot send anything real.
+OUTREACH_API_KEY = os.environ.get("OUTREACH_API_KEY", "")
+OUTREACH_API_BASE = os.environ.get("OUTREACH_API_BASE", "https://api.outreach.aivhub.com")
+OUTREACH_ALLOW_LIVE = os.environ.get("OUTREACH_ALLOW_LIVE", "0") == "1"
+OUTREACH_TIMEOUT_SECONDS = float(os.environ.get("OUTREACH_TIMEOUT_SECONDS", "15"))
+
 # Background schedulers (deadline emails, award scraping); docker-compose.yml turns them off for local dev
 ENABLE_SCHEDULERS = os.environ.get("ENABLE_SCHEDULERS", "1") == "1"
 # The email digest scheduler alone, independent of ENABLE_SCHEDULERS -- lets local dev run

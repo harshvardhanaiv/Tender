@@ -507,6 +507,29 @@ def create_growth_tables(cursor) -> None:
         )
         """
     )
+    # One Outreach email campaign per campaign target (tender_app/growth_outreach.py): made, then approved so
+    # that Outreach sends it. UNIQUE (target_id) is what makes sending the same buyer twice impossible.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS growth_outreach_drafts (
+            id           SERIAL PRIMARY KEY,
+            username     VARCHAR(255) NOT NULL,
+            campaign_id  INTEGER NOT NULL REFERENCES growth_campaigns(id) ON DELETE CASCADE,
+            target_id    INTEGER NOT NULL REFERENCES growth_campaign_targets(id) ON DELETE CASCADE,
+            outreach_id  TEXT,
+            mode         VARCHAR(8) NOT NULL DEFAULT 'test',
+            status       VARCHAR(40),
+            approval     VARCHAR(40),
+            error        TEXT,
+            created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            checked_at   TIMESTAMP,
+            body_hash    VARCHAR(16),
+            UNIQUE (target_id)
+        )
+        """
+    )
+    # body_hash: which message text this draft was made from, so an edited message is never sent under an old draft
+    cursor.execute("ALTER TABLE growth_outreach_drafts ADD COLUMN IF NOT EXISTS body_hash VARCHAR(16)")
 
 
 def run_saas_migrations(conn: Any) -> None:

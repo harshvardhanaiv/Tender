@@ -17,11 +17,15 @@ own rows:
     /api/growth/campaigns/<id>/preview   (POST) the message for one target; unsaved text allowed
     /api/growth/campaigns/<id>/draft     (POST) a first draft: template (free) or AI (credits)
     /api/growth/campaigns/<id>/export           CSV, Mailchimp audience, Mailchimp message
+    /api/growth/outreach/status                 is Outreach connected, test or live key, credits
+    /api/growth/campaigns/<id>/outreach         (GET, POST) its Outreach campaigns; send through Outreach
     /api/growth/performance                     tiles, funnel and campaign -> Pipeline outcomes
 
 Every campaign, target and state row belongs to the user who made it and is always looked up by
 username, so one user can never read or change another's (a miss is a 404, never a 403). Nothing is
-sent from here. Mutating requests are CSRF-protected by the app-wide hook.
+sent from here by TenderFlow itself: the Outreach send route makes an email campaign in Outreach for each
+chosen buyer and approves it, and Outreach does the sending from the user's own connected mailbox. Mutating
+requests are CSRF-protected by the app-wide hook.
 """
 from __future__ import annotations
 
@@ -33,9 +37,19 @@ from typing import Any
 
 from flask import Blueprint, Response, jsonify, request, session
 
+from tender_app import growth_outreach as go
 from tender_app import growth_studio as gs
 from tender_app import market_radar as mr
-from tender_app.config import CREDIT_COST_GROWTH_DRAFT, RATE_LIMIT_AI, RATE_LIMIT_SEARCH
+from tender_app import outreach_client as oc
+from tender_app.config import (
+    CREDIT_COST_GROWTH_DRAFT,
+    OUTREACH_ALLOW_LIVE,
+    OUTREACH_API_BASE,
+    OUTREACH_API_KEY,
+    OUTREACH_TIMEOUT_SECONDS,
+    RATE_LIMIT_AI,
+    RATE_LIMIT_SEARCH,
+)
 from tender_app.metering import require_credits
 from tender_app.security import rate_limit
 
@@ -951,6 +965,207 @@ def growth_export(cid: int):
         mimetype="text/csv" if is_csv else "text/plain",
         headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
     )
+
+
+# ── Outreach: email drafts only ─────────────────────────────────────────────────────────────────
+
+def _outreach_problem() -> str | None:
+    """Why Outreach cannot be used right now, in the user's words; None when the configured key is usable."""
+    key = (OUTREACH_API_KEY or "").strip()
+    if not key:
+        return "Outreach is not connected. Ask your administrator to set OUTREACH_API_KEY on the server."
+    mode = oc.key_mode(key)
+    if mode is None:
+        return "The configured Outreach key is not an sk_test_ or sk_live_ key."
+    if mode == "live" and not OUTREACH_ALLOW_LIVE:
+        return "A live Outreach key is configured but live sending is switched off. Use an sk_test_ key."
+    return None
+
+
+def _outreach_client() -> "oc.OutreachClient":
+    problem = _outreach_problem()
+    if problem:
+        raise _Http(problem, 409)
+    return oc.OutreachClient(OUTREACH_API_KEY, OUTREACH_API_BASE, timeout=OUTREACH_TIMEOUT_SECONDS)
+
+
+@growth_bp.get("/api/growth/outreach/status")
+def growth_outreach_status():
+    """Whether Growth Studio can hand drafts to Outreach. Never returns the key, only its first characters."""
+    key = (OUTREACH_API_KEY or "").strip()
+    mode = oc.key_mode(key)
+    out: dict[str, Any] = {
+        "configured": bool(key), "mode": mode, "live_allowed": bool(OUTREACH_ALLOW_LIVE),
+        "key_hint": oc.mask_key(key) if mode else None, "ready": False, "wallet": None,
+        "problem": _outreach_problem(), "max_per_push": go.MAX_PER_PUSH,
+    }
+    if out["problem"]:
+        return jsonify(out)
+    try:
+        out["wallet"] = oc.wallet_summary(_outreach_client().wallets())
+        out["ready"] = True
+    except oc.OutreachError as exc:
+        out["problem"] = exc.message
+    return jsonify(out)
+
+
+def _draft_rows(conn, username: str, cid: int) -> list[dict[str, Any]]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT d.target_id, t.buyer_name, d.outreach_id, d.mode, d.status, d.approval, d.error, d.created_at, d.checked_at, d.body_hash
+               FROM growth_outreach_drafts d JOIN growth_campaign_targets t ON t.id = d.target_id
+               WHERE d.username = %s AND d.campaign_id = %s ORDER BY d.id""",
+            (username, cid),
+        )
+        rows = cur.fetchall()
+    return [
+        {"target_id": r[0], "buyer": r[1], "outreach_id": r[2], "mode": r[3], "status": r[4], "approval": r[5],
+         "error": r[6], "created_at": _iso(r[7]), "checked_at": _iso(r[8]), "body_hash": r[9]}
+        for r in rows
+    ]
+
+
+def _save_draft(cur, username: str, cid: int, target_id: int, *, outreach_id: str | None, mode: str,
+                status: str | None, approval: str | None, error: str | None, body_hash: str | None = None) -> None:
+    cur.execute(
+        """INSERT INTO growth_outreach_drafts (username, campaign_id, target_id, outreach_id, mode, status, approval, error, body_hash, checked_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+           ON CONFLICT (target_id) DO UPDATE SET outreach_id = EXCLUDED.outreach_id, mode = EXCLUDED.mode,
+               status = EXCLUDED.status, approval = EXCLUDED.approval, error = EXCLUDED.error,
+               body_hash = EXCLUDED.body_hash, checked_at = NOW()""",
+        (username, cid, target_id, outreach_id, mode, status, approval, error, body_hash),
+    )
+
+
+def _is_sent_through_outreach(d: dict[str, Any]) -> bool:
+    """Approved in Outreach (by this route, or reported so by Outreach): it must never be approved again."""
+    return bool(d.get("outreach_id")) and str(d.get("approval") or "").lower() in ("approved", "auto_approved")
+
+
+@growth_bp.get("/api/growth/campaigns/<int:cid>/outreach")
+def growth_outreach_drafts(cid: int):
+    """The campaign's Outreach campaigns. With ?refresh=1 each one's state is read from Outreach first."""
+    username = _username()
+    refresh = _flag(request.args.get("refresh"))
+    client = _outreach_client() if refresh else None
+    conn = _connect()
+    try:
+        _load_campaign(conn, username, cid)  # a campaign that is not theirs is a 404
+        drafts = _draft_rows(conn, username, cid)
+        details: dict[int, dict[str, Any]] = {}
+        stopped = None
+        if client is not None:
+            with conn.cursor() as cur:
+                for d in [d for d in drafts if d["outreach_id"]][: go.MAX_PER_PUSH]:
+                    try:
+                        summary = oc.campaign_summary(client.get_email_campaign(d["outreach_id"]))
+                    except oc.OutreachError as exc:
+                        d["error"] = exc.message[:300]
+                        if exc.fatal:
+                            stopped = exc.message
+                            break
+                        continue
+                    # an answer with no status or approval never wipes what is known: "approved" is what stops a second send
+                    d.update(status=summary["status"] or d["status"], approval=summary["approval"] or d["approval"], error=None)
+                    details[d["target_id"]] = summary
+                    _save_draft(cur, username, cid, d["target_id"], outreach_id=d["outreach_id"], mode=d["mode"],
+                                status=d["status"], approval=d["approval"], error=None, body_hash=d["body_hash"])
+            conn.commit()
+        for d in drafts:
+            extra = details.get(d["target_id"]) or {}
+            d["sent"], d["replies"] = extra.get("sent"), extra.get("replies")
+            d.pop("body_hash", None)
+        return jsonify({"drafts": drafts, "refreshed": client is not None, "stopped": stopped})
+    finally:
+        conn.close()
+
+
+@growth_bp.post("/api/growth/campaigns/<int:cid>/outreach")
+def growth_outreach_send(cid: int):
+    """Send the campaign's message through Outreach, one email campaign per buyer that can be contacted.
+
+    Each buyer is made as an Outreach campaign (filled in for them) and then approved, which is what makes
+    Outreach send it; the buyer is then recorded as sent here. A buyer already sent is skipped, so sending
+    again only does the ones that were left out or failed. If a campaign was made but not approved, a retry
+    approves that same campaign, but only while the message text is unchanged: edited text makes a new one."""
+    body = _json_body()
+    ids = body.get("target_ids")
+    if ids is not None and (not isinstance(ids, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids)):
+        raise _Http("target_ids must be a list of whole numbers")
+    allow_personal = _flag(body.get("allow_personal"))
+    client = _outreach_client()
+    username = _username()
+    conn = _connect()
+    try:
+        campaign, targets = _load_campaign(conn, username, cid)
+        sender = _sender_for(conn, username, campaign)
+        opted = _opted_out(conn, username)
+        records = {d["target_id"]: d for d in _draft_rows(conn, username, cid)}
+        already_sent = {tid for tid, d in records.items() if _is_sent_through_outreach(d)}
+        plan = go.plan_push(campaign, targets, opted, sender, already_sent, only_ids=ids, allow_personal=allow_personal)
+        if plan["blockers"]:
+            raise _Http(" ".join(plan["blockers"]), 400)
+        if not plan["items"]:
+            reasons = sorted({s["reason"] for s in plan["skipped"]})
+            raise _Http("There is nobody to send: " + (" ".join(reasons) or "no buyers are in this campaign."), 400)
+        by_id = {t["id"]: t for t in targets}
+        sent: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        stopped = None
+        attempted = 0
+        with conn.cursor() as cur:
+            for item in plan["items"]:
+                attempted += 1
+                tid = item["target_id"]
+                rec = records.get(tid) or {}
+                short = item["hash"][:8]
+                oid = None
+                status = None
+                step = "create"
+                try:
+                    if rec.get("outreach_id") and rec.get("body_hash") == item["hash"]:
+                        oid, status = rec["outreach_id"], rec.get("status")  # made earlier from this same text
+                    else:
+                        made = oc.campaign_summary(
+                            client.create_email_campaign(item["payload"], go.idempotency_key(username, cid, tid, short))
+                        )
+                        if not made["id"]:
+                            raise oc.OutreachError("Outreach did not return a campaign id.", 502, "bad_response")
+                        oid, status = made["id"], made["status"] or "created"
+                        _save_draft(cur, username, cid, tid, outreach_id=oid, mode=client.mode, status=status,
+                                    approval=None, error=None, body_hash=item["hash"])
+                    step = "approve"
+                    decided = oc.campaign_summary(
+                        client.decide_email_campaign(oid, "approve", go.idempotency_key(username, cid, tid, f"approve-{short}"))
+                    )
+                except oc.OutreachError as exc:
+                    if oid:  # made, not approved: kept so a retry approves this one
+                        _save_draft(cur, username, cid, tid, outreach_id=oid, mode=client.mode, status=status or "created",
+                                    approval=None, error=exc.message[:300], body_hash=item["hash"])
+                    else:
+                        _save_draft(cur, username, cid, tid, outreach_id=None, mode=client.mode, status="failed",
+                                    approval=None, error=exc.message[:300], body_hash=item["hash"])
+                    failed.append({"target_id": tid, "buyer": item["buyer"], "step": step, "reason": exc.message})
+                    if exc.fatal:
+                        stopped = exc.message
+                        break
+                    continue
+                _save_draft(cur, username, cid, tid, outreach_id=oid, mode=client.mode, status=decided["status"] or "approved",
+                            approval="approved", error=None, body_hash=item["hash"])
+                _apply_status(cur, username, campaign, by_id[tid], "sent")
+                sent.append({"target_id": tid, "buyer": item["buyer"], "outreach_id": oid, "status": decided["status"] or "approved"})
+            if sent:
+                _touch(cur, cid)
+        conn.commit()
+        drafts = _draft_rows(conn, username, cid)
+        for d in drafts:
+            d.pop("body_hash", None)
+        return jsonify({
+            "sent": sent, "failed": failed, "skipped": plan["skipped"], "stopped": stopped, "mode": client.mode,
+            "deferred": plan["deferred"] + (len(plan["items"]) - attempted), "drafts": drafts,
+        })
+    finally:
+        conn.close()
 
 
 # ── performance ─────────────────────────────────────────────────────────────────────────────────

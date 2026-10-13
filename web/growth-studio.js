@@ -18,6 +18,7 @@
     return {
       status: "idle", id: null, detail: null, draft: null, dirty: false, preview: null, previewTarget: null, previewSeq: 0,
       warnings: null, drafting: false, error: null, lastField: "body", aiNote: "",
+      outreach: { status: "idle", info: null, drafts: null, last: null, pushing: false, refreshing: false, personal: false, error: null },
     };
   }
 
@@ -200,7 +201,7 @@
     keepFocus(() => {
       byId(PANES.builder).innerHTML = V.builderPane({
         status: b.status, error: b.error, detail: b.detail, draft: b.draft, dirty: b.dirty, preview: b.preview, previewTarget: b.previewTarget,
-        warnings: b.warnings, drafting: b.drafting, options: state.options, aiNote: b.aiNote,
+        warnings: b.warnings, drafting: b.drafting, options: state.options, aiNote: b.aiNote, outreach: b.outreach,
       });
     });
   }
@@ -468,6 +469,32 @@
     b.warnings = null;
     renderBuilder();
     refreshPreview();
+    loadOutreach();
+  }
+
+  // Whether Outreach is connected and which buyers of this campaign it has already been given (read only).
+  async function loadOutreach(force) {
+    const o = state.builder.outreach;
+    const id = state.builder.id;
+    if (!id || o.status === "loading" || (o.status === "ok" && !force)) return;
+    o.status = "loading";
+    try {
+      const [info, drafts] = await Promise.all([
+        api("GET", "/api/growth/outreach/status"),
+        api("GET", `/api/growth/campaigns/${id}/outreach`),
+      ]);
+      if (state.builder.outreach !== o) return; // another campaign was opened meanwhile
+      o.info = info;
+      o.drafts = drafts.drafts;
+      o.status = "ok";
+      o.error = null;
+    } catch (err) {
+      if (state.builder.outreach !== o) return;
+      o.status = "error";
+      o.error = err.message;
+      o.info = { ready: false, problem: err.message };
+    }
+    renderBuilder();
   }
 
   async function openCampaign(id) {
@@ -714,6 +741,56 @@
         applyDetail(res, false);
         toast(`${V.plural(res.marked, "buyer")} marked as sent.`);
       }),
+    // "Add one" in the preview, "Add addresses" in the Outreach panel: take the reader to the address box
+    "focus-email": (a) => {
+      const sel = a.dataset.id
+        ? `input[data-field="contact_email"][data-id="${a.dataset.id}"]`
+        : null;
+      let input = sel ? document.querySelector(sel) : null;
+      if (!input) {
+        input = Array.from(document.querySelectorAll('#gsPaneBuilder input[data-field="contact_email"]')).find((i) => !i.value);
+      }
+      if (!input) return;
+      input.scrollIntoView({ block: "center", behavior: "smooth" });
+      input.focus();
+    },
+    "outreach-send": () =>
+      run(async () => {
+        const b = state.builder;
+        const o = b.outreach;
+        const n = b.detail ? b.detail.eligible : 0;
+        if (!(await confirmDialog(`Send this email now to up to ${V.plural(n, "buyer")}, from your connected Outreach mailbox? Real emails will go out and this cannot be undone.`))) return;
+        o.pushing = true;
+        renderBuilder();
+        try {
+          const res = await api("POST", `/api/growth/campaigns/${b.id}/outreach`, { allow_personal: !!o.personal });
+          o.last = res;
+          o.drafts = res.drafts;
+          toast(res.sent.length ? `${V.plural(res.sent.length, "email")} handed to Outreach to send.` : "Nothing was sent.", { error: !res.sent.length });
+          if (res.sent.length) {
+            // the buyers are now recorded as sent: show that in the Buyers table and refresh the campaign list
+            state.campaigns.list = null;
+            applyDetail(await api("GET", `/api/growth/campaigns/${b.id}`), false);
+          }
+        } finally {
+          o.pushing = false;
+          renderBuilder();
+        }
+      }),
+    "outreach-refresh": () =>
+      run(async () => {
+        const o = state.builder.outreach;
+        o.refreshing = true;
+        renderBuilder();
+        try {
+          const res = await api("GET", `/api/growth/campaigns/${state.builder.id}/outreach?refresh=1`);
+          o.drafts = res.drafts;
+          if (res.stopped) toast(res.stopped, { error: true });
+        } finally {
+          o.refreshing = false;
+          renderBuilder();
+        }
+      }),
     "save-message": () => run(saveMessage),
     "draft-template": () => run(() => draft("template")),
     "draft-ai": () => run(() => draft("ai")),
@@ -782,6 +859,10 @@
       toggleIn(state.signals.selected, d.key);
       if (state.signals.selected.length && !state.campaigns.list) run(loadCampaigns);
       return updateSelectionUi();
+    }
+    if (d.field === "outreach-personal") {
+      state.builder.outreach.personal = t.checked;
+      return;
     }
     if (d.action === "target-include") return void run(() => patchTarget(Number(d.id), { included: t.checked }));
     if (d.field === "contact_email") return void run(() => patchQuietly({ contact_email: t.value.trim() }, Number(d.id)));
