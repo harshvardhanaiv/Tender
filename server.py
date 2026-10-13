@@ -5328,6 +5328,8 @@ Return this JSON structure:
         username = session.get("username", "admin")
         lang = (body.get("lang") or request.args.get("lang", "en")).strip().lower()
         summary_type = f"summary_{lang}" if lang != "en" else "summary"
+        # The company the reader had selected, so History can list the summary under it
+        summary_company = str(body.get("company") or "").strip()[:200]
 
         # Check cache first
         refresh = body.get("refresh", False)
@@ -5473,7 +5475,7 @@ Return ONLY valid JSON with no markdown fences:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO analyses (username, source, resource_id, tender_title, company, files_json, type, analysis_json) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (username, source, resource_id, title, "", "[]", summary_type, json.dumps(summary_data))
+                    (username, source, resource_id, title, summary_company, "[]", summary_type, json.dumps(summary_data))
                 )
                 conn.commit()
                 cursor.close()

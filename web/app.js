@@ -9260,7 +9260,7 @@ async function openSummaryModal(row, isRefresh = false) {
     const res = await fetch(`/api/summary${langParam}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tender: activeRow, refresh: isRefresh }),
+      body: JSON.stringify({ tender: activeRow, refresh: isRefresh, company: (getActiveProfile()?.name || "").trim() }),
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || "Failed to generate summary");
@@ -13287,6 +13287,7 @@ $("btnCloseHistoryModal")?.addEventListener("click", closeHistoryModal);
 $("historySearchInput")?.addEventListener("input", renderHistoryList);
 $("historyCompanyFilter")?.addEventListener("change", (e) => {
   const val = e.target.value || "all";
+  state._historyFilterTouched = true;
   state.historyCompanyFilter = val;
   e.target.classList.toggle("is-set", val !== "all");
   const match = (state.companyProfiles || []).find(p => p.name === val);
@@ -15473,6 +15474,7 @@ function openHistoryModal() {
   const defProfile = (state.companyProfiles || []).find(p => p.is_default) ||
                      (state.companyProfiles || []).find(p => String(p.id) === String(state.defaultProfileId || state.activeProfileId));
   const defName = defProfile?.name?.trim() || "";
+  state._historyFilterTouched = false;
   state.historyCompanyFilter = defName || "all";
   if ($("historyCompanyFilter")) {
     $("historyCompanyFilter").value = state.historyCompanyFilter;
@@ -15505,6 +15507,11 @@ function populateHistoryCompanyFilter() {
                      (state.companyProfiles || []).find(p => String(p.id) === String(state.defaultProfileId || state.activeProfileId));
   const defName = defProfile?.name?.trim() || "";
 
+  // The modal can open before the profiles have loaded (default unknown, filter "all"); until the reader picks a
+  // company themselves, the default company is applied as soon as it is known
+  if (defName && !state._historyFilterTouched && (!state.historyCompanyFilter || state.historyCompanyFilter === "all")) {
+    state.historyCompanyFilter = defName;
+  }
   const currentVal = state.historyCompanyFilter || defName || "all";
   const companies = new Set();
   (state.companyProfiles || []).forEach(p => {
@@ -15582,7 +15589,12 @@ function renderHistoryList() {
       filtered = filtered.filter(item => !item.company || !item.company.trim());
     } else {
       const target = state.historyCompanyFilter.toLowerCase().trim();
-      filtered = filtered.filter(item => (item.company || "").toLowerCase().trim() === target);
+      // Items with no company (summaries made before the company was recorded) belong to no company in particular,
+      // so they stay in the list for whichever company is selected
+      filtered = filtered.filter(item => {
+        const c = (item.company || "").toLowerCase().trim();
+        return !c || c === target;
+      });
     }
   }
 
