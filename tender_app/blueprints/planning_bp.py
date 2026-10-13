@@ -555,7 +555,7 @@ def planning_application(app_id: str):
     finally:
         conn.close()
 
-    result = _with_breakdown(app)
+    result = _mark_consultation(_with_breakdown(app))
     result["nearby"] = nearby
     return jsonify(result)
 

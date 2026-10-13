@@ -3082,6 +3082,8 @@ def create_app() -> Flask:
             if isinstance(place, list):
                 place = place[0] if place else ""
             region = data.get("region") or data.get("country") or ""
+            if isinstance(region, list):  # outcode lookups return lists
+                region = region[0] if region else ""
             name = ", ".join(x for x in (place, region) if x) or raw
             out = {"found": True, "lat": lat, "lon": lon, "name": name}
         _GEOCODE_CACHE[compact] = out
