@@ -4077,10 +4077,14 @@ document.addEventListener("click", (ev) => {
   if (pill) pill.click();
 });
 
-function updateResultsTotal() {
+// `rowsNow` is the list renderRows() is drawing: the "N tenders" count, the pagination and the visible rows must
+// come from the same list (D11). It is optional so older callers that only refresh the header still work.
+function updateResultsTotal(rowsNow) {
   const el = $("resultsTotal");
   if (!el) return;
-  const filteredRows = typeof filteredAndSortedRows === "function" ? filteredAndSortedRows() : (state.rows || []);
+  const filteredRows = Array.isArray(rowsNow)
+    ? rowsNow
+    : (typeof filteredAndSortedRows === "function" ? filteredAndSortedRows() : (state.rows || []));
   const filteredCount = filteredRows.length;
 
   if (typeof renderPortalsInCountries === "function") {
@@ -6649,6 +6653,9 @@ function renderRows() {
   initTableColumnResizing();
 
   renderPagination(totalCount, startIndex + 1, endIndex, totalPages);
+  // The header count is refreshed from this very list, so a filter, tab or term change that only re-renders the rows
+  // can no longer leave "N tenders" describing an older list.
+  try { updateResultsTotal(allRows); } catch (e) { /* non-critical header refresh */ }
 }
 
 function renderPagination(totalCount, startItem, endItem, totalPages) {
