@@ -1115,6 +1115,24 @@ def _text(value: Any, field: str, limit: int, required: bool = False) -> str | N
     return text
 
 
+def unique_campaign_name(base: str, existing: "Iterable[str]", limit: int = 120) -> str:
+    """`base` unless a campaign of that name already exists (case and spacing ignored), then "base (2)", "base (3)"...
+
+    Auto-generated names are "<category>: <signal type>, <date>", so two campaigns made the same day for the same
+    category used to share one name and could not be told apart in the list."""
+    taken = {re.sub(r"\s+", " ", str(n or "")).strip().lower() for n in existing}
+    base = re.sub(r"\s+", " ", str(base or "")).strip()[:limit]
+    if base.lower() not in taken:
+        return base
+    n = 2
+    while True:
+        suffix = f" ({n})"
+        candidate = base[: limit - len(suffix)].rstrip() + suffix
+        if candidate.lower() not in taken:
+            return candidate
+        n += 1
+
+
 def validate_campaign(data: Mapping[str, Any], partial: bool = False) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if "name" in data or not partial:

@@ -643,8 +643,14 @@ def growth_create_campaign():
                                   profile["meta"] if profile else None, f.category.label)
         message = gs.default_message(kind, sender)
         fallback = f"{f.category.label}: {gs.SIGNAL_PLURALS[kind]}, {date.today().strftime('%d %b %Y').lstrip('0')}"
+        name = body.get("name")
+        if not name:
+            # an automatic name is made unique ("... (2)") so campaigns made the same day can be told apart
+            with conn.cursor() as cur:
+                cur.execute("SELECT name FROM growth_campaigns WHERE username = %s", (username,))
+                name = gs.unique_campaign_name(fallback[:120], [r[0] for r in cur.fetchall()])
         fields = gs.validate_campaign({
-            "name": body.get("name") or fallback[:120],
+            "name": name,
             "channel": body.get("channel") or ("portal" if set(types) == {"engagement"} else "email"),
             **message,
         })
