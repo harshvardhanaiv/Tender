@@ -1569,7 +1569,8 @@ async function loadPipeline() {
 
 async function trackTender(row, stage) {
   const key = rowKey(row);
-  const fit = state.fitCache[key]?.deep || state.fitCache[key]?.quick || null;
+  // the score the list is showing for this row (computed now if the row was never scored), not whatever happened to be cached
+  const fit = state.fitCache[key]?.deep || getRowFit(row) || null;
   const body = {
     tender_key: key,
     stage,
@@ -7220,6 +7221,20 @@ function populatePipelinePortalFilter() {
   }
 }
 
+// The score a tracked tender shows must be the one the search results show for the same tender: the cached AI deep
+// score, else the quick score. The pipeline used to show only the figure frozen when the tender was tracked (87 in the
+// pipeline against 15 in search once the profile or the full description changed), and counted "High fit" from it.
+function pipelineItemFit(item) {
+  const bandFor = (s) => (s >= 70 ? "strong" : s >= 40 ? "possible" : "weak");
+  const cached = state.fitCache && item ? state.fitCache[item.tender_key] : null;
+  const live = cached && (cached.deep || cached.quick);
+  if (live && live.score != null) return { score: live.score, band: live.band || bandFor(live.score) };
+  if (item && item.fit_score != null) return { score: item.fit_score, band: item.fit_band || bandFor(item.fit_score) };
+  return null;
+}
+
+let _pipelineShowAllHighFit = false;
+
 function renderPipelineBoard() {
   const body = $("dashboardBody");
   if (!body) return;
@@ -7229,7 +7244,10 @@ function renderPipelineBoard() {
   const searchQuery = ($("pipelineSearchInput")?.value || "").toLowerCase().trim();
   const portalFilter = ($("pipelinePortalFilter")?.value || "").trim();
 
-  let items = Object.values(state.pipeline);
+  let items = Object.values(state.pipeline).map((item) => {
+    const fit = pipelineItemFit(item);
+    return fit ? { ...item, fit_score: fit.score, fit_band: fit.band } : item;
+  });
 
   if (portalFilter) {
     items = items.filter(item => (item.source || "") === portalFilter);
@@ -7300,11 +7318,15 @@ function renderPipelineBoard() {
       </div>
     </div>` : "";
 
+  const highFitShown = _pipelineShowAllHighFit ? highFit : highFit.slice(0, 5);
+  const highFitMore = highFit.length > 5
+    ? ` <button type="button" class="dash-profile-link" id="dashToggleHighFit">${_pipelineShowAllHighFit ? "Show top 5" : `Show all ${highFit.length}`}</button>`
+    : "";
   const highFitHtml = highFit.length ? `
     <div class="dash-section">
-      <div class="dash-section__title">🎯 High-fit tracked tenders</div>
+      <div class="dash-section__title">🎯 High-fit tracked tenders (${highFitShown.length} of ${highFit.length})${highFitMore}</div>
       <div class="dash-list">
-        ${highFit.slice(0, 5).map(item => `
+        ${highFitShown.map(item => `
           <button type="button" class="dash-list__item" data-key="${esc(item.tender_key)}">
             <span class="fit-badge fit-badge--${item.fit_band || "possible"}">${item.fit_score}</span>
             <span class="dash-list__info">
@@ -7364,6 +7386,14 @@ function renderPipelineBoard() {
 }
 
 function wireDashboardActions(body) {
+  const toggleHighFit = body.querySelector("#dashToggleHighFit");
+  if (toggleHighFit) {
+    toggleHighFit.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      _pipelineShowAllHighFit = !_pipelineShowAllHighFit;
+      renderPipelineBoard();
+    });
+  }
   body.querySelectorAll(".dash-card__view").forEach(btn => {
     btn.addEventListener("click", () => {
       const key = btn.dataset.key;
