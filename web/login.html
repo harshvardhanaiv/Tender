@@ -215,6 +215,20 @@
       .pwd-toggle-btn { min-width: 36px; min-height: 36px; }
       a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     </style>
+    <script>
+      // Sent here by the app because the session ended (idle timeout or signed out elsewhere): say so (D06).
+      document.addEventListener("DOMContentLoaded", function () {
+        var kind = "";
+        try { kind = sessionStorage.getItem("tf_login_notice") || ""; sessionStorage.removeItem("tf_login_notice"); } catch (e) { /* storage blocked */ }
+        if (!kind && /[?&]expired=1/.test(location.search)) kind = "signin";
+        if (!kind) return;
+        var msg = kind === "expired"
+          ? "Your session expired after a period of inactivity. Sign in again to continue; your saved searches and pipeline are kept."
+          : "You have been signed out. Sign in again to continue.";
+        var box = document.getElementById("errorMsg"), text = document.getElementById("errorText");
+        if (box && text) { text.textContent = msg; box.style.display = "block"; }
+      });
+    </script>
     <script src="/translations.js"></script>
   </head>
   <body>

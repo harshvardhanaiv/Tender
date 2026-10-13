@@ -25,10 +25,32 @@ window.fetch = async function (...args) {
 
     opts = { ...opts, headers };
   }
-  const response = await originalFetch(url, opts);
+  let response = await originalFetch(url, opts);
   if (response.status === 401) {
-    window.location.href = "/login.html";
+    // The server answers an idle session with {"reason": "session_expired"}; either way the reader is sent to the
+    // sign-in page with a line saying why, instead of landing there unexplained with the search gone (D06).
+    let reason = "";
+    try { reason = String((await response.clone().json()).reason || ""); } catch { /* not JSON */ }
+    _sessionEnded(reason);
     return response;
+  }
+  // A stale CSRF token (the session was renewed in another tab) used to make every save fail without a word:
+  // fetch a fresh token once and send the same request again.
+  if (response.status === 403 && opts && opts.method && opts.method !== "GET" && typeof url === "string" && url.startsWith("/api/") && !opts._csrfRetried) {
+    let csrfFailure = false;
+    try { csrfFailure = (await response.clone().json()).error === "Invalid CSRF token"; } catch { /* not JSON */ }
+    if (csrfFailure) {
+      try {
+        const me = await originalFetch("/api/me", { credentials: "same-origin" });
+        const fresh = me.ok ? (await me.json()).csrf_token : "";
+        if (fresh) {
+          _csrfToken = fresh;
+          try { sessionStorage.setItem("tf_csrf", fresh); } catch { /* storage blocked */ }
+          response = await originalFetch(url, { ...opts, headers: { ...(opts.headers || {}), "X-CSRF-Token": fresh }, _csrfRetried: true });
+          if (response.status === 401) { _sessionEnded(""); return response; }
+        }
+      } catch { /* the original 403 is returned below */ }
+    }
   }
   if (response.status === 402) {
     try {
@@ -38,6 +60,15 @@ window.fetch = async function (...args) {
   }
   return response;
 };
+
+let _sessionRedirecting = false;
+// Send the reader to sign in, once, and leave a note the sign-in page shows ("Your session expired...").
+function _sessionEnded(reason) {
+  if (_sessionRedirecting) return;
+  _sessionRedirecting = true;
+  try { sessionStorage.setItem("tf_login_notice", reason === "session_expired" ? "expired" : "signin"); } catch { /* storage blocked */ }
+  window.location.href = "/login.html?expired=1";
+}
 
 async function showCreditsModal(data) {
   const el = $("creditsModal");
