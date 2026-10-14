@@ -5500,8 +5500,18 @@ function queryWordStem(w) {
 }
 
 // Returns [[stem, ...], ...]: one array of word stems per comma-separated alternative.
+// "software OR cloud NOT legacy -hardware": OR (upper case or "|") is the comma alternative, NOT word / -word excludes.
+function splitQueryOperators(query) {
+  const raw = String(query || "");
+  const excludes = [];
+  const text = raw
+    .replace(/(^|\s)(?:NOT\s+|-)("[^"]+"|[^\s,;]+)/g, (m, lead, term) => { excludes.push(term.replace(/"/g, "").toLowerCase()); return lead; })
+    .replace(/\s+OR\s+/g, ", ");
+  return { text, excludes: excludes.filter(Boolean) };
+}
+
 function queryAlternatives(query) {
-  return String(query || "")
+  return splitQueryOperators(query).text
     .toLowerCase()
     .split(/[,;|]+/)
     .map((part) => part.split(/[^a-z0-9]+/).filter((w) => w.length >= 2 && !QUERY_STOPWORDS.has(w)).map(queryWordStem))
@@ -5522,6 +5532,8 @@ function wordMatchLevel(row, query, titleOnly) {
   const alts = queryAlternatives(query);
   if (!alts.length) return "none";
   const hay = titleOnly ? String(row.title || row.tender_title || row.name || "").toLowerCase() : rowSearchText(row);
+  const { excludes } = splitQueryOperators(query);
+  if (excludes.length && excludes.some((x) => hay.includes(x))) return "none";
   const titleHay = String(row.title || row.tender_title || row.name || "").toLowerCase();
   let some = false;
   for (const words of alts) {
