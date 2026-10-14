@@ -11,6 +11,8 @@
   "use strict";
   const ACRONYMS = new Set(["NHS", "UK", "PLC", "LLP", "CIC", "CIO", "LP", "GB", "IT", "ICT", "BT", "HM", "HMRC", "DVLA", "BBC", "UCL", "EU", "USA",
     "IBM", "KPMG", "PWC", "EY", "ESPO", "YPO", "NHSBSA", "CCS", "UKRI", "TFL", "NI", "ID", "AI", "IP", "HR", "RBS", "UBS"]);
+  // Short all-caps first words are almost always initialisms ("XMA", "BAE", "CGI"), not words; these real words are not.
+  const SHORT_WORDS = new Set(["THE", "AND", "LTD", "INC", "CO", "OF", "FOR", "NEW", "ONE", "TWO", "RED", "SKY", "BIG", "OAK", "ASH", "FOX", "BAY", "ARC", "ACE", "AIR", "ART", "BOX", "CAT", "DOG", "SUN", "SEA", "TOP", "WAY", "MAX", "PRO", "ALL", "OLD", "OUR", "NOW", "TEN", "GOLD", "A", "AN", "MY", "ST", "MR", "MS", "DR", "MT", "FT", "NO", "BY", "AT", "ON", "IN", "TO", "UP"]);
   const SMALL = new Set(["of", "and", "the", "for", "on", "in", "at", "to", "upon", "with", "by", "a"]);
 
   function capitalise(word) {
@@ -22,6 +24,7 @@
     if (!bare) return word;
     if (/\d/.test(bare)) return word;                       // "2B", "A1M", "5G" stay as they are
     if (ACRONYMS.has(bare.toUpperCase())) return word.toUpperCase();
+    if (isFirst && bare.length >= 2 && bare.length <= 3 && !SHORT_WORDS.has(bare.toUpperCase())) return word.toUpperCase();
     if (word.toUpperCase() === "LTD" || word.toUpperCase() === "LTD.") return "Ltd" + (word.endsWith(".") ? "." : "");
     if (word === "&") return word;
     if (!isFirst && SMALL.has(bare.toLowerCase())) return word.toLowerCase();
