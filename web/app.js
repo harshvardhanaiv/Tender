@@ -4898,6 +4898,8 @@ function fitActive() {
 // "Active" next to a "Closed" badge. An open-looking status on a tender past its deadline reads "Closed".
 function statusLabel(row) {
   const status = String((row && row.status) || "");
+  // A corrigendum amends an earlier notice; the portal files it as plain "Active", which read as a new opportunity.
+  if (/corrigend|change notice/i.test(String((row && row.notice_type) || "")) && /^(active|open|live|)$/i.test(status.trim())) return "Corrigendum";
   if (/^(active|open|live)$/i.test(status.trim()) && isClosedTender(row)) return "Closed";
   return status;
 }
