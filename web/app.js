@@ -4989,6 +4989,18 @@ function statusLabel(row) {
   return status;
 }
 
+// A notice that is closed only because its deadline passed (status still Active/Open, no award data) is an
+// expired opportunity, not an award - the Awarded tab used to list these too (88 of 230 on a live search).
+function isOnlyPastDeadline(row) {
+  if (!row) return false;
+  const status = String(row.status || "").toLowerCase().trim();
+  const stillOpenStatus = !status || /^(active|open|live|published|current|tender|opportunity)$/.test(status);
+  if (!stillOpenStatus) return false;
+  if (row.award_date || row.contract_award_date || row.awarded_supplier || row.supplier_name || row.winner) return false;
+  if (String(row.notice_type || "").toLowerCase().includes("award")) return false;
+  return true;
+}
+
 function isClosedTender(row) {
   if (!row) return false;
 
@@ -5365,7 +5377,7 @@ function renderTableHeader(activeScope) {
           th.innerHTML = `<span class="fit-sort-label">${esc(label)} ↕</span>`;
         } else if (c.id === "value") {
           th.id = "thValue";
-          th.innerHTML = `<span class="sort-label">${esc(label)} ↕</span>`;
+          th.innerHTML = `<span class="sort-label">${esc(String(label).replace(/\s*[↑↓↕]+\s*$/, ""))} ↕</span>`;
         } else if (c.sortable) {
           th.id = `th_${c.id}`;
           th.innerHTML = `<span class="sort-label">${esc(label)} ↕</span>`;
@@ -5847,7 +5859,7 @@ function filteredAndSortedRows() {
       if (state.statusFilter === "opportunities") {
         return !isClosed;
       } else if (state.statusFilter === "awards") {
-        return isClosed;
+        return isClosed && !isOnlyPastDeadline(row);
       }
       return true;
     });
@@ -6026,6 +6038,7 @@ function updateSortHeader() {
       : colId === "authority" ? (activeScope === "all" ? t("th_authority") : "Buyer / Authority")
       : colId === "published" ? t("th_published")
       : labelSpan.textContent.replace(/[↑↓↕]/g, "").trim();
+    const cleanLabel = String(baseLabel).replace(/\s*[↑↓↕]+\s*$/g, "").trim(); // translations carry their own "↕"
 
     let arrow = " ↕";
     let isSorted = false;
@@ -6041,7 +6054,7 @@ function updateSortHeader() {
       arrow = " ↓";
     }
 
-    labelSpan.textContent = baseLabel + arrow;
+    labelSpan.textContent = cleanLabel + arrow;
     th.classList.toggle("th--sorted", isSorted);
   });
 }
