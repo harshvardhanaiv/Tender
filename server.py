@@ -3063,7 +3063,30 @@ def create_app() -> Flask:
         raw = (request.args.get("q") or "").strip().upper()
         compact = re.sub(r"\s+", "", raw)
         if not re.fullmatch(r"[A-Z]{1,2}\d[A-Z\d]?(\d[A-Z]{2})?", compact):
-            return jsonify({"found": False})
+            # A town name ("Chelmsford", "Harlow"): the built-in towns first, then postcodes.io's place index.
+            town = re.sub(r"\s+", " ", raw.lower()).strip()
+            if not re.fullmatch(r"[a-z][a-z .'-]{1,58}", town):
+                return jsonify({"found": False})
+            if town in _GEOCODE_CACHE:
+                return jsonify(_GEOCODE_CACHE[town])
+            from tender_app.town_coords import TOWN_COORDS
+            if town in TOWN_COORDS:
+                lat, lon, nm = TOWN_COORDS[town]
+                out = {"found": True, "lat": lat, "lon": lon, "name": nm}
+            else:
+                out = {"found": False}
+                try:
+                    with urllib.request.urlopen(
+                            f"https://api.postcodes.io/places?q={urllib.parse.quote(town)}&limit=1", timeout=6) as resp:
+                        hit = (json.loads(resp.read().decode("utf-8")).get("result") or [None])[0]
+                    if hit and hit.get("latitude") is not None and hit.get("longitude") is not None:
+                        nm = ", ".join(x for x in (hit.get("name_1"), hit.get("county_unitary") or hit.get("region")) if x)
+                        out = {"found": True, "lat": hit["latitude"], "lon": hit["longitude"], "name": nm or town.title()}
+                except Exception:
+                    pass
+            if out["found"]:
+                _GEOCODE_CACHE[town] = out   # a failed lookup is not cached: it may be a network blip
+            return jsonify(out)
         if compact in _GEOCODE_CACHE:
             return jsonify(_GEOCODE_CACHE[compact])
         full = bool(re.search(r"\d[A-Z]{2}$", compact)) and len(compact) >= 5
@@ -4051,7 +4074,13 @@ def create_app() -> Flask:
     # NOTE: Search is FREE — no credit charge. Only AI actions (fit-score, analyse, proposal, etc.) charge credits.
     @app.get("/api/search")
     def api_search():
-        q = (request.args.get("q") or "").strip()
+        q_typed = (request.args.get("q") or "").strip()
+        # "software OR cloud NOT legacy": OR becomes the comma the portals already treat as OR; NOT / -word are
+        # filtered from the results below (no portal understands them).
+        from tender_app.search_terms import parse_operators
+        q, q_excludes = parse_operators(q_typed)
+        if not q and q_typed and not q_excludes:
+            q = q_typed
         page = max(1, int(request.args.get("page") or "1"))
         refresh = request.args.get("refresh") == "1"
         scope = (request.args.get("scope") or request.args.get("source") or "all").strip()
@@ -4252,6 +4281,13 @@ def create_app() -> Flask:
         rows = cross_deduped
         _c4 = count_by_source(rows)
 
+        if q_excludes:
+            def _row_text(r):
+                return " ".join(str(r.get(k) or "") for k in (
+                    "title", "description", "scope", "abstract", "contracting_authority", "authority_name",
+                    "supplier_name", "awarded_supplier", "cpv_description")).lower()
+            rows = [r for r in rows if not any(x in _row_text(r) for x in q_excludes)]
+
         total = len(rows)
 
         if q and q.strip() and q.strip().lower() != "all":
@@ -4367,7 +4403,7 @@ def create_app() -> Flask:
                 pr["dropped_duplicate"] = rec.get("dropped_duplicate", 0)
         return jsonify(
             {
-                "query": q,
+                "query": q_typed or q,
                 "page": 1,
                 "pageSize": len(rows) or PAGE_SIZE,
                 "total": total,

@@ -808,6 +808,11 @@ def search_suppliers():
                 widen_match=widen_match)
 
         suppliers = _shape_supplier_rows(cursor, raw_rows, sme_only, vcse_only)
+        try:
+            from tender_app.entity_merge import merge_duplicate_suppliers
+            suppliers = merge_duplicate_suppliers(suppliers)   # "XMA LIMITED" / "Xma Ltd" listed once
+        except Exception:
+            pass   # never fail a search over the tidy-up
         return jsonify({
             "ok": True,
             "query": q,
@@ -1185,6 +1190,11 @@ def get_supplier_detail(identifier: str):
 
         top_authorities = sorted(authority_stats.values(), key=lambda x: (x["count"], x["total_value"]), reverse=True)
         top_cpvs = sorted(cpv_stats.values(), key=lambda x: (x["count"], x["total_value"]), reverse=True)
+
+        # Same rule as the list card (_shape_supplier_rows): a supplier with this much award value is not an SME,
+        # whatever a scraped flag says, so the profile and the list can no longer disagree.
+        if supplier_info.get("sme_status") == "SME" and float(total_value or 0) > _SME_IMPLAUSIBLE_TOTAL_GBP:
+            supplier_info["sme_status"] = "Non-SME Enterprise"
 
         return jsonify({
             "ok": True,

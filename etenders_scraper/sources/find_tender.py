@@ -193,6 +193,9 @@ def _best_value(entries: dict[str, str]) -> str:
 
 def _status_for(notice_type: str) -> str:
     low = notice_type.lower()
+    # A corrigendum / change notice amends an earlier notice; it is not a new opportunity.
+    if "corrigend" in low or "change notice" in low or "contract change" in low or "modification" in low:
+        return "Corrigendum"
     if "award" in low or "contract details" in low or "termination" in low:
         return "Awarded"
     return "Active"
