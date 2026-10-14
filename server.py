@@ -4366,6 +4366,13 @@ def create_app() -> Flask:
         for _r in rows:
             fix_row_text(_r)
 
+        # A Find a Tender corrigendum names the notice it changes; say which one (each page is read once)
+        try:
+            from etenders_scraper.sources.find_tender import attach_corrigendum_links
+            attach_corrigendum_links(rows)
+        except Exception as exc:  # the link is a convenience: a failure must never cost the search its rows
+            print(f"[Search] corrigendum links skipped: {exc}", flush=True)
+
         # Recalculate source counts and total in meta to reflect all deduplicated combined rows
         source_counts = {}
         for r in rows:

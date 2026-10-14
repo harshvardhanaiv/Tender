@@ -513,3 +513,106 @@ def fetch_find_tender_details(resource_id: str) -> dict[str, Any] | None:
         }
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Corrigenda: which earlier notice does this one correct?
+# ---------------------------------------------------------------------------
+# A corrigendum (F14) is filed as its own notice. Its page names the notice it changes under
+# "VI.6) Original notice reference", as a link to /Notice/<id>. The search results page does not carry that,
+# so the notice page is read once per corrigendum and the answer is remembered for the life of the process.
+
+_NOTICE_ID = re.compile(r"/Notice/(\d{6}-\d{4})(?!\d)")
+_CORRECTS_CACHE: dict[str, tuple[str, bool, float]] = {}  # notice id -> (original id or "", page was read, looked up at)
+_CORRECTS_LOCK = threading.Lock()
+_CORRECTS_MISS_TTL = 15 * 60.0  # a page that could not be read is tried again after this long
+_CORRECTS_MAX = 5000
+
+
+def _is_corrigendum_row(row: dict[str, Any]) -> bool:
+    if row.get("source") != "find_tender":
+        return False
+    text = f"{row.get('notice_type') or ''} {row.get('status') or ''}".lower()
+    return "corrigend" in text or "change notice" in text
+
+
+def parse_original_notice_id(html: str, own_id: str = "") -> str:
+    """The id (``016346-2026``) of the notice a corrigendum page says it corrects, or "" when it names none."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    own = (own_id or "").strip()
+
+    def _first_notice_link(scope: Any) -> str:
+        for a in scope.find_all("a", href=True):
+            m = _NOTICE_ID.search(a["href"])
+            if m and m.group(1) != own:
+                return m.group(1)
+        return ""
+
+    # The labelled section first: the heading text is the same on every corrigendum page.
+    for node in soup.find_all(string=re.compile(r"original notice reference", re.I)):
+        holder = node.parent
+        for _ in range(4):  # the link sits in the same block as the heading or in a sibling just after it
+            if holder is None:
+                break
+            found = _first_notice_link(holder)
+            if found:
+                return found
+            holder = holder.parent
+    return ""
+
+
+def lookup_corrected_notice(resource_id: str, *, session: requests.Session | None = None) -> str:
+    """Original notice id for corrigendum ``resource_id`` ("" when none is named or the page cannot be read).
+
+    Each corrigendum's page is fetched once; a failed read is remembered for _CORRECTS_MISS_TTL seconds."""
+    rid = (resource_id or "").strip()
+    if not re.fullmatch(r"\d{6}-\d{4}", rid):
+        return ""
+    now = time.monotonic()
+    with _CORRECTS_LOCK:
+        hit = _CORRECTS_CACHE.get(rid)
+    # an answer from a page that was read is final; a page that could not be read is retried after the TTL
+    if hit and (hit[1] or now - hit[2] < _CORRECTS_MISS_TTL):
+        return hit[0]
+    found = ""
+    ok = False
+    try:
+        resp = _request(session or _make_session(), "GET", f"{_BASE}/Notice/{rid}", retries=1, timeout=15)
+        if resp.status_code == 200:
+            ok = True
+            found = parse_original_notice_id(resp.text, rid)
+    except Exception:
+        pass
+    with _CORRECTS_LOCK:
+        if len(_CORRECTS_CACHE) >= _CORRECTS_MAX:
+            _CORRECTS_CACHE.clear()
+        _CORRECTS_CACHE[rid] = (found, ok, now)
+    return found
+
+
+def attach_corrigendum_links(rows: list[dict[str, Any]], *, max_lookups: int = 6) -> int:
+    """Set ``corrects_notice_id`` / ``corrects_url`` on Find a Tender corrigendum rows. Returns how many were set.
+
+    At most ``max_lookups`` pages not seen before are read per call, so a list full of corrigenda fills in over
+    a few searches instead of making one search wait."""
+    todo = [r for r in rows if isinstance(r, dict) and _is_corrigendum_row(r)]
+    if not todo:
+        return 0
+    fetched = 0
+    attached = 0
+    session = None
+    for row in todo:
+        rid = str(row.get("resource_id") or "").strip()
+        with _CORRECTS_LOCK:
+            known = rid in _CORRECTS_CACHE
+        if not known:
+            if fetched >= max_lookups:
+                continue
+            fetched += 1
+            session = session or _make_session()
+        original = lookup_corrected_notice(rid, session=session)
+        if original:
+            row["corrects_notice_id"] = original
+            row["corrects_url"] = f"{_BASE}/Notice/{original}"
+            attached += 1
+    return attached

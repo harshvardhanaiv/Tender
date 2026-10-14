@@ -50,7 +50,9 @@ class Skip(Exception):
 
 
 def row(sid, n, authority="Kent County Council", title=None, **extra):
-    return {"title": title or f"Construction works lot {n}", "resource_id": f"{sid}-{n}", "source": sid,
+    # the title names the portal: two portals publishing the same title and buyer are one tender to the dedupe
+    # (also_on), which would make the row counts below depend on which portals share a lot number
+    return {"title": title or f"Construction works {sid} lot {n}", "resource_id": f"{sid}-{n}", "source": sid,
             "source_label": SOURCES[sid]["label"], "contracting_authority": authority, "description": "",
             "submission_deadline": "", **extra}
 

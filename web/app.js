@@ -4991,6 +4991,20 @@ function statusLabel(row) {
   return status;
 }
 
+// The notice a Find a Tender corrigendum changes: { id, url } when the row names one, else null. Only a notice page
+// on find-tender.service.gov.uk is ever linked, whatever the row says.
+function correctsNotice(row) {
+  const id = String((row && row.corrects_notice_id) || "").trim();
+  if (!/^\d{6}-\d{4}$/.test(id)) return null;
+  return { id, url: `https://www.find-tender.service.gov.uk/Notice/${id}` };
+}
+
+function correctsLinkHtml(row) {
+  const c = correctsNotice(row);
+  if (!c) return "";
+  return `<a class="corrects-link" href="${esc(c.url)}" target="_blank" rel="noreferrer noopener" title="The notice this corrigendum changes" onclick="event.stopPropagation()">Corrects ${esc(c.id)}</a>`;
+}
+
 // A notice that is closed only because its deadline passed (status still Active/Open, no award data) is an
 // expired opportunity, not an award - the Awarded tab used to list these too (88 of 230 on a live search).
 function isOnlyPastDeadline(row) {
@@ -6430,7 +6444,10 @@ function buildResultRow(row) {
       + (cleanDl ? `<div class="td--deadline-raw">${esc(cleanDl)}</div>` : "");
     tr.appendChild(tdDeadline);
 
-    tr.appendChild(tdText(statusLabel(row), "col-status td--status"));
+    const tdStatus = tdText(statusLabel(row), "col-status td--status");
+    const correctsHtml = correctsLinkHtml(row);
+    if (correctsHtml) tdStatus.insertAdjacentHTML("beforeend", `<div class="td--corrects">${correctsHtml}</div>`);
+    tr.appendChild(tdStatus);
   }
 
   // Pipeline track button cell (always last)
@@ -6551,7 +6568,7 @@ function buildResultCard(row) {
   if (row.procedure) bits.push(`<span class="result-card__meta-item" title="Procedure"><span class="result-card__meta-label">Procedure</span> ${esc(row.procedure)}</span>`);
   if (published) bits.push(`<span class="result-card__meta-item" title="Published"><span class="result-card__meta-label">Published</span> ${esc(published)}</span>`);
   if (deadline) bits.push(`<span class="result-card__meta-item" title="Deadline"><span class="result-card__meta-label">Deadline</span> ${esc(deadline)}</span>`);
-  if (row.status) bits.push(`<span class="result-card__meta-item" title="Status"><span class="result-card__meta-label">Status</span> ${esc(statusLabel(row))}</span>`);
+  if (row.status) bits.push(`<span class="result-card__meta-item" title="Status"><span class="result-card__meta-label">Status</span> ${esc(statusLabel(row))}${correctsLinkHtml(row) ? ` · ${correctsLinkHtml(row)}` : ""}</span>`);
   meta.innerHTML = bits.join("");
   card.appendChild(meta);
 
@@ -8326,6 +8343,16 @@ function stopSearchPoll() {
   }
 }
 
+// The search ended without an answer (error status, no connection, unreadable reply): leave "loading" so the
+// "Searching:" badge, spinner and Stop button go away, and say why.
+function _endSearchWithError(message) {
+  stopSearchPoll();
+  document.body.classList.remove("search-quiet");
+  state.searchPhase = "stopped";
+  try { updateStopButton(); updateSearchProgressUI(); updateActiveSearchKeywordBadge(); } catch (e) { /* non-critical */ }
+  if (message) setStatus(message);
+}
+
 // Bumped on every fresh search; a poll or fetch started under an older generation checks this
 // after its await and bails out if a newer search has since started -- otherwise a slow response
 // for an already-abandoned query (e.g. an earlier keystroke while the user kept editing) can land
@@ -8409,18 +8436,39 @@ async function loadPage(isNewSearch = false, isPoll = false) {
       state._instantRows = null;
     }
   }
-  const res = await fetch(url);
+  // A search that cannot be read must end in "stopped": left on "loading" it showed "Searching: ..." with a spinner
+  // for ever. A poll throws instead, so pollSearchProgress retries a few times and then says the server is gone.
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    if (myGeneration !== _searchGeneration) return;
+    if (isPoll) throw err;
+    _endSearchWithError("Could not reach the server, so this search did not run. Check your connection and press Search to try again.");
+    return;
+  }
   if (myGeneration !== _searchGeneration) return; // superseded by a newer search while this was in flight
   if (!res.ok) {
-    document.body.classList.remove("search-quiet");
-    setStatus(`Error: ${await res.text()}`);
+    if (isPoll) throw new Error(`Search poll failed (HTTP ${res.status})`);
+    let detail = "";
+    try { detail = await res.text(); } catch (e) { /* the status line below still says it failed */ }
+    if (myGeneration !== _searchGeneration) return;
+    _endSearchWithError(`Error: ${detail || `HTTP ${res.status}`}`);
     return;
   }
   if (isNewSearch) {
     refreshCredits();
     _resetCollapsedMatchGroups();
   }
-  const data = await res.json();
+  let data;
+  try {
+    data = await res.json();
+  } catch (err) {
+    if (myGeneration !== _searchGeneration) return;
+    if (isPoll) throw err;
+    _endSearchWithError("The server's answer could not be read, so this search did not finish. Press Search to try again.");
+    return;
+  }
   const incomingRows = (data.rows || []).map(normalizeRow);
   const incomingPhase = data.searchPhase || "complete";
   // While a progressive search is still loading, don't let the panel flash down to a tiny

@@ -55,6 +55,13 @@ def test_award_columns_list_matches_the_table():
     cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'contract_awards' ORDER BY ordinal_position")
     cols = tuple(r[0] for r in cur.fetchall())
     conn.close()
+    # The list must start with the table's columns, in order (the dedupe SQL spells them out). A database that has
+    # picked up extra trailing columns the code never reads (authority_contact / _email / _phone in some copies)
+    # is fine; one that is missing a listed column, or has a new column in the middle, is not.
+    extra = cols[len(AWARD_COLUMNS):]
+    if extra:
+        print(f"note  contract_awards has columns the code does not list: {extra}")
+    cols = cols[:len(AWARD_COLUMNS)]
     assert cols == AWARD_COLUMNS, f"contract_awards columns changed; update AWARD_COLUMNS in etenders_scraper/awards.py\n table: {cols}\n list:  {AWARD_COLUMNS}"
     print("ok    test_award_columns_list_matches_the_table")
 

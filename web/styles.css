@@ -14474,3 +14474,7 @@ body.focus-mode-active.rm-drawer-expanded #resultsTotal {
 .portal-row--disabled { opacity: 0.45; cursor: not-allowed; }
 .portal-row--disabled * { cursor: not-allowed; }
 .portal-country-toggle-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Find a Tender corrigendum: the notice it changes, under the status */
+.td--corrects { margin-top: 2px; font-size: 11px; line-height: 1.3; }
+.corrects-link { color: var(--accent, #2563eb); text-decoration: underline; white-space: nowrap; }
