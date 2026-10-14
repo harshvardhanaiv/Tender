@@ -18,7 +18,10 @@
     return {
       status: "idle", id: null, detail: null, draft: null, dirty: false, preview: null, previewTarget: null, previewSeq: 0,
       warnings: null, drafting: false, error: null, lastField: "body", aiNote: "",
-      outreach: { status: "idle", info: null, drafts: null, last: null, pushing: false, refreshing: false, personal: false, error: null },
+      outreach: {
+        status: "idle", info: null, drafts: null, last: null, pushing: false, refreshing: false, personal: false, error: null,
+        mail: { status: "idle", info: null, open: false, form: null, saving: false, testing: false, error: null, notice: null },
+      },
     };
   }
 
@@ -479,11 +482,13 @@
     if (!id || o.status === "loading" || (o.status === "ok" && !force)) return;
     o.status = "loading";
     try {
-      const [info, drafts] = await Promise.all([
+      const [info, drafts, mail] = await Promise.all([
         api("GET", "/api/growth/outreach/status"),
         api("GET", `/api/growth/campaigns/${id}/outreach`),
+        api("GET", "/api/growth/email-account").catch(() => null),
       ]);
       if (state.builder.outreach !== o) return; // another campaign was opened meanwhile
+      if (mail) setMailInfo(o.mail, mail);
       o.info = info;
       o.drafts = drafts.drafts;
       o.status = "ok";
@@ -495,6 +500,38 @@
       o.info = { ready: false, problem: err.message };
     }
     renderBuilder();
+  }
+
+  // The sender mailbox card: what the server knows about the user's mailbox, and the form's working values.
+  function mailFormFrom(info) {
+    const a = info.account;
+    const p = (info.presets || []).find((x) => x.id === "gmail") || {};
+    return a
+      ? { provider: a.provider, from_name: a.from_name, from_email: a.from_email, host: a.host, port: a.port,
+          security: a.security, username: a.username, reply_to: a.reply_to || "", daily_cap: a.daily_cap }
+      : { provider: "gmail", from_name: "", from_email: "", host: p.host || "", port: p.port || 465,
+          security: p.security || "ssl", username: "", reply_to: "", daily_cap: 100 };
+  }
+
+  function setMailInfo(mail, info) {
+    mail.info = info;
+    mail.status = "ok";
+    mail.form = mail.form && mail.open ? mail.form : mailFormFrom(info);
+  }
+
+  async function mailCall(fn) {
+    const mail = state.builder.outreach.mail;
+    mail.error = null;
+    mail.notice = null;
+    try {
+      await fn(mail);
+    } catch (err) {
+      mail.error = err.message;
+    } finally {
+      mail.saving = false;
+      mail.testing = false;
+      renderBuilder();
+    }
   }
 
   async function openCampaign(id) {
@@ -754,19 +791,67 @@
       input.scrollIntoView({ block: "center", behavior: "smooth" });
       input.focus();
     },
+    "mail-edit": () => {
+      const mail = state.builder.outreach.mail;
+      mail.open = true;
+      mail.form = mailFormFrom(mail.info);
+      mail.error = mail.notice = null;
+      renderBuilder();
+    },
+    "mail-cancel": () => {
+      const mail = state.builder.outreach.mail;
+      mail.open = false;
+      mail.error = mail.notice = null;
+      renderBuilder();
+    },
+    "mail-save": () =>
+      mailCall(async (mail) => {
+        mail.saving = true;
+        renderBuilder();
+        const f = mail.form;
+        const res = await api("PUT", "/api/growth/email-account", {
+          provider: f.provider, from_name: f.from_name, from_email: f.from_email, host: f.host, port: f.port,
+          security: f.security, username: f.username, reply_to: f.reply_to, daily_cap: f.daily_cap, password: f.password || "",
+        });
+        f.password = "";
+        mail.info = { ...mail.info, account: res.account };
+        mail.open = false;
+        mail.form = mailFormFrom(mail.info);
+        mail.notice = "Mailbox connected. Send yourself a test email to confirm it lands.";
+      }),
+    "mail-test": () =>
+      mailCall(async (mail) => {
+        mail.testing = true;
+        renderBuilder();
+        const res = await api("POST", "/api/growth/email-account/test", {});
+        mail.notice = `Test email sent to ${res.sent_to}. Check that inbox (and spam).`;
+      }),
+    "mail-disconnect": () =>
+      mailCall(async (mail) => {
+        if (!(await confirmDialog("Disconnect this mailbox? Growth Studio will go back to sending through Outreach."))) return;
+        await api("DELETE", "/api/growth/email-account");
+        mail.info = { ...mail.info, account: null };
+        mail.open = false;
+        mail.form = mailFormFrom(mail.info);
+      }),
     "outreach-send": () =>
       run(async () => {
         const b = state.builder;
         const o = b.outreach;
         const n = b.detail ? b.detail.eligible : 0;
-        if (!(await confirmDialog(`Send this email now to up to ${V.plural(n, "buyer")}, from your connected Outreach mailbox? Real emails will go out and this cannot be undone.`))) return;
+        const acct = o.mail && o.mail.info && o.mail.info.account;
+        const via = acct && acct.verified ? `from ${acct.from_email}` : "from your connected Outreach mailbox";
+        if (!(await confirmDialog(`Send this email now to up to ${V.plural(n, "buyer")}, ${via}? Real emails will go out and this cannot be undone.`))) return;
         o.pushing = true;
         renderBuilder();
         try {
           const res = await api("POST", `/api/growth/campaigns/${b.id}/outreach`, { allow_personal: !!o.personal });
           o.last = res;
           o.drafts = res.drafts;
-          toast(res.sent.length ? `${V.plural(res.sent.length, "email")} handed to Outreach to send.` : "Nothing was sent.", { error: !res.sent.length });
+          toast(res.sent.length ? `${V.plural(res.sent.length, "email")} ${res.mode === "smtp" ? "sent from your mailbox." : "handed to Outreach to send."}` : "Nothing was sent.", { error: !res.sent.length });
+          if (res.mode === "smtp") {
+            api("GET", "/api/growth/email-account").then((m) => { setMailInfo(o.mail, m); renderBuilder(); }).catch(() => {});
+          }
           if (res.sent.length) {
             // the buyers are now recorded as sent: show that in the Buyers table and refresh the campaign list
             state.campaigns.list = null;
@@ -864,6 +949,18 @@
       state.builder.outreach.personal = t.checked;
       return;
     }
+    if (d.field === "mail-provider") {
+      const mail = state.builder.outreach.mail;
+      const preset = ((mail.info && mail.info.presets) || []).find((x) => x.id === t.value);
+      mail.form.provider = t.value;
+      mail.form.password = ""; // the box is blank after the re-render, so the held value must be too
+      if (preset && t.value !== "custom") Object.assign(mail.form, { host: preset.host, port: preset.port, security: preset.security });
+      return renderBuilder();
+    }
+    if (d.field === "mail-security") {
+      state.builder.outreach.mail.form.security = t.value;
+      return;
+    }
     if (d.action === "target-include") return void run(() => patchTarget(Number(d.id), { included: t.checked }));
     if (d.field === "contact_email") return void run(() => patchQuietly({ contact_email: t.value.trim() }, Number(d.id)));
     if (d.field === "status") {
@@ -900,6 +997,11 @@
       return;
     }
     const field = t.dataset && t.dataset.field;
+    if (field && field.startsWith("mail-") && field !== "mail-provider") {
+      const mail = state.builder.outreach.mail;
+      if (mail.form) mail.form[field.slice(5)] = t.value; // no re-render: it would take focus from the box
+      return;
+    }
     if (field === "subject" || field === "body") {
       state.builder.draft[field] = t.value;
       state.builder.lastField = field;

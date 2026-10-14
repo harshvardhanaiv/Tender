@@ -41,8 +41,10 @@ from tender_app import growth_outreach as go
 from tender_app import growth_studio as gs
 from tender_app import market_radar as mr
 from tender_app import outreach_client as oc
+from tender_app import user_mailer as um
 from tender_app.config import (
     CREDIT_COST_GROWTH_DRAFT,
+    MAIL_CRED_KEY,
     OUTREACH_ALLOW_LIVE,
     OUTREACH_API_BASE,
     OUTREACH_API_KEY,
@@ -1056,7 +1058,7 @@ def growth_outreach_drafts(cid: int):
         stopped = None
         if client is not None:
             with conn.cursor() as cur:
-                for d in [d for d in drafts if d["outreach_id"]][: go.MAX_PER_PUSH]:
+                for d in [d for d in drafts if d["outreach_id"] and d["mode"] != "smtp"][: go.MAX_PER_PUSH]:
                     try:
                         summary = oc.campaign_summary(client.get_email_campaign(d["outreach_id"]))
                     except oc.OutreachError as exc:

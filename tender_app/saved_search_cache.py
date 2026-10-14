@@ -319,6 +319,16 @@ def get_cached_search_results(
         item["_is_new"] = is_new
         result_rows.append(item)
 
+    # Rows stored before value/procedure/published were scraped: fill them from the notice pages (time-boxed;
+    # the rest are filled on later views or by `python -m tender_app.bravo_backfill`).
+    try:
+        from tender_app.bravo_backfill import enrich_rows, persist_cache_rows
+        changed = enrich_rows(result_rows, budget=20.0, max_rows=15)
+        if changed:
+            persist_cache_rows(get_db_conn_fn, search_type, s_id, changed)
+    except Exception as e:
+        print(f"[{cache_tbl}] detail backfill skipped: {e}")
+
     iso_refreshed = ""
     if latest_refreshed:
         if isinstance(latest_refreshed, datetime):

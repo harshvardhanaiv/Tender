@@ -2118,3 +2118,15 @@ i.planning-pin__key { display: inline-block; width: 10px; height: 10px; border-r
   pointer-events: none;
 }
 @keyframes tf-refresh-bar { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+
+/* Masthead: "Bid on custom tender" label and the credits bolt/label in white */
+.tf-masthead .topbar-btn--cta,
+:root[data-theme="dark"] .tf-masthead .topbar-btn--cta,
+.tf-masthead .topbar-btn--credits,
+.tf-masthead .topbar-btn--credits svg,
+.tf-masthead .topbar-btn--credits .topbar-btn__credits-label,
+.tf-masthead .topbar-btn--credits:hover .topbar-btn__credits-label {
+  color: #fff !important;
+}
+.tf-masthead .topbar-btn--credits svg { stroke: #fff !important; }
+.tf-masthead .tf-brand__sub { color: #fff !important; opacity: 1 !important; }

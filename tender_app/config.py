@@ -142,6 +142,12 @@ OUTREACH_API_BASE = os.environ.get("OUTREACH_API_BASE", "https://api.outreach.ai
 OUTREACH_ALLOW_LIVE = os.environ.get("OUTREACH_ALLOW_LIVE", "0") == "1"
 OUTREACH_TIMEOUT_SECONDS = float(os.environ.get("OUTREACH_TIMEOUT_SECONDS", "15"))
 
+# Fernet key that encrypts users' own mailbox passwords (Growth Studio "Sender mailbox"). Generate one with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Without it, users cannot connect a mailbox and Growth Studio falls back to Outreach. Keep it secret and stable:
+# changing it makes every saved mailbox password unreadable.
+MAIL_CRED_KEY = os.environ.get("MAIL_CRED_KEY", "")
+
 # Background schedulers (deadline emails, award scraping); docker-compose.yml turns them off for local dev
 ENABLE_SCHEDULERS = os.environ.get("ENABLE_SCHEDULERS", "1") == "1"
 # The email digest scheduler alone, independent of ENABLE_SCHEDULERS -- lets local dev run

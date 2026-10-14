@@ -530,6 +530,28 @@ def create_growth_tables(cursor) -> None:
     )
     # body_hash: which message text this draft was made from, so an edited message is never sent under an old draft
     cursor.execute("ALTER TABLE growth_outreach_drafts ADD COLUMN IF NOT EXISTS body_hash VARCHAR(16)")
+    # The user's own sending mailbox (tender_app/user_mailer.py). password_enc is Fernet ciphertext, never returned.
+    # A send through it is recorded in growth_outreach_drafts with mode 'smtp' and outreach_id = the Message-ID.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_mail_accounts (
+            username     VARCHAR(255) PRIMARY KEY,
+            provider     VARCHAR(16) NOT NULL DEFAULT 'custom',
+            host         VARCHAR(253) NOT NULL,
+            port         INTEGER NOT NULL,
+            security     VARCHAR(10) NOT NULL,
+            login        VARCHAR(254) NOT NULL,
+            password_enc TEXT NOT NULL,
+            from_email   VARCHAR(254) NOT NULL,
+            from_name    VARCHAR(120),
+            reply_to     VARCHAR(254),
+            daily_cap    INTEGER NOT NULL DEFAULT 100,
+            verified_at  TIMESTAMP,
+            last_error   TEXT,
+            updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
 
 
 def run_saas_migrations(conn: Any) -> None:

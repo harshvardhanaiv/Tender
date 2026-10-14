@@ -181,7 +181,44 @@ def _finalize_bravo_rows(
         out.append(row)
         if max_results is not None and len(out) >= max_results:
             break
+    _fill_missing_from_details(out, site_root)
     return out
+
+
+_DETAIL_FILL_FIELDS = ("estimated_value_eur", "procedure", "date_published")
+_DETAIL_FILL_WORKERS = 8
+_DETAIL_FILL_MAX_ROWS = 60
+_DETAIL_FILL_BUDGET = 75.0
+
+
+def _fill_missing_from_details(rows: list[dict[str, Any]], site_root: str) -> None:
+    """List rows from Public Contracts Scotland carry no value, procedure or publication date; those only exist
+    on the notice page. Fetch the notice pages (small, in parallel, time-boxed) and fill the blanks."""
+    todo = [
+        r for r in rows
+        if r.get("resource_id") and any(not r.get(f) for f in ("estimated_value_eur", "procedure", "date_published"))
+    ][:_DETAIL_FILL_MAX_ROWS]
+    if not todo:
+        return
+
+    def one(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        return row, fetch_bravo_details(row.get("source") or "", row["resource_id"], site_root=site_root, timeout=40)
+
+    pool = ThreadPoolExecutor(max_workers=_DETAIL_FILL_WORKERS)
+    futures = [pool.submit(one, r) for r in todo]
+    try:
+        for fut in as_completed(futures, timeout=_DETAIL_FILL_BUDGET):
+            try:
+                row, det = fut.result()
+            except Exception:
+                continue
+            for f in _DETAIL_FILL_FIELDS:
+                if not row.get(f) and det.get(f):
+                    row[f] = det[f]
+    except Exception:
+        pass  # time budget hit: keep what was filled
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _pcs_collect_all_pages(
@@ -527,8 +564,32 @@ def _parse_search_view_links(soup: BeautifulSoup, site_root: str) -> list[dict[s
             "detail_url": urljoin(site_root, href),
         }
         if container:
-            _apply_label_text(row, container.get_text("\n", strip=True))
+            titled = container.select(".ns-item-title")
+            if titled:
+                # PCS layout: <span class="ns-item-title">Label:</span>value<br/>. An empty value (e.g. no
+                # deadline) must stay empty rather than swallow the next label.
+                for span in titled:
+                    key = _LABEL_MAP.get(span.get_text(" ", strip=True).rstrip(":").lower())
+                    if not key:
+                        continue
+                    parts: list[str] = []
+                    for sib in span.next_siblings:
+                        if getattr(sib, "name", None) == "br":
+                            break
+                        if getattr(sib, "name", None) == "span" and "ns-item-title" in (sib.get("class") or []):
+                            break
+                        parts.append(sib.get_text(" ", strip=True) if isinstance(sib, Tag) else str(sib).strip())
+                    row[key] = " ".join(p for p in parts if p).strip()
+            else:
+                _apply_label_text(row, container.get_text("\n", strip=True))
             row["_container_text"] = container.get_text("\n", strip=True)
+        # The first cell of a PCS result row is the publication date.
+        tr = link.find_parent("tr")
+        first_td = tr.find("td") if tr else None
+        if first_td and not row.get("date_published"):
+            m = re.search(r"\b\d{1,2}/\d{1,2}/\d{4}\b", first_td.get_text(" ", strip=True))
+            if m:
+                row["date_published"] = m.group(0)
         rows.append(row)
     return rows
 
@@ -669,12 +730,20 @@ def fetch_bravo_details(
     addr_sec = get_section(r"Contracting authority\s*\n", 1000)
 
     value = ""
-    val_m = re.search(r"Total value[^\n]*\n?([^\n]+)", full_text, re.I)
-    if val_m:
-        value = val_m.group(1).strip()
+    # PCS: "II.1.7) Total value of the procurement\nValue excluding VAT:\n398 555.00\nGBP"
+    pcs_val = re.search(
+        r"(?:Total value of the procurement|Estimated total value|Value of the (?:contract|lot))[^\n]*\n"
+        r"(?:Value[^\n]*:\s*\n)?([\d][\d\s.,]*)\n?([A-Z]{3})?",
+        full_text, re.I)
+    if pcs_val and re.search(r"\d", pcs_val.group(1)):
+        value = f"{pcs_val.group(1).strip()} {pcs_val.group(2) or ''}".strip()
+    if not value:
+        val_m = re.search(r"Total value[^\n]*\n?([^\n]+)", full_text, re.I)
+        if val_m and re.search(r"\d", val_m.group(1)):
+            value = val_m.group(1).strip()
     if not value:
         val_m2 = re.search(r"Estimated value[^\n]*\n?([^\n]+)", full_text, re.I)
-        if val_m2:
+        if val_m2 and re.search(r"\d", val_m2.group(1)):
             value = val_m2.group(1).strip()
     if not value:
         # PCS's "Quick Quote Award" notice template uses a distinct
@@ -708,7 +777,7 @@ def fetch_bravo_details(
         award_date = aw_m.group(1).strip()
 
     proc_type = ""
-    pt_m = re.search(r"Procedure type\s*\n?([^\n]+)", full_text, re.I)
+    pt_m = re.search(r"(?:Procedure type|Type of procedure)\s*\n?([^\n]+)", full_text, re.I)
     if pt_m:
         proc_type = pt_m.group(1).strip()
 

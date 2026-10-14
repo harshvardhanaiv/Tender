@@ -3637,7 +3637,7 @@ function renderSearchChips() {
       const displayQ = translateKeyword(s.q, state.lang);
       const sKey = _chipKey("saved", s.q);
       html += `<span class="search-chip search-chip--saved${_chipSelected(sKey) ? " search-chip--selected" : ""}" data-skey="${esc(sKey)}" data-kind="saved" data-id="${esc(s.id ?? "")}" data-q="${esc(s.q)}" data-scope="${esc(s.scope || "all")}" data-scope-label="${esc(scopeLabel)}">`
-        + `<button class="search-chip__select" data-select="1" aria-pressed="${_chipSelected(sKey)}" title="Select to search several together" aria-label="Select ${esc(displayQ)}">${_chipSelected(sKey) ? "✓" : "+"}</button>`
+        + `<button class="search-chip__select" data-select="1" aria-pressed="${_chipSelected(sKey)}" title="Add to this search" aria-label="Select ${esc(displayQ)}">${_chipSelected(sKey) ? "✓" : "+"}</button>`
         + `<span class="search-chip__text">${esc(displayQ)}</span>`
         + `<button class="search-chip__remove" data-remove="1" data-q="${esc(s.q)}" data-scope="${esc(s.scope || "all")}" title="Remove saved search" aria-label="Remove">×</button>`
         + `</span>`;
@@ -3676,7 +3676,7 @@ function renderSearchChips() {
         : "";
       const rKey = _chipKey("recent", r.q);
       html += `<span class="search-chip${_chipSelected(rKey) ? " search-chip--selected" : ""}" data-skey="${esc(rKey)}" data-kind="recent" data-id="${esc(r.id ?? "")}" data-q="${esc(r.q)}" data-scope="${esc(r.scope || "all")}">`
-        + `<button class="search-chip__select" data-select="1" aria-pressed="${_chipSelected(rKey)}" title="Select to search several together" aria-label="Select ${esc(displayQ)}">${_chipSelected(rKey) ? "✓" : "+"}</button>`
+        + `<button class="search-chip__select" data-select="1" aria-pressed="${_chipSelected(rKey)}" title="Add to this search" aria-label="Select ${esc(displayQ)}">${_chipSelected(rKey) ? "✓" : "+"}</button>`
         + `<span class="search-chip__text">${esc(displayQ)}</span>`
         + alertBtn
         + `<button class="search-chip__remove" data-remove-recent="1" data-q="${esc(r.q)}" data-scope="${esc(r.scope || "all")}" title="Remove recent search" aria-label="Remove">×</button>`
@@ -3712,7 +3712,91 @@ function renderSearchChips() {
 function _chipKey(kind, q) {
   return `${kind}:${String(q == null ? "" : q).trim().replace(/\s+/g, " ").toLowerCase()}`;
 }
-function _chipSelected(key) { return _chipSelection.has(key); }
+// Terms (comma separated) of what is in the search box right now.
+function _currentSearchTerms() {
+  const raw = ($("rmSearchInput")?.value || $("rmSearchKeywordInput")?.value || $("q")?.value || state.q || "").trim();
+  const q = parseKeywordQuery(raw, state.keywordScope || "all").query || "";
+  return String(q).split(/[,;]+/).map((t) => t.trim().replace(/\s+/g, " ")).filter(Boolean);
+}
+function _chipTerms(q) {
+  return String(q == null ? "" : q).split(/[,;]+/).map((t) => t.trim().replace(/\s+/g, " ")).filter(Boolean);
+}
+// A chip shows ticked when it was picked for "Search together", or when all its words are already in the search box.
+function _chipSelected(key) {
+  if (_chipSelection.has(key)) return true;
+  const terms = _chipTerms(String(key).slice(String(key).indexOf(":") + 1));
+  if (!terms.length) return false;
+  const cur = _currentSearchTerms().map((t) => t.toLowerCase());
+  return cur.length > 1 && terms.every((t) => cur.includes(t.toLowerCase()));
+}
+// "+" on a chip: add that word to what is on screen (or take it out again) using the results already stored for
+// the recent / saved search. No portal is searched.
+async function _addChipToSearch(chipEl) {
+  const cur = _currentSearchTerms();
+  const add = _chipTerms(chipEl.dataset.q);
+  if (!add.length) return false;
+  const lc = (x) => String(x).toLowerCase();
+  const has = (list, t) => list.some((x) => lc(x) === lc(t));
+  const allIn = add.every((t) => has(cur, t));
+  if (allIn && cur.length <= add.length) return false; // it is the only search already
+
+  const tag = (rows, terms) => (rows || []).map((r) => ({
+    ...r,
+    matched_terms: [...new Set([...(r.matched_terms || []), ...terms.map(lc)])],
+  }));
+  let next;
+  let rows;
+  if (allIn) {
+    // Take the word out: keep rows another remaining word found (rows with no record of why stay)
+    next = cur.filter((t) => !has(add, t));
+    const keep = new Set(next.map(lc));
+    rows = (state.rows || []).map((r) => ({ ...r })).filter((r) => {
+      const mt = (r.matched_terms || []).map(lc);
+      return !mt.length || mt.some((t) => keep.has(t));
+    });
+  } else {
+    next = [...cur, ...add.filter((t) => !has(cur, t))];
+    const chip = { q: chipEl.dataset.q, scope: chipEl.dataset.scope, id: chipEl.dataset.id, kind: chipEl.dataset.kind };
+    const { scope, countiesKey } = _searchCacheKeys();
+    const own = typeof SearchCache !== "undefined"
+      ? SearchCache.lookup(translateKeyword(chip.q, "en"), scope, countiesKey) : null;
+    setStatus("Adding from your stored results…");
+    const added = own ? own.rows.map((r) => ({ ...r })) : await _storedChipRows(chip);
+    if (!added.length) {
+      _showToast(`No stored results for "${chip.q}" yet. Open it once to store them.`);
+      setStatus("");
+      renderRows();
+      return true;
+    }
+    const lists = [tag(state.rows, cur), tag(added, add)];
+    const merged = typeof SearchCache !== "undefined" ? SearchCache.mergeRows(lists) : [...lists[0], ...lists[1]];
+    const termsByRow = new Map();
+    lists.forEach((l) => l.forEach((r) => {
+      const id = SearchCache.rowIdentity(r);
+      termsByRow.set(id, [...new Set([...(termsByRow.get(id) || []), ...r.matched_terms])]);
+    }));
+    merged.forEach((r) => { r.matched_terms = termsByRow.get(SearchCache.rowIdentity(r)); });
+    rows = merged;
+  }
+
+  if (_chipSelection.size) _chipSelection.clear();
+  _primeSearchInputsForChip(next.join(", "), undefined);
+  stopSearchPoll();
+  state.jobId = null;
+  state.activeKey = null;
+  state.rows = rows;
+  state.total = rows.length;
+  state.totalExact = true;
+  state.hasMore = false;
+  state.searchPhase = "complete";
+  state.currentPage = 1;
+  if (typeof updateStopButton === "function") updateStopButton();
+  setStatus(`Showing ${rows.length} results for ${next.join(", ")} from your recent and saved searches.`);
+  renderRows();
+  try { updateResultsTotal(); } catch (e) { /* non-critical */ }
+  renderSearchChips();
+  return true;
+}
 function _toggleChipSelection(key) {
   if (_chipSelection.has(key)) _chipSelection.delete(key);
   else _chipSelection.add(key);
@@ -3949,7 +4033,10 @@ function handleSearchChipsClick(e) {
   const selectBtn = e.target.closest("[data-select]");
   if (selectBtn) {
     e.stopPropagation();
-    const k = selectBtn.closest(".search-chip")?.dataset.skey;
+    const chipEl = selectBtn.closest(".search-chip");
+    // With a search already in the box, "+" adds this word to it straight away.
+    if (chipEl && !_chipSelection.size && _currentSearchTerms().length) { _addChipToSearch(chipEl); return; }
+    const k = chipEl?.dataset.skey;
     if (k) _toggleChipSelection(k);
     return;
   }
