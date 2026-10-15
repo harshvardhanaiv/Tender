@@ -25,6 +25,16 @@
     return out;
   }
 
+  // "Connect Outreach" / "Manage in Outreach": Outreach's own web app in a new tab (sign in or sign up, choose a plan,
+  // connect a mailbox). Only an https link from the server is used.
+  function connectHtml(info) {
+    const connected = !!info.configured;
+    const url = connected ? info.manage_url : info.connect_url;
+    if (typeof url !== "string" || !/^https:\/\//i.test(url)) return "";
+    return `<p class="eo-hint"><a class="eo-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${connected ? "Manage in Outreach" : "Connect Outreach"}</a>` +
+      (connected ? "" : ` &middot; sign in or sign up there, choose a plan and connect your mailbox, then reload this page.`) + `</p>`;
+  }
+
   function statusHtml(info) {
     if (!info) return `<p class="eo-hint">Checking Outreach…</p>`;
     if (!info.can_send) return `<p class="eo-hint">${esc(info.problem || "You do not have permission to send email through Outreach.")}</p>`;
@@ -32,6 +42,7 @@
     if (!info.ready) {
       return `<p class="eo-hint eo-hint--warn">${esc(info.problem || "Outreach is not available.")}</p>` +
         (info.hint ? `<p class="eo-hint">${esc(info.hint)}</p>` : "") +
+        connectHtml(info) +
         (hints ? `<ul class="eo-list">${hints}</ul>` : "");
     }
     const u = info.usage || {};
@@ -42,8 +53,11 @@
     const credits = w.credits != null ? ` · ${esc(w.credits)} credits` : "";
     const boxes = w.connected && typeof w.connected === "object" && !Array.isArray(w.connected) && w.connected.mailboxes != null
       ? ` · ${esc(w.connected.mailboxes)} mailbox${Number(w.connected.mailboxes) === 1 ? "" : "es"} connected` : "";
+    const named = (Array.isArray(w.mailboxes) ? w.mailboxes : []).filter((m) => m && m.email).map((m) => esc(m.email));
+    const from = named.length ? ` · sending from ${named.join(", ")}` : "";
     const today = u.daily_cap != null ? ` · ${esc(u.sent_today)} of ${esc(u.daily_cap)} single sends used today` : "";
-    return `<p class="eo-hint" id="eoReady">Connected. ${mode} Key ${esc(info.key_hint || "")}${credits}${boxes}${today}.</p>` +
+    return `<p class="eo-hint" id="eoReady">Connected. ${mode} Key ${esc(info.key_hint || "")}${credits}${boxes}${from}${today}.</p>` +
+      connectHtml(info) +
       (hints ? `<details class="eo-details"><summary>Before the first send</summary><ul class="eo-list">${hints}</ul></details>` : "");
   }
 

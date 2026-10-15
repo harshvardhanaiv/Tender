@@ -29,6 +29,9 @@ from tender_app.config import (
     OUTREACH_API_BASE,
     OUTREACH_API_KEY,
     OUTREACH_CAMPAIGN_MERGE_FIELDS,
+    OUTREACH_CONNECT_URL,
+    OUTREACH_MANAGE_URL,
+    OUTREACH_WEB_URL,
     OUTREACH_DAILY_SEND_CAP,
     OUTREACH_MAX_BATCH,
     OUTREACH_TIMEOUT_SECONDS,
@@ -129,7 +132,8 @@ def outreach_status():
         allowed = _can_send(conn, _username())
         out: dict[str, Any] = {"configured": bool(key), "can_send": allowed, "ready": False, "problem": _problem(),
                                "mode": None, "key_hint": None, "live_allowed": bool(OUTREACH_ALLOW_LIVE),
-                               "wallet": None, "usage": None, "setup_hints": SETUP_HINTS}
+                               "wallet": None, "usage": None, "setup_hints": SETUP_HINTS,
+                               **oc.web_links(OUTREACH_WEB_URL, OUTREACH_CONNECT_URL, OUTREACH_MANAGE_URL)}
         if not allowed:
             out["problem"] = "You do not have permission to send email through Outreach. Ask an administrator to allow it."
             return jsonify(out)

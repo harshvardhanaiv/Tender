@@ -48,7 +48,13 @@ from tender_app.config import (
     OUTREACH_ALLOW_LIVE,
     OUTREACH_API_BASE,
     OUTREACH_API_KEY,
+    OUTREACH_CAMPAIGN_MAILBOX_FIELD,
+    OUTREACH_CONNECT_URL,
+    OUTREACH_MAILBOX_IDS,
+    OUTREACH_MANAGE_URL,
+    OUTREACH_SEND_MAILBOX_FIELD,
     OUTREACH_TIMEOUT_SECONDS,
+    OUTREACH_WEB_URL,
     RATE_LIMIT_AI,
     RATE_LIMIT_SEARCH,
 )
@@ -1000,11 +1006,13 @@ def growth_outreach_status():
         "configured": bool(key), "mode": mode, "live_allowed": bool(OUTREACH_ALLOW_LIVE),
         "key_hint": oc.mask_key(key) if mode else None, "ready": False, "wallet": None,
         "problem": _outreach_problem(), "max_per_push": go.MAX_PER_PUSH,
+        **oc.web_links(OUTREACH_WEB_URL, OUTREACH_CONNECT_URL, OUTREACH_MANAGE_URL),
     }
     if out["problem"]:
         return jsonify(out)
     try:
         out["wallet"] = oc.wallet_summary(_outreach_client().wallets())
+        oc.apply_mailbox_ids(out["wallet"]["mailboxes"], oc.parse_mailbox_ids(OUTREACH_MAILBOX_IDS))
         out["ready"] = True
     except oc.OutreachError as exc:
         out["problem"] = exc.message
@@ -1041,7 +1049,7 @@ def _save_draft(cur, username: str, cid: int, target_id: int, *, outreach_id: st
 
 def _is_sent_through_outreach(d: dict[str, Any]) -> bool:
     """Approved in Outreach (by this route, or reported so by Outreach): it must never be approved again."""
-    return bool(d.get("outreach_id")) and str(d.get("approval") or "").lower() in ("approved", "auto_approved")
+    return bool(d.get("outreach_id")) and str(d.get("approval") or "").lower() in ("approved", "auto_approved", go.SENT_NOW)
 
 
 @growth_bp.get("/api/growth/campaigns/<int:cid>/outreach")
@@ -1055,11 +1063,21 @@ def growth_outreach_drafts(cid: int):
         _load_campaign(conn, username, cid)  # a campaign that is not theirs is a 404
         drafts = _draft_rows(conn, username, cid)
         details: dict[int, dict[str, Any]] = {}
+        seen: list[dict[str, Any]] = []
         stopped = None
         if client is not None:
             with conn.cursor() as cur:
                 for d in [d for d in drafts if d["outreach_id"] and d["mode"] != "smtp"][: go.MAX_PER_PUSH]:
                     try:
+                        if d["approval"] == go.SENT_NOW:
+                            # sent with /send: its id is a message, not a campaign; it can become replied or bounced
+                            msg = oc.message_summary(client.get_email_message(d["outreach_id"]))
+                            d.update(status=msg["status"] or d["status"], error=None)
+                            seen.append({"buyer": d["buyer"], "mailbox": msg["mailbox"], "mailbox_id": msg["mailbox_id"],
+                                         "fields": msg["fields"]})
+                            _save_draft(cur, username, cid, d["target_id"], outreach_id=d["outreach_id"], mode=d["mode"],
+                                        status=d["status"], approval=d["approval"], error=None, body_hash=d["body_hash"])
+                            continue
                         summary = oc.campaign_summary(client.get_email_campaign(d["outreach_id"]))
                     except oc.OutreachError as exc:
                         d["error"] = exc.message[:300]
@@ -1077,7 +1095,7 @@ def growth_outreach_drafts(cid: int):
             extra = details.get(d["target_id"]) or {}
             d["sent"], d["replies"] = extra.get("sent"), extra.get("replies")
             d.pop("body_hash", None)
-        return jsonify({"drafts": drafts, "refreshed": client is not None, "stopped": stopped})
+        return jsonify({"drafts": drafts, "refreshed": client is not None, "stopped": stopped, "messages": seen})
     finally:
         conn.close()
 
@@ -1095,7 +1113,23 @@ def growth_outreach_send(cid: int):
     if ids is not None and (not isinstance(ids, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids)):
         raise _Http("target_ids must be a list of whole numbers")
     allow_personal = _flag(body.get("allow_personal"))
+    mailbox_ref = body.get("mailbox")
+    if mailbox_ref is not None and (not isinstance(mailbox_ref, str) or len(mailbox_ref) > 254):
+        raise _Http("mailbox must be text")
     client = _outreach_client()
+    chosen = None
+    if (mailbox_ref or "").strip():
+        # only a mailbox Outreach itself reports as connected can be chosen, so nothing arbitrary is ever forwarded
+        try:
+            boxes = oc.apply_mailbox_ids(oc.wallet_summary(client.wallets())["mailboxes"],
+                                         oc.parse_mailbox_ids(OUTREACH_MAILBOX_IDS))
+        except oc.OutreachError as exc:
+            raise _Http(exc.message, 502)
+        chosen = go.find_mailbox(boxes, mailbox_ref)
+        if not chosen:
+            raise _Http("That mailbox is not connected in Outreach. Choose one from the list.", 400)
+        if chosen.get("can_send") is False:
+            raise _Http(f"{chosen['email']} cannot send yet. Finish its setup in Outreach (warm-up or connection test).", 400)
     username = _username()
     conn = _connect()
     try:
@@ -1110,26 +1144,80 @@ def growth_outreach_send(cid: int):
         if not plan["items"]:
             reasons = sorted({s["reason"] for s in plan["skipped"]})
             raise _Http("There is nobody to send: " + (" ".join(reasons) or "no buyers are in this campaign."), 400)
+        if chosen:
+            # the choice is part of what was sent: a campaign made earlier from the same text but under another
+            # mailbox is not reused, and a retry under a different mailbox is never answered from the first request
+            for it in plan["items"]:
+                it["hash"] = go.message_hash(it["subject"], it["text"] + "\n[mailbox:" + chosen["ref"] + "]")
+                it["payload"][OUTREACH_CAMPAIGN_MAILBOX_FIELD] = [chosen["ref"]]
+        warnings: list[str] = []
+
+        def choice_note(exc: "oc.OutreachError", field: str) -> str:
+            """When a refusal names the mailbox, say which value was sent for the chosen one, so a value Outreach
+            does not recognise (an address where it wants an id, or the other way round) is visible and not guessed."""
+            if not chosen or not (exc.setup_required or exc.status in (400, 404, 422)):
+                return ""
+            return (f" (You chose {chosen['email']}; it was sent to Outreach as {field} = {chosen['ref']}. "
+                    f"If \"Let Outreach choose\" sends, Outreach did not accept that value.)")
         by_id = {t["id"]: t for t in targets}
         sent: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
         stopped = None
         attempted = 0
+        single = go.use_single_send(plan["items"], records)
         with conn.cursor() as cur:
             for item in plan["items"]:
                 attempted += 1
                 tid = item["target_id"]
                 rec = records.get(tid) or {}
                 short = item["hash"][:8]
+                retry = go.retry_tag(rec)
                 oid = None
                 status = None
                 step = "create"
+                if single:
+                    # one email: send it now (no campaign, so no warm-up wait and no sending hours)
+                    step = "send"
+                    try:
+                        send_body = go.build_send_payload(item)
+                        if chosen:
+                            send_body[OUTREACH_SEND_MAILBOX_FIELD] = chosen["ref"]
+                        answer = oc.send_summary(client.send_email(
+                            send_body, go.idempotency_key(username, cid, tid, f"send-{short}{retry}")))
+                    except oc.OutreachError as exc:
+                        reason = exc.message + choice_note(exc, OUTREACH_SEND_MAILBOX_FIELD)
+                        if exc.daily_limit:
+                            reason = (exc.message + " Single emails are limited per day; try again tomorrow, or select "
+                                      "several buyers to send them as a campaign.")
+                        _save_draft(cur, username, cid, tid, outreach_id=None, mode=client.mode,
+                                    status="pending" if exc.code == "unreachable" else "failed",
+                                    approval=None, error=reason[:300], body_hash=item["hash"])
+                        failed.append({"target_id": tid, "buyer": item["buyer"], "step": step, "reason": reason})
+                        if exc.fatal:
+                            stopped = exc.message
+                        continue
+                    if answer["status"] != "sent":
+                        note = f"Outreach answered \"{answer['status'] or 'no status'}\", not \"sent\"."
+                        _save_draft(cur, username, cid, tid, outreach_id=None, mode=client.mode, status="not_sent",
+                                    approval=None, error=note, body_hash=item["hash"])
+                        failed.append({"target_id": tid, "buyer": item["buyer"], "step": step, "reason": note})
+                        continue
+                    _save_draft(cur, username, cid, tid, outreach_id=answer["id"], mode=client.mode, status="sent",
+                                approval=go.SENT_NOW, error=None, body_hash=item["hash"])
+                    _apply_status(cur, username, campaign, by_id[tid], "sent")
+                    sent.append({"target_id": tid, "buyer": item["buyer"], "outreach_id": answer["id"],
+                                 "status": "sent", "immediate": True, "from": answer.get("from")})
+                    if chosen and answer.get("from") and answer["from"].strip().lower() != chosen["email"].lower():
+                        # Outreach does not document choosing the mailbox; the answer names the one it really used
+                        warnings.append(f"You chose {chosen['email']}, but Outreach sent to {item['buyer']} from "
+                                        f"{answer['from']}. Outreach may not support choosing the mailbox from the API yet.")
+                    continue
                 try:
                     if rec.get("outreach_id") and rec.get("body_hash") == item["hash"]:
                         oid, status = rec["outreach_id"], rec.get("status")  # made earlier from this same text
                     else:
                         made = oc.campaign_summary(
-                            client.create_email_campaign(item["payload"], go.idempotency_key(username, cid, tid, short))
+                            client.create_email_campaign(item["payload"], go.idempotency_key(username, cid, tid, f"{short}{retry}"))
                         )
                         if not made["id"]:
                             raise oc.OutreachError("Outreach did not return a campaign id.", 502, "bad_response")
@@ -1138,7 +1226,7 @@ def growth_outreach_send(cid: int):
                                     approval=None, error=None, body_hash=item["hash"])
                     step = "approve"
                     decided = oc.campaign_summary(
-                        client.decide_email_campaign(oid, "approve", go.idempotency_key(username, cid, tid, f"approve-{short}"))
+                        client.decide_email_campaign(oid, "approve", go.idempotency_key(username, cid, tid, f"approve-{short}{retry}"))
                     )
                 except oc.OutreachError as exc:
                     if oid:  # made, not approved: kept so a retry approves this one
@@ -1147,7 +1235,8 @@ def growth_outreach_send(cid: int):
                     else:
                         _save_draft(cur, username, cid, tid, outreach_id=None, mode=client.mode, status="failed",
                                     approval=None, error=exc.message[:300], body_hash=item["hash"])
-                    failed.append({"target_id": tid, "buyer": item["buyer"], "step": step, "reason": exc.message})
+                    reason = exc.message + choice_note(exc, OUTREACH_CAMPAIGN_MAILBOX_FIELD)
+                    failed.append({"target_id": tid, "buyer": item["buyer"], "step": step, "reason": reason})
                     if exc.fatal:
                         stopped = exc.message
                         break
@@ -1164,6 +1253,8 @@ def growth_outreach_send(cid: int):
             d.pop("body_hash", None)
         return jsonify({
             "sent": sent, "failed": failed, "skipped": plan["skipped"], "stopped": stopped, "mode": client.mode,
+            "route": "single" if single else "campaign",
+            "mailbox": chosen["email"] if chosen else None, "warnings": warnings,
             "deferred": plan["deferred"] + (len(plan["items"]) - attempted), "drafts": drafts,
         })
     finally:

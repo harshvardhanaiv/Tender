@@ -141,6 +141,19 @@ OUTREACH_API_KEY = os.environ.get("OUTREACH_API_KEY", "")
 OUTREACH_API_BASE = os.environ.get("OUTREACH_API_BASE", "https://outreach.aivhub.com")
 OUTREACH_ALLOW_LIVE = os.environ.get("OUTREACH_ALLOW_LIVE", "0") == "1"
 OUTREACH_TIMEOUT_SECONDS = float(os.environ.get("OUTREACH_TIMEOUT_SECONDS", "15"))
+# Choosing which connected mailbox sends. Outreach's public API reference does not document a field for it yet, so
+# the request field names live here and can be changed without a code change once Outreach publishes them. A single
+# email (/v1/email/send) gets the value as a string, a campaign gets it as a one-item list.
+# Outreach's balance answer may list mailboxes by address only. If its sending field wants an id, give the ids here as
+# "address=id,address=id" (the id is shown on a sent email's record, see "Refresh status"). Blank = use what Outreach lists.
+OUTREACH_MAILBOX_IDS = os.environ.get("OUTREACH_MAILBOX_IDS", "")
+OUTREACH_SEND_MAILBOX_FIELD = os.environ.get("OUTREACH_SEND_MAILBOX_FIELD", "mailbox_id")
+OUTREACH_CAMPAIGN_MAILBOX_FIELD = os.environ.get("OUTREACH_CAMPAIGN_MAILBOX_FIELD", "mailbox_ids")
+# Where "Connect Outreach" / "Manage in Outreach" send the user (a web page, not the API): they sign in or sign up
+# there, choose a plan and connect a mailbox. Blank means the Outreach site root. Only https:// links are used.
+OUTREACH_WEB_URL = os.environ.get("OUTREACH_WEB_URL", "https://outreach.aivhub.com")
+OUTREACH_CONNECT_URL = os.environ.get("OUTREACH_CONNECT_URL", "")   # e.g. its sign-up / plans page
+OUTREACH_MANAGE_URL = os.environ.get("OUTREACH_MANAGE_URL", "")     # e.g. its Mailboxes page
 
 # Email through Outreach (tender_app/blueprints/email_bp.py, email_send.py): one recipient goes through the
 # immediate /v1/email/send (a company may send 25 of those a day), two or more with the same message through one

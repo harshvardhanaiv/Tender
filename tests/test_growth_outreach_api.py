@@ -84,10 +84,15 @@ class Outreach:
         self.calls = []
         self.handler = self.default
         self.ids = itertools.count()  # campaign ids cp_fake0000, cp_fake0001, ...; a test may restart it
+        self.msg_ids = itertools.count()  # one-off sends: msg_fake0000, ...
 
     def default(self, method, url, headers, data):
         if url.endswith("/v1/wallets"):
             return 200, {"credits": 40, "connected": {"mailboxes": 1}, "livemode": False}
+        if method == "POST" and url.endswith("/v1/email/send"):
+            return 200, {"id": f"msg_fake{next(self.msg_ids):04d}", "status": "sent", "to": json.loads(data)["to"], "from": "sales@sender.example"}
+        if method == "GET" and "/v1/email/messages/" in url:
+            return 200, {"id": url.rsplit("/", 1)[1], "status": "sent", "to": "x@example.test"}
         if method == "POST" and url.endswith("/v1/email/campaigns"):
             n = next(self.ids)
             return 200, {"id": f"cp_fake{n:04d}", "status": "needs_approval", "approval": "pending"}
@@ -105,6 +110,10 @@ class Outreach:
     def posts(self):
         """Requests that make an Outreach campaign."""
         return [c for c in self.calls if c["method"] == "POST" and c["url"].endswith("/v1/email/campaigns")]
+
+    def sends(self):
+        """Requests that send one email straight away (/v1/email/send)."""
+        return [c for c in self.calls if c["method"] == "POST" and c["url"].endswith("/v1/email/send")]
 
     def approvals(self):
         return [c for c in self.calls if c["method"] == "POST" and c["url"].endswith("/decision")]
@@ -125,6 +134,7 @@ def install(key=TEST_KEY, allow_live=False):
     FAKE.calls.clear()
     FAKE.handler = FAKE.default
     FAKE.ids = itertools.count()
+    FAKE.msg_ids = itertools.count()
     oc.OutreachClient = lambda k, base=None, timeout=15.0, **kw: real(k, base or "https://api.example.test", timeout=timeout, transport=FAKE.transport)
 
 
@@ -184,6 +194,23 @@ def test_status_not_connected():
     code, body, raw = call(client(USER_A), "get", "/api/growth/outreach/status")
     assert code == 200 and body["configured"] is False and body["ready"] is False and body["mode"] is None
     assert "OUTREACH_API_KEY" in body["problem"] and FAKE.calls == []
+
+
+def test_status_carries_the_links_to_connect_and_manage_in_outreach():
+    from tender_app.blueprints import growth_bp
+    install(key="")
+    code, body, _ = call(client(USER_A), "get", "/api/growth/outreach/status")
+    assert code == 200 and body["connect_url"].startswith("https://") and body["manage_url"].startswith("https://")
+    saved = (growth_bp.OUTREACH_CONNECT_URL, growth_bp.OUTREACH_MANAGE_URL)
+    try:
+        growth_bp.OUTREACH_CONNECT_URL = "https://outreach.example.test/signup"
+        growth_bp.OUTREACH_MANAGE_URL = "javascript:alert(1)"
+        code, body, raw = call(client(USER_A), "get", "/api/growth/outreach/status")
+        assert body["connect_url"] == "https://outreach.example.test/signup"
+        assert body["manage_url"].startswith("https://") and "javascript" not in raw
+    finally:
+        growth_bp.OUTREACH_CONNECT_URL, growth_bp.OUTREACH_MANAGE_URL = saved
+    assert FAKE.calls == []
 
 
 def test_status_bad_key_and_live_key_are_refused_without_a_call():
@@ -282,7 +309,8 @@ def test_a_message_that_cannot_go_is_refused_before_any_call():
 def test_a_campaign_made_but_not_approved_is_approved_on_retry_without_making_another():
     install()
     c = client(USER_A)
-    cid, _ = make_campaign(USER_A, targets=[("Alpha Borough Council", "procurement@alpha.example", "not_sent", True)])
+    cid, _ = make_campaign(USER_A, targets=[("Alpha Borough Council", "procurement@alpha.example", "not_sent", True),
+                                            ("Beta District Council", "contracts@beta.example", "not_sent", True)])
     state = {"approve": 0}
 
     def handler(method, url, headers, data):
@@ -296,21 +324,24 @@ def test_a_campaign_made_but_not_approved_is_approved_on_retry_without_making_an
     code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {})
     assert code == 200 and body["sent"] == [] and body["failed"][0]["step"] == "approve" and body["stopped"] == "This key is not allowed to do that."
     assert len(FAKE.posts()) == 1
-    assert target_statuses(c, cid) == {"Alpha Borough Council": "not_sent"}, "not approved, so not recorded as sent"
+    assert body["deferred"] == 1, "a fatal answer stops the batch and counts the buyer still to send"
+    assert target_statuses(c, cid) == {"Alpha Borough Council": "not_sent", "Beta District Council": "not_sent"}, "not approved, so not recorded as sent"
     d = body["drafts"][0]
     assert d["outreach_id"] == "cp_fake0000" and d["approval"] is None and d["error"] == "This key is not allowed to do that."
     # retry: the same message, so the same Outreach campaign is approved and no second one is made
     FAKE.calls.clear()
     code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {})
-    assert code == 200 and [x["buyer"] for x in body["sent"]] == ["Alpha Borough Council"]
-    assert FAKE.posts() == [] and len(FAKE.approvals()) == 1 and FAKE.approvals()[0]["url"].endswith("/cp_fake0000/decision")
-    assert target_statuses(c, cid) == {"Alpha Borough Council": "sent"}
+    assert code == 200 and [x["buyer"] for x in body["sent"]] == ["Alpha Borough Council", "Beta District Council"]
+    assert len(FAKE.posts()) == 1, "only the buyer with no campaign yet gets a new one"
+    assert len(FAKE.approvals()) == 2 and FAKE.approvals()[0]["url"].endswith("/cp_fake0000/decision")
+    assert target_statuses(c, cid) == {"Alpha Borough Council": "sent", "Beta District Council": "sent"}
 
 
 def test_an_edited_message_is_not_sent_under_the_old_campaign():
     install()
     c = client(USER_A)
-    cid, ids = make_campaign(USER_A, targets=[("Alpha Borough Council", "procurement@alpha.example", "not_sent", True)])
+    cid, ids = make_campaign(USER_A, targets=[("Alpha Borough Council", "procurement@alpha.example", "not_sent", True),
+                                              ("Beta District Council", "contracts@beta.example", "not_sent", True)])
     FAKE.handler = lambda m, u, h, d: (403, {"error": {"code": "missing_scope", "message": "no"}}) if u.endswith("/decision") else FAKE.default(m, u, h, d)
     assert call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {})[1]["failed"][0]["step"] == "approve"
     # the user edits the message, then sends again: a new campaign is made from the new text and that one is approved
@@ -325,9 +356,9 @@ def test_an_edited_message_is_not_sent_under_the_old_campaign():
     FAKE.calls.clear()
     FAKE.ids = itertools.count(100)
     code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {})
-    assert code == 200 and [x["outreach_id"] for x in body["sent"]] == ["cp_fake0100"], body
-    assert len(FAKE.posts()) == 1 and "Thank you for reading." in FAKE.posts()[0]["body"]["steps"][0]["body"]
-    assert len(FAKE.approvals()) == 1 and FAKE.approvals()[0]["url"].endswith("/cp_fake0100/decision"), "the old campaign is left unapproved"
+    assert code == 200 and [x["outreach_id"] for x in body["sent"]] == ["cp_fake0100", "cp_fake0101"], body
+    assert len(FAKE.posts()) == 2 and all("Thank you for reading." in p["body"]["steps"][0]["body"] for p in FAKE.posts())
+    assert len(FAKE.approvals()) == 2 and FAKE.approvals()[0]["url"].endswith("/cp_fake0100/decision"), "the old campaign is left unapproved"
 
 
 def test_not_connected_is_a_409_with_no_call():
@@ -371,7 +402,8 @@ def test_one_bad_buyer_does_not_stop_the_others_and_can_be_retried():
     FAKE.calls.clear()
     code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {})
     assert code == 200 and [x["buyer"] for x in body["sent"]] == ["Alpha Borough Council"]
-    assert len(FAKE.posts()) == 1 and len(FAKE.approvals()) == 1
+    # one email is left, so it goes straight out with /send instead of making another campaign
+    assert body["route"] == "single" and len(FAKE.sends()) == 1 and FAKE.posts() == [] and FAKE.approvals() == []
 
 
 def test_a_fatal_error_stops_and_counts_what_is_left():
@@ -460,6 +492,314 @@ def test_refresh_keeps_the_old_state_when_outreach_cannot_be_read():
     code, body, _ = call(c, "get", f"/api/growth/campaigns/{cid}/outreach?refresh=1")
     assert code == 200 and {d["status"] for d in body["drafts"]} == {"sending"} and {d["approval"] for d in body["drafts"]} == {"approved"}
     assert {d["error"] for d in body["drafts"]} == {"gone"}
+
+
+def test_one_buyer_is_sent_straight_away_without_a_campaign():
+    install()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    code, body, raw = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    assert code == 200, body
+    assert body["route"] == "single" and [x["buyer"] for x in body["sent"]] == ["Alpha Borough Council"]
+    assert body["sent"][0]["immediate"] is True and body["sent"][0]["status"] == "sent" and body["failed"] == []
+    # one request, to /send: no campaign was made and nothing was approved
+    assert len(FAKE.sends()) == 1 and FAKE.posts() == [] and FAKE.approvals() == []
+    req = FAKE.sends()[0]
+    assert req["body"]["to"] == "procurement@alpha.example" and req["body"]["company"] == "Alpha Borough Council"
+    assert req["body"]["subject"] and "Gas servicing" in req["body"]["body"] and "{{" not in req["body"]["body"] + req["body"]["subject"]
+    assert req["headers"]["Idempotency-Key"].startswith("tf-growth-") and TEST_KEY not in raw
+    assert target_statuses(c, cid)["Alpha Borough Council"] == "sent"
+    d = body["drafts"][0]
+    assert d["outreach_id"] == "msg_fake0000" and d["status"] == "sent" and d["approval"] == "sent_now" and "body_hash" not in d
+
+
+def test_one_email_left_after_skips_is_still_sent_straight_away():
+    install()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A, targets=[("Alpha Borough Council", "procurement@alpha.example", "not_sent", True),
+                                              ("Beta District Council", "contracts@beta.example", "not_sent", False),
+                                              ("Gamma NHS Trust", "", "not_sent", True)])
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {})
+    assert code == 200 and body["route"] == "single" and len(body["sent"]) == 1 and len(body["skipped"]) == 2
+    assert len(FAKE.sends()) == 1 and FAKE.posts() == []
+
+
+def test_several_buyers_still_go_as_campaigns_and_never_through_send():
+    install()
+    c = client(USER_A)
+    cid, _ = make_campaign(USER_A)
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {})
+    assert code == 200 and body["route"] == "campaign" and len(body["sent"]) == 2
+    assert FAKE.sends() == [] and len(FAKE.posts()) == 2 and len(FAKE.approvals()) == 2
+    assert all(not x.get("immediate") for x in body["sent"])
+
+
+def test_a_one_off_send_is_never_repeated():
+    install()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    assert call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})[0] == 200
+    FAKE.calls.clear()
+    assert call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})[0] == 400
+    # even after the user sets the buyer back to "not sent" by hand
+    assert call(c, "patch", f"/api/growth/campaigns/{cid}/targets/{ids[0]}", {"status": "not_sent"})[0] == 200
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    assert code == 400 and "Already sent through Outreach" in body["error"] and FAKE.calls == []
+
+
+def test_a_failed_one_off_send_is_not_recorded_and_can_be_retried():
+    install()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    FAKE.handler = lambda m, u, h, d: (422, {"error": {"code": "invalid_request", "message": "to was refused"}}) if u.endswith("/v1/email/send") else FAKE.default(m, u, h, d)
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    assert code == 200 and body["sent"] == [] and body["failed"][0]["reason"] == "to was refused" and body["failed"][0]["step"] == "send"
+    assert target_statuses(c, cid)["Alpha Borough Council"] == "not_sent"
+    assert body["drafts"][0]["status"] == "failed" and body["drafts"][0]["outreach_id"] is None
+    FAKE.handler = FAKE.default
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    assert code == 200 and len(body["sent"]) == 1 and target_statuses(c, cid)["Alpha Borough Council"] == "sent"
+
+
+def test_the_daily_limit_and_a_not_sent_answer_leave_the_buyer_unsent():
+    install()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    FAKE.handler = lambda m, u, h, d: (429, {"error": {"code": "daily_limit", "message": "Daily limit of 25 emails reached."}}) if u.endswith("/v1/email/send") else FAKE.default(m, u, h, d)
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    assert code == 200 and body["sent"] == [] and body["stopped"] and "Daily limit" in body["failed"][0]["reason"]
+    assert "several buyers" in body["failed"][0]["reason"]
+    assert target_statuses(c, cid)["Alpha Borough Council"] == "not_sent"
+    FAKE.handler = lambda m, u, h, d: (200, {"id": "msg_x", "status": "queued", "to": "a@b.c"}) if u.endswith("/v1/email/send") else FAKE.default(m, u, h, d)
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    assert body["sent"] == [] and 'not "sent"' in body["failed"][0]["reason"]
+    assert target_statuses(c, cid)["Alpha Borough Council"] == "not_sent"
+
+
+def test_refresh_reads_a_one_off_send_as_a_message_not_a_campaign():
+    install()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    FAKE.calls.clear()
+    FAKE.handler = lambda m, u, h, d: (200, {"id": u.rsplit("/", 1)[1], "status": "replied"}) if (m == "GET" and "/v1/email/messages/" in u) else FAKE.default(m, u, h, d)
+    code, body, _ = call(c, "get", f"/api/growth/campaigns/{cid}/outreach?refresh=1")
+    assert code == 200 and [x["url"].rsplit("/v1/", 1)[1] for x in FAKE.calls] == ["email/messages/msg_fake0000"]
+    assert body["drafts"][0]["status"] == "replied" and body["drafts"][0]["approval"] == "sent_now"
+
+
+def test_a_campaign_already_made_for_the_buyer_is_approved_not_sent_twice():
+    install()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    FAKE.handler = lambda m, u, h, d: (403, {"error": {"code": "missing_scope", "message": "no"}}) if u.endswith("/decision") else FAKE.default(m, u, h, d)
+    call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {})  # a campaign is made for the first buyer, approval refused
+    FAKE.handler = FAKE.default
+    FAKE.calls.clear()
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    # this buyer already has a campaign in Outreach: approving it is the only thing that sends it
+    assert code == 200 and body["route"] == "campaign" and FAKE.sends() == [] and FAKE.posts() == []
+    assert len(FAKE.approvals()) == 1 and FAKE.approvals()[0]["url"].endswith("/cp_fake0000/decision")
+
+
+MAILBOXES = [{"id": "mb_hello", "email": "hello@aivhub.com", "can_send": True},
+             {"id": "mb_harsh", "email": "harshvardhan@aivhub.com", "can_send": True},
+             {"id": "mb_cold", "email": "cold@aivhub.com", "can_send": False}]
+
+
+def two_mailboxes(send_from=None):
+    """A fake Outreach that reports three mailboxes; /send answers from `send_from` (default: the one asked for)."""
+    def handler(method, url, headers, data):
+        if method == "GET" and url.endswith("/v1/wallets"):
+            return 200, {"credits": 40, "connected": {"mailboxes": MAILBOXES}, "livemode": False}
+        if method == "POST" and url.endswith("/v1/email/send"):
+            req = json.loads(data)
+            by_id = {m["id"]: m["email"] for m in MAILBOXES}
+            frm = send_from or by_id.get(req.get("mailbox_id"), "hello@aivhub.com")
+            return 200, {"id": "msg_x1", "status": "sent", "to": req["to"], "from": frm}
+        return FAKE.default(method, url, headers, data)
+    FAKE.handler = handler
+
+
+def test_the_status_lists_the_connected_mailboxes_for_the_dropdown():
+    install()
+    two_mailboxes()
+    code, body, _ = call(client(USER_A), "get", "/api/growth/outreach/status")
+    assert code == 200 and body["ready"] is True
+    assert [m["email"] for m in body["wallet"]["mailboxes"]] == ["hello@aivhub.com", "harshvardhan@aivhub.com", "cold@aivhub.com"]
+    assert set(body["wallet"]["mailboxes"][0]) == {"id", "email", "can_send", "status", "fields"}
+
+
+def test_a_chosen_mailbox_is_sent_with_one_email_and_checked_against_the_answer():
+    install()
+    two_mailboxes()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]], "mailbox": "mb_harsh"})
+    assert code == 200 and body["route"] == "single" and len(body["sent"]) == 1, body
+    assert FAKE.sends()[0]["body"]["mailbox_id"] == "mb_harsh"
+    assert body["mailbox"] == "harshvardhan@aivhub.com" and body["warnings"] == []
+    assert body["sent"][0]["from"] == "harshvardhan@aivhub.com"
+
+
+def test_the_address_works_as_the_choice_too_and_is_matched_in_any_case():
+    install()
+    two_mailboxes()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]], "mailbox": "HELLO@aivhub.com"})
+    assert code == 200 and FAKE.sends()[0]["body"]["mailbox_id"] == "mb_hello"
+
+
+def test_several_buyers_get_the_chosen_mailbox_on_every_campaign():
+    install()
+    two_mailboxes()
+    c = client(USER_A)
+    cid, _ = make_campaign(USER_A)
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"mailbox": "mb_harsh"})
+    assert code == 200 and body["route"] == "campaign" and len(FAKE.posts()) == 2
+    assert all(p["body"]["mailbox_ids"] == ["mb_harsh"] for p in FAKE.posts())
+    assert FAKE.sends() == []
+
+
+def test_without_a_choice_no_mailbox_field_is_sent():
+    install()
+    two_mailboxes()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    assert code == 200 and "mailbox_id" not in FAKE.sends()[0]["body"] and body["mailbox"] is None
+    assert not any(c_["url"].endswith("/v1/wallets") for c_ in FAKE.calls), "no extra call when nothing was chosen"
+
+
+def test_a_mailbox_that_is_not_connected_or_cannot_send_is_refused_before_anything_is_sent():
+    install()
+    two_mailboxes()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"mailbox": "someone@else.example"})
+    assert code == 400 and "not connected in Outreach" in body["error"]
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"mailbox": "mb_cold"})
+    assert code == 400 and "cannot send yet" in body["error"]
+    assert call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"mailbox": 5})[0] == 400
+    assert FAKE.sends() == [] and FAKE.posts() == []
+    assert target_statuses(c, cid)["Alpha Borough Council"] == "not_sent"
+
+
+def test_a_send_that_left_from_another_mailbox_is_flagged():
+    install()
+    two_mailboxes(send_from="hello@aivhub.com")  # Outreach ignored the choice
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]], "mailbox": "mb_harsh"})
+    assert code == 200 and len(body["sent"]) == 1
+    assert len(body["warnings"]) == 1 and "harshvardhan@aivhub.com" in body["warnings"][0] and "hello@aivhub.com" in body["warnings"][0]
+
+
+def test_a_retry_under_another_mailbox_is_a_new_request_not_the_first_answer():
+    install()
+    two_mailboxes()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    two_mailboxes()
+    ok = FAKE.handler
+    state = {"n": 0}
+
+    def flaky(method, url, headers, data):
+        if method == "POST" and url.endswith("/v1/email/send"):
+            state["n"] += 1
+            if state["n"] == 1:
+                return 422, {"error": {"code": "invalid_request", "message": "no"}}
+        return ok(method, url, headers, data)
+    FAKE.handler = flaky
+    call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]], "mailbox": "mb_hello"})
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]], "mailbox": "mb_harsh"})
+    assert code == 200 and len(body["sent"]) == 1
+    keys = [s["headers"]["Idempotency-Key"] for s in FAKE.sends()]
+    assert len(keys) == 2 and keys[0] != keys[1], keys
+
+
+def test_a_retry_after_a_failed_send_gets_a_new_idempotency_key():
+    # same text, same mailbox: an Idempotency-Key replays the first answer, errors included, so a retry after a
+    # definite failure must not reuse it (this is the "still says no mailbox can send" case)
+    install()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    state = {"n": 0}
+
+    def handler(method, url, headers, data):
+        if method == "POST" and url.endswith("/v1/email/send"):
+            state["n"] += 1
+            if state["n"] == 1:
+                return 422, {"error": {"code": "invalid_request", "message": "No mailbox can send yet."}}
+            if headers.get("Idempotency-Key") == state.get("first"):
+                return 422, {"error": {"code": "invalid_request", "message": "No mailbox can send yet."}}  # replayed
+        return FAKE.default(method, url, headers, data)
+    FAKE.handler = handler
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    assert body["sent"] == [] and body["failed"][0]["reason"] == "No mailbox can send yet."
+    state["first"] = FAKE.sends()[0]["headers"]["Idempotency-Key"]
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    keys = [s["headers"]["Idempotency-Key"] for s in FAKE.sends()]
+    assert len(keys) == 2 and keys[0] != keys[1], keys
+    assert code == 200 and len(body["sent"]) == 1, body
+
+
+def test_a_retry_after_an_unreachable_answer_keeps_its_key_so_nobody_is_emailed_twice():
+    install()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    state = {"n": 0}
+
+    def handler(method, url, headers, data):
+        if method == "POST" and url.endswith("/v1/email/send"):
+            state["n"] += 1
+            if state["n"] == 1:
+                raise OSError("connection reset")  # the request may or may not have reached Outreach
+        return FAKE.default(method, url, headers, data)
+    FAKE.handler = handler
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    assert body["sent"] == [] and body["drafts"][0]["status"] == "pending"
+    call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    keys = [s["headers"]["Idempotency-Key"] for s in FAKE.sends()]
+    assert len(keys) == 2 and keys[0] == keys[1], keys
+
+
+def test_an_approve_that_was_refused_is_retried_under_a_new_key():
+    install()
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A, targets=[("Alpha Borough Council", "procurement@alpha.example", "not_sent", True),
+                                              ("Beta District Council", "contracts@beta.example", "not_sent", True)])
+    state = {"n": 0}
+
+    def handler(method, url, headers, data):
+        if method == "POST" and url.endswith("/decision"):
+            state["n"] += 1
+            if state["n"] == 1:
+                return 403, {"error": {"code": "missing_scope", "message": "no"}}
+        return FAKE.default(method, url, headers, data)
+    FAKE.handler = handler
+    call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {})
+    call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {})
+    keys = [a["headers"]["Idempotency-Key"] for a in FAKE.approvals()]
+    assert keys[0] != keys[1], keys
+
+
+def test_a_refusal_after_a_choice_says_what_was_sent_for_the_mailbox():
+    install()
+    two_mailboxes()
+    refuse = lambda m, u, h, d: (422, {"error": {"code": "no_mailbox", "message": "No mailbox can send yet. Connect one under Mailboxes."}})         if u.endswith("/v1/email/send") else None
+    base = FAKE.handler
+    FAKE.handler = lambda m, u, h, d: refuse(m, u, h, d) or base(m, u, h, d)
+    c = client(USER_A)
+    cid, ids = make_campaign(USER_A)
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]], "mailbox": "mb_harsh"})
+    reason = body["failed"][0]["reason"]
+    assert "No mailbox can send yet" in reason and "mailbox_id = mb_harsh" in reason and "Let Outreach choose" in reason, reason
+    assert "mailbox_id = mb_harsh" in body["drafts"][0]["error"], "the note is kept with the buyer so the panel shows it"
+    # nothing chosen: Outreach's own text only
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    assert body["failed"][0]["reason"] == "No mailbox can send yet. Connect one under Mailboxes."
 
 
 def test_another_user_gets_404_and_no_call():

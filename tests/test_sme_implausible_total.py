@@ -121,6 +121,15 @@ def test_a_small_flagged_sme_stays_an_sme_in_both():
     assert profile_status(c, "small") == "SME"
 
 
+def setup_module(module=None):
+    cleanup()
+    make_fixtures()
+
+
+def teardown_module(module=None):
+    cleanup()
+
+
 def main():
     cleanup()
     make_fixtures()

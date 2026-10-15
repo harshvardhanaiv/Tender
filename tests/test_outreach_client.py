@@ -178,7 +178,12 @@ def test_campaign_summary_is_tolerant():
 
 def test_wallet_summary():
     w = oc.wallet_summary({"credits": 42, "connected": {"mailboxes": 1}, "livemode": False})
-    assert w == {"credits": 42, "connected": {"mailboxes": 1}, "livemode": False}
+    assert w == {"credits": 42, "connected": {"mailboxes": 1}, "mailboxes": [], "livemode": False}
+    # whatever else the answer carries is not passed on to the browser, only counts and flags
+    w = oc.wallet_summary({"credits": 1, "connected": {"mailboxes": [{"email": "a@x.test", "token": "sk-secret"}],
+                           "social": {"linkedin": {"access_token": "tok-secret"}}, "phone": True, "note": "tok-secret"}})
+    assert w["connected"] == {"mailboxes": 1, "social": 1, "phone": True}, w["connected"]
+    assert "secret" not in str(w)
     assert oc.wallet_summary({"balance": 3})["credits"] == 3
     assert oc.wallet_summary({})["credits"] is None
 
@@ -250,7 +255,8 @@ def test_message_lookups_build_safe_urls():
     url = f.calls[0]["url"]
     assert f.calls[0]["method"] == "GET" and url.startswith("https://api.example.test/v1/email/messages?")
     assert "campaign_id=cp_1" in url and "status=sent" in url and "q=a+b%26c" in url
-    assert oc.message_list(out) == [{"id": "m1", "to": "a@x.co.uk", "status": "replied", "reason": None}]
+    listed = oc.message_list(out)
+    assert [{k: m[k] for k in ("id", "to", "status", "reason")} for m in listed] == [{"id": "m1", "to": "a@x.co.uk", "status": "replied", "reason": None}]
     raises(lambda: client(Fake()).list_email_messages(campaign_id="../x"), 400, "invalid_request")
     g = Fake(200, {"id": "m9", "status": "bounced", "bounce_reason": "mailbox full"})
     assert oc.message_summary(client(g).get_email_message("msg_9"))["reason"] == "mailbox full"
@@ -266,6 +272,54 @@ def test_scrub_masks_keys_anywhere_in_text():
     assert KEY not in exc.message and KEY not in str(exc)
     echo = raises(lambda: client(Fake(401, {"error": {"message": f"key {KEY} unknown"}})).wallets(), 401)
     assert KEY not in echo.message
+
+
+def test_wallet_summary_reads_the_connected_mailboxes_in_any_of_the_likely_shapes():
+    one = oc.wallet_summary({"credits": 5, "connected": {"mailboxes": [{"id": "mb_1", "email": "hello@aivhub.com", "can_send": True,
+                             "status": "warming", "smtp_password": "never-copied", "access_token": "never-copied"}]}})
+    box = dict(one["mailboxes"][0])
+    # only field NAMES are reported (a missing id is then diagnosable); no value other than the four is copied
+    assert box.pop("fields") == ["access_token", "can_send", "email", "id", "smtp_password", "status"]
+    assert box == {"id": "mb_1", "email": "hello@aivhub.com", "can_send": True, "status": "warming"}
+    # an id may arrive as mailbox_id; an address in the id slot is not an id
+    assert oc.wallet_summary({"mailboxes": [{"mailbox_id": "mb_9", "email": "z@x.test"}]})["mailboxes"][0]["id"] == "mb_9"
+    assert oc.wallet_summary({"mailboxes": [{"id": "z@x.test", "email": "z@x.test"}]})["mailboxes"][0]["id"] is None
+    assert "never-copied" not in str(one)
+    assert oc.wallet_summary({"connected": {"mailboxes": ["a@x.test", "not an address"]}})["mailboxes"] == [
+        {"id": None, "email": "a@x.test", "can_send": None, "status": None, "fields": []}]
+    assert oc.wallet_summary({"mailboxes": [{"address": "b@x.test", "can_send": False}]})["mailboxes"][0]["can_send"] is False
+    assert oc.wallet_summary({"connected": {"mailboxes": {"email": "c@x.test"}}})["mailboxes"][0]["email"] == "c@x.test"
+    # a bare count, nothing, or junk gives no list and never raises
+    for raw in ({"connected": {"mailboxes": 1}}, {}, {"connected": "yes"}, {"mailboxes": [1, None, {"x": 1}]}):
+        assert oc.wallet_summary(raw)["mailboxes"] == []
+    assert len(oc.wallet_summary({"mailboxes": [f"u{i}@x.test" for i in range(50)]})["mailboxes"]) == 20
+
+
+def test_mailbox_ids_can_be_given_by_configuration_and_a_sent_message_reports_its_mailbox():
+    assert oc.parse_mailbox_ids("Hello@AIVHub.com=mb_1, harsh@aivhub.com=2f9c-aa;bad=;=x;noat=zz;ok@x.test=a b") == {
+        "hello@aivhub.com": "mb_1", "harsh@aivhub.com": "2f9c-aa"}
+    assert oc.parse_mailbox_ids(None) == {} and oc.parse_mailbox_ids("") == {}
+    boxes = [{"id": None, "email": "Hello@aivhub.com"}, {"id": "keep", "email": "harsh@aivhub.com"}]
+    oc.apply_mailbox_ids(boxes, {"hello@aivhub.com": "mb_1", "harsh@aivhub.com": "other"})
+    assert [b["id"] for b in boxes] == ["mb_1", "keep"], "a listed id is never overwritten"
+    m = oc.message_summary({"id": "m1", "to": "x@y.z", "status": "sent", "mailbox": "harsh@aivhub.com", "mailbox_id": "mb_7",
+                            "body": "hi", "token": "t"})
+    assert m["mailbox"] == "harsh@aivhub.com" and m["mailbox_id"] == "mb_7" and "body" in m["fields"]
+    assert oc.message_summary({"id": "m2", "mailbox": "no address here"})["mailbox"] is None
+
+
+def test_web_links_use_only_plain_https_and_fall_back_to_the_site():
+    root = "https://outreach.aivhub.com"
+    assert oc.web_links(root) == {"connect_url": root, "manage_url": root}
+    got = oc.web_links(root, "https://outreach.aivhub.com/signup?plan=pro", "https://outreach.aivhub.com/mailboxes")
+    assert got == {"connect_url": "https://outreach.aivhub.com/signup?plan=pro", "manage_url": "https://outreach.aivhub.com/mailboxes"}
+    # anything that is not a clean https link is dropped, never passed on to the page
+    for bad in ("http://outreach.aivhub.com", "javascript:alert(1)", "//evil.example", "https://", "https://u:p@evil.example/",
+                "https://x.example/a b", 'https://x.example/"onmouseover=1', "https://x.example/<script>", "ftp://x.example", None, ""):
+        out = oc.web_links(root, bad, bad)
+        assert out == {"connect_url": root, "manage_url": root}, (bad, out)
+    # a bad site root falls back to the product's own host
+    assert oc.web_links("http://nope", None, None)["connect_url"] == "https://outreach.aivhub.com"
 
 
 if __name__ == "__main__":

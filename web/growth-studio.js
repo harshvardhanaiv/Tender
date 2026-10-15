@@ -490,6 +490,13 @@
       if (state.builder.outreach !== o) return; // another campaign was opened meanwhile
       if (mail) setMailInfo(o.mail, mail);
       o.info = info;
+      if (o.mailbox == null) {
+        // the last mailbox chosen on this browser, if Outreach still lists it and it can send
+        let saved = "";
+        try { saved = localStorage.getItem("tf_outreach_mailbox") || ""; } catch (e) { saved = ""; }
+        const list = (info.wallet && info.wallet.mailboxes) || [];
+        o.mailbox = list.some((m) => String(m.id || m.email) === saved && m.can_send !== false) ? saved : "";
+      }
       o.drafts = drafts.drafts;
       o.status = "ok";
       o.error = null;
@@ -840,12 +847,13 @@
         const o = b.outreach;
         const n = b.detail ? b.detail.eligible : 0;
         const acct = o.mail && o.mail.info && o.mail.info.account;
-        const via = acct && acct.verified ? `from ${acct.from_email}` : "from your connected Outreach mailbox";
+        const picked = o.mailbox && o.info && o.info.wallet && (o.info.wallet.mailboxes || []).find((m) => String(m.id || m.email) === o.mailbox);
+        const via = acct && acct.verified ? `from ${acct.from_email}` : picked ? `from ${picked.email}` : "from your connected Outreach mailbox";
         if (!(await confirmDialog(`Send this email now to up to ${V.plural(n, "buyer")}, ${via}? Real emails will go out and this cannot be undone.`))) return;
         o.pushing = true;
         renderBuilder();
         try {
-          const res = await api("POST", `/api/growth/campaigns/${b.id}/outreach`, { allow_personal: !!o.personal });
+          const res = await api("POST", `/api/growth/campaigns/${b.id}/outreach`, { allow_personal: !!o.personal, mailbox: o.mailbox || undefined });
           o.last = res;
           o.drafts = res.drafts;
           toast(res.sent.length ? `${V.plural(res.sent.length, "email")} ${res.mode === "smtp" ? "sent from your mailbox." : "handed to Outreach to send."}` : "Nothing was sent.", { error: !res.sent.length });
@@ -862,6 +870,14 @@
           renderBuilder();
         }
       }),
+    "outreach-check": () =>
+      run(async () => {
+        const o = state.builder.outreach;
+        o.status = "idle"; // read the connection and the drafts again
+        await loadOutreach(true);
+        const info = o.info || {};
+        toast(info.ready ? "Outreach is connected." : info.problem || "Outreach is not connected yet.", { error: !info.ready });
+      }),
     "outreach-refresh": () =>
       run(async () => {
         const o = state.builder.outreach;
@@ -870,6 +886,7 @@
         try {
           const res = await api("GET", `/api/growth/campaigns/${state.builder.id}/outreach?refresh=1`);
           o.drafts = res.drafts;
+          o.seen = res.messages || [];
           if (res.stopped) toast(res.stopped, { error: true });
         } finally {
           o.refreshing = false;
@@ -947,6 +964,11 @@
     }
     if (d.field === "outreach-personal") {
       state.builder.outreach.personal = t.checked;
+      return;
+    }
+    if (d.field === "outreach-mailbox") {
+      state.builder.outreach.mailbox = t.value;
+      try { localStorage.setItem("tf_outreach_mailbox", t.value); } catch (e) { /* a remembered choice is only a convenience */ }
       return;
     }
     if (d.field === "mail-provider") {

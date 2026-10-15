@@ -106,7 +106,7 @@ test("the page file never holds a key and the panel only reads a masked hint", (
   assert.ok(!/OUTREACH_API_KEY/.test(src));
   const html = fs.readFileSync(path.join(__dirname, "..", "web", "index.html"), "utf8");
   assert.match(html, /id="emailOutreachSection"[^>]*display:none/);
-  assert.match(html, /src="\/email-outreach\.js\?v=1"/);
+  assert.match(html, /src="\/email-outreach\.js\?v=\d+"/);
 });
 
 let failures = 0;

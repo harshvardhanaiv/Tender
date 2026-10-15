@@ -545,11 +545,12 @@
 
   // ── Send mail through Outreach (one email campaign per buyer, made and approved so Outreach sends it) ──
   function outreachDraftRow(d) {
-    const sentOut = d.outreach_id && String(d.approval || "").toLowerCase() === "approved";
+    const approval = String(d.approval || "").toLowerCase();
+    const sentOut = d.outreach_id && (approval === "approved" || approval === "sent_now");
     const state = !d.outreach_id ? badge("Not sent", "warn") : sentOut ? badge(esc(d.status || "Sent"), "good") : badge("Made, not sent", "warn");
     return (
       `<tr><td>${esc(d.buyer)}</td><td><code>${esc(d.outreach_id || "")}</code></td><td>${state}</td>` +
-      `<td>${esc(d.approval || "–")}</td><td class="gs-num">${d.sent == null ? "–" : esc(d.sent)}</td>` +
+      `<td>${esc(approval === "sent_now" ? "Sent at once" : d.approval || "–")}</td><td class="gs-num">${d.sent == null ? "–" : esc(d.sent)}</td>` +
       `<td class="gs-num">${d.replies == null ? "–" : esc(d.replies)}</td></tr>` +
       (d.error ? `<tr><td colspan="6" class="gs-hint gs-hint--warn">${esc(d.error)}</td></tr>` : "")
     );
@@ -558,13 +559,82 @@
   function outreachResult(r) {
     if (!r) return "";
     const lines = [];
-    if (r.sent && r.sent.length) lines.push(`<li>${esc(plural(r.sent.length, "email"))} handed to Outreach to send (${r.mode === "live" ? "live" : "test"} mode).</li>`);
+    if (r.sent && r.sent.length) {
+      const m = r.mode === "live" ? "live" : "test";
+      lines.push(r.route === "single"
+        ? `<li>1 email sent now through Outreach (${m} mode)${r.sent[0].from ? ` from <strong>${esc(r.sent[0].from)}</strong>` : ""}. A single email goes out straight away.</li>`
+        : `<li>${esc(plural(r.sent.length, "email"))} handed to Outreach to send (${m} mode). Campaigns send inside Outreach's sending hours, so they can take a while.</li>`);
+    }
     // the reason for each failure is shown against its buyer in the table below, so it is not repeated here
     if (r.failed && r.failed.length) lines.push(`<li>${esc(plural(r.failed.length, "email"))} could not be sent. The reason is shown against ${r.failed.length === 1 ? "the buyer" : "each buyer"} below.</li>`);
+    (r.warnings || []).forEach((w) => lines.push(`<li class="gs-hint gs-hint--warn">${esc(w)}</li>`));
     if (r.stopped && !(r.failed || []).some((f) => f.reason === r.stopped)) lines.push(`<li>Stopped: ${esc(r.stopped)}</li>`);
     if (r.deferred) lines.push(`<li>${esc(plural(r.deferred, "buyer"))} still to send. Choose Send mail again.</li>`);
     (r.skipped || []).forEach((s) => lines.push(`<li class="gs-hint">${esc(s.buyer)} was left out: ${esc(s.reason)}</li>`));
     return lines.length ? `<ul class="gs-warnings gs-outreach__result">${lines.join("")}</ul>` : "";
+  }
+
+  // Where "Connect Outreach" / "Manage in Outreach" go: Outreach's own web app, in a new tab, so the user signs in or
+  // signs up there, chooses a plan and connects a mailbox. Only an https link from the server is ever used.
+  function outreachConnectBox(info) {
+    const pick = (u) => (typeof u === "string" && /^https:\/\//i.test(u) ? u : "");
+    const connected = !!info.configured;
+    const url = pick(connected ? info.manage_url : info.connect_url);
+    if (!url) return "";
+    return (
+      `<div class="gs-actions gs-outreach__connect">` +
+      `<a class="gs-btn gs-btn--sm${connected ? "" : " gs-btn--primary"}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" data-outreach-link="${connected ? "manage" : "connect"}">${connected ? "Manage in Outreach" : "Connect Outreach"}</a>` +
+      `<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-check">I have connected, check again</button>` +
+      `</div>` +
+      (connected
+        ? ""
+        : `<p class="gs-hint">Outreach opens in a new tab. Sign in or sign up there, choose a plan and connect your mailbox, then come back and check again. TenderFlow sends from the mailbox you connect.</p>`)
+    );
+  }
+
+  // "Sending from a@b.example": the mailbox(es) Outreach says are connected (read from its balance answer).
+  function outreachMailboxLine(wallet) {
+    const boxes = (wallet && Array.isArray(wallet.mailboxes) ? wallet.mailboxes : []).filter((m) => m && m.email);
+    if (!boxes.length) return "";
+    const names = boxes.map((m) => esc(m.email)).join(", ");
+    const blocked = boxes.filter((m) => m.can_send === false);
+    return (
+      ` Sending from <strong>${names}</strong>.` +
+      (blocked.length
+        ? ` <span class="gs-hint--warn">${esc(blocked.map((m) => m.email).join(", "))} cannot send yet. Finish its setup in Outreach (warm-up or connection test).</span>`
+        : "") +
+      (boxes.length > 1 ? ` Pick one below, or let Outreach choose.` : "")
+    );
+  }
+
+  // "Send from" when more than one mailbox is connected: the chosen one is posted with Send mail.
+  function outreachMailboxPicker(wallet, selected, disabled) {
+    const boxes = (wallet && Array.isArray(wallet.mailboxes) ? wallet.mailboxes : []).filter((m) => m && m.email);
+    if (boxes.length < 2) return "";
+    const ref = (m) => (m.id ? String(m.id) : String(m.email));
+    const opts = boxes.map((m) =>
+      `<option value="${esc(ref(m))}"${ref(m) === selected ? " selected" : ""}${m.can_send === false ? " disabled" : ""}>${esc(m.email)}${m.can_send === false ? " (cannot send yet)" : ""}</option>`
+    );
+    return (
+      `<label class="gs-inline gs-outreach__from">Send from ` +
+      `<select data-field="outreach-mailbox"${disabled ? " disabled" : ""}>` +
+      `<option value=""${selected ? "" : " selected"}>Let Outreach choose</option>${opts.join("")}</select></label>`
+    );
+  }
+
+  // What Outreach's own record of a sent email says about the mailbox (read by Refresh status): the id to use for
+  // choosing that mailbox, or the field names it does report when there is none.
+  function outreachSeenNote(seen) {
+    const items = (Array.isArray(seen) ? seen : []).filter((s) => s && (s.mailbox || s.mailbox_id || (s.fields || []).length));
+    if (!items.length) return "";
+    return (
+      `<ul class="gs-warnings gs-outreach__seen">` +
+      items.map((s) => s.mailbox_id
+        ? `<li>Outreach says the email to ${esc(s.buyer)} went from <strong>${esc(s.mailbox || "a mailbox")}</strong>, mailbox id <code>${esc(s.mailbox_id)}</code>.</li>`
+        : `<li class="gs-hint">The email to ${esc(s.buyer)} went from <strong>${esc(s.mailbox || "a mailbox")}</strong>. Outreach's record has no mailbox id (fields: ${esc((s.fields || []).join(", ") || "none")}).</li>`
+      ).join("") +
+      `</ul>`
+    );
   }
 
   function outreachPanel(o, eligible, dirty, noEmail) {
@@ -580,7 +650,7 @@
     if (!info.ready) {
       return (
         head +
-        `<div id="gsOutreach"><p class="gs-hint gs-hint--warn">${esc(info.problem || o.error || "Outreach is not available.")}</p>${table}</div>`
+        `<div id="gsOutreach"><p class="gs-hint gs-hint--warn">${esc(info.problem || o.error || "Outreach is not available.")}</p>${outreachConnectBox(info)}${table}</div>`
       );
     }
     const mode = info.mode === "live" ? badge("Live key", "warn") : badge("Test mode", "good");
@@ -589,15 +659,17 @@
     const canPush = eligible > 0 && !dirty && !o.pushing;
     return (
       head +
-      `<div id="gsOutreach"><p class="gs-hint">${mode} Connected${credits}. ` +
+      `<div id="gsOutreach"><p class="gs-hint">${mode} Connected${credits}.${outreachMailboxLine(info.wallet)} ` +
       (info.mode === "live"
-        ? "Live key: Send mail emails the buyers from your connected Outreach mailbox."
+        ? "Live key: Send mail emails the buyers from your connected Outreach mailbox. One buyer is sent straight away; several are sent as a campaign inside Outreach's sending hours."
         : "Test key: Outreach pretends everything, charges nothing and sends nothing real.") +
       `</p>` +
+      outreachMailboxPicker(info.wallet, o.mailbox || "", o.pushing) +
       `<label class="gs-inline"><input type="checkbox" data-field="outreach-personal"${o.personal ? " checked" : ""}> Include addresses that look like a named person's</label>` +
       `<div class="gs-actions"><button type="button" class="gs-btn gs-btn--primary gs-btn--sm" data-action="outreach-send"${canPush ? "" : " disabled"}>${o.pushing ? "Sending…" : "Send mail"}</button>` +
       `<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-refresh"${drafts.some((d) => d.outreach_id) && !o.refreshing ? "" : " disabled"}>${o.refreshing ? "Checking…" : "Refresh status"}</button>` +
       `</div>` +
+      outreachConnectBox(info) +
       (dirty ? `<p class="gs-hint gs-hint--warn">Save the message first: the saved message is what gets sent.</p>` : "") +
       (noEmail
         ? `<p class="gs-hint gs-hint--warn">${esc(plural(noEmail, "buyer"))} ${noEmail === 1 ? "has" : "have"} no email address yet and will be left out. ` +
@@ -605,6 +677,7 @@
         : "") +
       `<p class="gs-hint">Each buyer gets their own email, filled in for them and sent from your connected Outreach mailbox (up to ${esc(cap)} at a time). A buyer is never emailed twice, and Outreach's daily limits and warm-up decide when each one actually goes.</p>` +
       outreachResult(o.last) +
+      outreachSeenNote(o.seen) +
       table +
       `</div>`
     );
@@ -675,7 +748,7 @@
     esc, safeUrl, fmtDate, fmtMoney, fmtMoneyShort, plural, inDays, parseServerTime, timeAgo, fitBand, filenameFromDisposition, insertAt,
     hasCategory, defaultFilters, filtersBody, signalsQuery, campaignKeys,
     signalCard, signalsPane, selectionBar, campaignsPane, builderPane, previewHtml, warningsHtml, mailchimpBox, targetRow, mergeChips, performancePane,
-    outreachPanel, outreachDraftRow, outreachResult,
+    outreachPanel, outreachConnectBox, outreachMailboxLine, outreachMailboxPicker, outreachSeenNote, outreachDraftRow, outreachResult,
     suppressionsBlock, fitParts, funnelBars, countsLine, TYPES, TARGET_STATUS, CAMPAIGN_STATUS,
   };
   root.GrowthView = api;

@@ -146,6 +146,98 @@ test("the builder shows the Send mail panel and the note says what sending does"
   assert.ok(!/TenderFlow itself sends nothing/.test(html), "the old claim is gone");
 });
 
+test("not connected: a Connect Outreach button opens Outreach in a new tab and says what to do there", () => {
+  const html = panel({ info: { ready: false, configured: false, problem: "Outreach is not connected.", connect_url: "https://outreach.aivhub.com/", manage_url: "https://outreach.aivhub.com/" } });
+  const link = (html.match(/<a [^>]*data-outreach-link="connect"[^>]*>[^<]*<\/a>/) || [])[0] || "";
+  assert.match(link, /href="https:\/\/outreach\.aivhub\.com\/"/);
+  assert.match(link, /target="_blank"/);
+  assert.match(link, /rel="noopener noreferrer"/);
+  assert.match(link, />Connect Outreach</);
+  assert.match(html, /sign in or sign up there, choose a plan and connect your mailbox/i);
+  assert.match(button(html, "outreach-check"), /data-action="outreach-check"/);
+  assert.ok(!html.includes('data-action="outreach-send"'), "nothing can be sent until it is connected");
+});
+
+test("connected: the same place is offered as Manage in Outreach, next to the Send mail button", () => {
+  const html = panel({ info: Object.assign({}, ready, { configured: true, connect_url: "https://outreach.aivhub.com/", manage_url: "https://outreach.aivhub.com/mailboxes" }) });
+  assert.match(html, /<a [^>]*data-outreach-link="manage"[^>]*href="https:\/\/outreach\.aivhub\.com\/mailboxes"|<a [^>]*href="https:\/\/outreach\.aivhub\.com\/mailboxes"[^>]*data-outreach-link="manage"/);
+  assert.match(html, />Manage in Outreach</);
+  assert.match(html, /data-action="outreach-send"/);
+});
+
+test("a link that is not https, or is missing, is never rendered", () => {
+  for (const bad of ["javascript:alert(1)", "http://outreach.aivhub.com", "//evil.example", "", null, undefined]) {
+    const html = panel({ info: { ready: false, configured: false, problem: "x", connect_url: bad, manage_url: bad } });
+    assert.ok(!html.includes("data-outreach-link"), `rendered a link for ${String(bad)}`);
+    assert.ok(!/javascript:|evil\.example/.test(html));
+  }
+});
+
+test("the connected mailbox is named, a mailbox that cannot send yet is flagged, and the address is escaped", () => {
+  const html = panel({ info: Object.assign({}, ready, { configured: true, connect_url: "https://o.example/", manage_url: "https://o.example/",
+    wallet: { credits: 3, mailboxes: [{ id: "mb_1", email: "hello@aivhub.com", can_send: true }] } }) });
+  assert.match(html, /Sending from <strong>hello@aivhub\.com<\/strong>/);
+  assert.ok(!/cannot send yet/.test(html));
+  const blocked = panel({ info: Object.assign({}, ready, { configured: true,
+    wallet: { mailboxes: [{ email: "a@x.test", can_send: false }, { email: "<b>@x.test", can_send: true }] } }) });
+  assert.match(blocked, /a@x\.test cannot send yet/);
+  assert.match(blocked, /Pick one below, or let Outreach choose/);
+  assert.ok(!blocked.includes("<b>@"), "an address from the server must be escaped");
+  const none = panel({ info: Object.assign({}, ready, { wallet: { credits: 3, mailboxes: [] } }) });
+  assert.ok(!/Sending from/.test(none));
+});
+
+test("with two or more mailboxes a Send from dropdown appears; with one there is none", () => {
+  const two = [{ id: "mb_1", email: "hello@aivhub.com", can_send: true }, { id: "mb_2", email: "harsh@aivhub.com", can_send: true },
+               { id: "mb_3", email: "cold@aivhub.com", can_send: false }];
+  const info = Object.assign({}, ready, { wallet: { credits: 3, mailboxes: two } });
+  const html = panel({ info, mailbox: "mb_2" });
+  const select = (html.match(/<select data-field="outreach-mailbox"[^>]*>[\s\S]*?<\/select>/) || [])[0] || "";
+  assert.ok(select, "no dropdown");
+  assert.match(select, /<option value="">Let Outreach choose<\/option>/);
+  assert.match(select, /<option value="mb_2" selected>harsh@aivhub\.com<\/option>/);
+  assert.match(select, /<option value="mb_1">hello@aivhub\.com<\/option>/);
+  assert.match(select, /<option value="mb_3" disabled>cold@aivhub\.com \(cannot send yet\)<\/option>/);
+  // nothing chosen: "Let Outreach choose" is the selected one
+  assert.match(panel({ info }), /<option value="" selected>Let Outreach choose<\/option>/);
+  // one mailbox, or none: no dropdown
+  assert.ok(!/outreach-mailbox/.test(panel({ info: Object.assign({}, ready, { wallet: { mailboxes: [two[0]] } }) })));
+  assert.ok(!/outreach-mailbox/.test(panel({ info: ready })));
+  // an address with markup is escaped; the dropdown is disabled while a send is running
+  const evil = panel({ info: Object.assign({}, ready, { wallet: { mailboxes: [two[0], { id: "x", email: "<i>@x.test", can_send: true }] } }), pushing: true });
+  assert.ok(!evil.includes("<i>@"));
+  assert.match(evil, /<select data-field="outreach-mailbox" disabled>/);
+});
+
+test("Refresh status reports the mailbox id Outreach holds for a sent email, or says it has none", () => {
+  const html = V.outreachSeenNote([{ buyer: "Parliament UK", mailbox: "harsh@aivhub.com", mailbox_id: "mb_7", fields: ["id"] },
+                                   { buyer: "Other", mailbox: "hello@aivhub.com", mailbox_id: null, fields: ["id", "status", "to"] },
+                                   { buyer: "<b>x</b>", mailbox: null, mailbox_id: "i<d>", fields: [] }]);
+  assert.match(html, /went from <strong>harsh@aivhub\.com<\/strong>, mailbox id <code>mb_7<\/code>/);
+  assert.match(html, /no mailbox id \(fields: id, status, to\)/);
+  assert.ok(!html.includes("<b>x") && !html.includes("i<d>"));
+  assert.equal(V.outreachSeenNote([]), "");
+  assert.equal(V.outreachSeenNote(undefined), "");
+});
+
+test("a one-off send names the mailbox it went from", () => {
+  const html = V.outreachResult({ sent: [{ buyer: "A", from: "hello@aivhub.com", immediate: true }], failed: [], skipped: [], route: "single", mode: "live" });
+  assert.match(html, /sent now through Outreach \(live mode\) from <strong>hello@aivhub\.com<\/strong>/);
+  const none = V.outreachResult({ sent: [{ buyer: "A", immediate: true }], failed: [], skipped: [], route: "single", mode: "live" });
+  assert.ok(!/ from <strong>/.test(none));
+});
+
+test("a warning that Outreach used another mailbox is shown with the result", () => {
+  const html = V.outreachResult({ sent: [{ buyer: "A" }], failed: [], skipped: [], route: "single", mode: "live",
+    warnings: ["You chose a@x.test, but Outreach sent to Alpha from b@x.test."] });
+  assert.match(html, /You chose a@x\.test, but Outreach sent to Alpha from b@x\.test\./);
+});
+
+test("a link from the server is escaped", () => {
+  const html = panel({ info: { ready: false, configured: false, problem: "x", connect_url: 'https://outreach.aivhub.com/?a="><img src=x>' } });
+  assert.ok(!html.includes("<img"), html);
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { fn(); console.log(`ok    ${name}`); } catch (err) { failed += 1; console.log(`FAIL  ${name}`); console.log(err && err.stack ? err.stack : err); }

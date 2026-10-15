@@ -45,6 +45,23 @@ def key_mode(key: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+def _https_url(value: str | None) -> str | None:
+    """`value` when it is a plain https:// link with a host and nothing risky in it, else None."""
+    text = (value or "").strip()
+    if not text.lower().startswith("https://") or len(text) > 500 or any(c.isspace() or c in '"<>\\' for c in text):
+        return None
+    host = text[8:].split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    return text if host and "@" not in host else None
+
+
+def web_links(web_url: str | None, connect_url: str | None = None, manage_url: str | None = None) -> dict[str, str | None]:
+    """The two pages a user is sent to in Outreach's own web app: `connect` (sign in or sign up, choose a plan,
+    connect a mailbox) and `manage` (mailboxes and settings). Each falls back to the site root; a value that is not
+    an https link is dropped, so a mistake in the environment can never make the button point somewhere odd."""
+    root = _https_url(web_url) or _https_url(DEFAULT_BASE_URL)
+    return {"connect_url": _https_url(connect_url) or root, "manage_url": _https_url(manage_url) or root}
+
+
 def mask_key(key: str | None) -> str:
     """Enough to recognise which key is configured, never enough to use it."""
     text = (key or "").strip()
@@ -281,13 +298,87 @@ def campaign_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def mailbox_list(raw: Mapping[str, Any], connected: Any = None) -> list[dict[str, Any]]:
+    """The mailboxes /v1/wallets reports as connected, as [{id, email, can_send, status}]. Outreach does not
+    document the shape, so a count, a list of addresses or a list of objects are all read; only those four fields
+    are ever picked out (nothing else the answer might carry is passed on)."""
+    items: Any = None
+    for src in (connected, raw):
+        if isinstance(src, dict):
+            for name in ("mailboxes", "email_accounts", "emails"):
+                if isinstance(src.get(name), (list, dict)):
+                    items = src[name]
+                    break
+        if items is not None:
+            break
+    if isinstance(items, dict):
+        items = [items]
+    out: list[dict[str, Any]] = []
+    for item in (items if isinstance(items, list) else [])[:20]:
+        if isinstance(item, str):
+            if "@" in item:
+                out.append({"id": None, "email": item.strip()[:254], "can_send": None, "status": None, "fields": []})
+        elif isinstance(item, dict):
+            email = _text(_find(item, ("email", "address", "from_email", "from")), 254)
+            if email and "@" in email:
+                can_send = item.get("can_send")
+                ident = _text(_find(item, ("id", "mailbox_id", "uuid", "key")), 64)
+                if ident and "@" in ident:
+                    ident = None  # an address is not an id
+                out.append({"id": ident, "email": email,
+                            "can_send": can_send if isinstance(can_send, bool) else None,
+                            "status": _text(_find(item, ("status", "state")), 30),
+                            # names only (never values): which fields Outreach reports, so a missing id is diagnosable
+                            "fields": sorted(k for k in item if isinstance(k, str) and re.fullmatch(r"[A-Za-z0-9_]{1,30}", k))[:15]})
+    return out
+
+
+def _connected_counts(connected: Any) -> dict[str, Any] | None:
+    """What is connected, reduced to counts and flags per channel. The answer may carry anything (tokens, account
+    details), and this goes to the browser, so only numbers, booleans and the size of a list or object are kept."""
+    if isinstance(connected, list):
+        return {"items": len(connected)}
+    if not isinstance(connected, dict):
+        return None
+    out: dict[str, Any] = {}
+    for name, value in list(connected.items())[:20]:
+        key = re.sub(r"[^A-Za-z0-9_]", "", str(name))[:30]
+        if not key:
+            continue
+        if isinstance(value, bool) or (isinstance(value, (int, float)) and not isinstance(value, bool)):
+            out[key] = value
+        elif isinstance(value, (list, dict)):
+            out[key] = len(value)
+    return out
+
+
+def parse_mailbox_ids(text: str | None) -> dict[str, str]:
+    """"a@x.test=mb_1, b@x.test=mb_2" -> {"a@x.test": "mb_1", ...}; anything malformed is skipped."""
+    out: dict[str, str] = {}
+    for part in re.split(r"[,;\s]+", text or ""):
+        email, sep, ident = part.partition("=")
+        email, ident = email.strip().lower(), ident.strip()
+        if sep and "@" in email and _ID_RE.match(ident):
+            out[email] = ident
+    return out
+
+
+def apply_mailbox_ids(boxes: list[dict[str, Any]], mapping: Mapping[str, str]) -> list[dict[str, Any]]:
+    """Fill a mailbox's id from the configured map when Outreach's list gave only its address."""
+    for b in boxes:
+        if not b.get("id") and mapping.get(str(b.get("email") or "").lower()):
+            b["id"] = mapping[str(b["email"]).lower()]
+    return boxes
+
+
 def wallet_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
     """Credits and what is connected, tolerant of the exact field names."""
     credits = _find(raw, ("credits", "balance", "credits_left"))
     connected = _find(raw, ("connected", "connections", "channels"))
     return {
         "credits": credits if isinstance(credits, (int, float)) and not isinstance(credits, bool) else None,
-        "connected": connected if isinstance(connected, (dict, list)) else None,
+        "connected": _connected_counts(connected),
+        "mailboxes": mailbox_list(raw, connected),
         "livemode": raw.get("livemode") if isinstance(raw.get("livemode"), bool) else None,
     }
 
@@ -305,11 +396,16 @@ def send_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
 def message_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
     """One email as listed by /v1/email/messages: id, recipient, status, and why it bounced or what the reply was."""
     reason = _find(raw, ("bounce_reason", "reason", "error"))
+    mailbox = _find(raw, ("mailbox", "from", "from_email", "mailbox_email"))
     return {
         "id": _text(_find(raw, ("id", "message_id")), 64),
         "to": (_text(_find(raw, ("to", "email", "recipient")), 254) or "").lower() or None,
         "status": (_text(_find(raw, ("status", "state"))) or "").lower() or None,
         "reason": _text(reason, 300),
+        # which mailbox sent it, and the id Outreach uses for that mailbox if the record carries one
+        "mailbox": _text(mailbox, 254) if "@" in str(mailbox or "") else None,
+        "mailbox_id": _text(_find(raw, ("mailbox_id", "mailboxId")), 64),
+        "fields": sorted(k for k in raw if isinstance(k, str) and re.fullmatch(r"[A-Za-z0-9_]{1,30}", k))[:20],
     }
 
 

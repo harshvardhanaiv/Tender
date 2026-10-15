@@ -43,6 +43,17 @@ def idempotency_key(username: str, campaign_id: int, target_id: int, tag: str = 
     return f"{base}-{tag}" if tag else base
 
 
+def retry_tag(record: Mapping[str, Any] | None) -> str:
+    """"" for a first attempt; a short tag for a retry after a request that definitely FAILED, so Outreach does
+    not answer the retry by replaying the first failure (an Idempotency-Key makes a repeat return the first
+    answer, errors included). A request that may have gone through (unreachable, kept as "pending") keeps its key,
+    so the repeat is answered with what really happened and nobody is emailed twice."""
+    rec = record or {}
+    if not rec.get("error") or rec.get("status") == "pending":
+        return ""
+    return "-r" + hashlib.sha256(str(rec.get("checked_at") or rec.get("error") or "").encode("utf-8")).hexdigest()[:6]
+
+
 def message_hash(subject: str, body: str) -> str:
     """Identifies the exact text a draft was made from, so an edited message is never sent under an old draft."""
     return hashlib.sha256((subject + chr(10) + body).encode("utf-8")).hexdigest()[:16]
@@ -72,6 +83,43 @@ def build_payload(campaign_name: str, buyer: str, email: str, subject: str, body
         "steps": [{"subject": subject, "body": body, "delay_days": 0}],
         "leads": [{"email": email, "company": _name_part(buyer, 120)}],
     }
+
+
+SENT_NOW = "sent_now"  # stored as the approval of a buyer sent with /v1/email/send (there is no campaign to approve)
+
+
+def find_mailbox(boxes: Iterable[Mapping[str, Any]], ref: str | None) -> dict[str, Any] | None:
+    """The connected mailbox named by `ref` (its id or its address, any case), as {id, email, can_send, status, ref}.
+    `ref` is what is sent to Outreach: the id when there is one, else the address."""
+    want = (ref or "").strip().lower()
+    if not want:
+        return None
+    for b in boxes or []:
+        ident = str(b.get("id") or "")
+        email = str(b.get("email") or "")
+        if want in (ident.lower(), email.lower()) and email:
+            return {"id": b.get("id"), "email": email, "can_send": b.get("can_send"), "status": b.get("status"),
+                    "ref": ident or email}
+    return None
+
+
+def build_send_payload(item: Mapping[str, Any]) -> dict[str, Any]:
+    """The /v1/email/send request for one buyer: the text is already filled in, so no merge fields are left."""
+    return {
+        "to": item["email"],
+        "subject": item["subject"],
+        "body": item["text"],
+        "company": _name_part(item.get("buyer") or "", 120),
+    }
+
+
+def use_single_send(items: list[Mapping[str, Any]], records: Mapping[int, Mapping[str, Any]]) -> bool:
+    """Exactly one email to go out, and no Outreach campaign was already made for it (that one is approved instead,
+    so the buyer is never emailed twice): send it now, without a campaign's warm-up and sending hours."""
+    if len(items) != 1:
+        return False
+    rec = records.get(items[0]["target_id"]) or {}
+    return not rec.get("outreach_id")
 
 
 def plan_push(
@@ -131,6 +179,7 @@ def plan_push(
                 else:
                     plan["items"].append({
                         "target_id": tid, "buyer": buyer, "email": email, "hash": message_hash(subj, text),
+                        "subject": subj, "text": text,
                         "payload": build_payload(campaign.get("name") or "Growth Studio", buyer, email, subj, text),
                     })
     return plan
