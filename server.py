@@ -84,6 +84,7 @@ from tender_app.blueprints.planning_bp import init_planning_blueprint
 from tender_app.blueprints.market_radar_bp import init_market_radar_blueprint
 from tender_app.blueprints.market_engagement_bp import init_market_engagement_blueprint
 from tender_app.blueprints.growth_bp import init_growth_blueprint
+from tender_app.blueprints.email_bp import init_email_blueprint
 from tender_app.email_notifier import init_email_scheduler
 from tender_app.security import ensure_csrf_token, validate_csrf
 from tender_app.search_terms import split_terms
@@ -3040,6 +3041,7 @@ def create_app() -> Flask:
     app.register_blueprint(init_suppliers_blueprint(get_db_connection))
     app.register_blueprint(init_buyers_blueprint(get_db_connection))
     app.register_blueprint(init_planning_blueprint(get_db_connection))
+    app.register_blueprint(init_email_blueprint(get_db_connection))
     if ENABLE_BUYER_WORKSPACE:
         app.register_blueprint(init_market_radar_blueprint(get_db_connection))
         app.register_blueprint(init_market_engagement_blueprint(get_db_connection))

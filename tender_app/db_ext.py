@@ -554,6 +554,84 @@ def create_growth_tables(cursor) -> None:
     )
 
 
+def create_email_send_tables(cursor) -> None:
+    """Email sent through Outreach (tender_app/email_send.py, email_send_service.py, blueprints/email_bp.py).
+
+    email_sends has one row per recipient per message. UNIQUE (dedupe_hash) is what makes sending the same text to
+    the same address twice impossible, even from two requests at once: a row is claimed before Outreach is called.
+    status: pending (claimed, outcome not confirmed), failed / not_sent (retryable), created (a campaign exists
+    in Outreach but was never approved, so it sends nothing), approved (campaign approved: sends inside its
+    sending window), sent, replied, bounced. A refresh never moves a row backwards.
+    """
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS email_sends (
+            id              SERIAL PRIMARY KEY,
+            username        VARCHAR(255) NOT NULL,
+            batch_id        VARCHAR(40) NOT NULL,
+            recipient_email VARCHAR(254) NOT NULL,
+            first_name      VARCHAR(120),
+            company         VARCHAR(200),
+            subject         TEXT NOT NULL,
+            dedupe_hash     CHAR(64) NOT NULL,
+            mode            VARCHAR(10) NOT NULL,
+            key_mode        VARCHAR(8) NOT NULL DEFAULT 'test',
+            outreach_id     TEXT,
+            message_id      TEXT,
+            status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+            campaign_state  VARCHAR(60),
+            error           TEXT,
+            sent_at         TIMESTAMP,
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            checked_at      TIMESTAMP,
+            UNIQUE (dedupe_hash)
+        )
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS email_sends_user_idx ON email_sends (username, created_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS email_sends_outreach_idx ON email_sends (outreach_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS email_sends_day_idx ON email_sends (mode, status, sent_at)")
+    # Who may use the feature (administrators always may), and a record of every send action.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS email_send_permissions (
+            username   VARCHAR(255) PRIMARY KEY,
+            granted_by VARCHAR(255),
+            granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS email_send_audit (
+            id         SERIAL PRIMARY KEY,
+            username   VARCHAR(255) NOT NULL,
+            batch_id   VARCHAR(40) NOT NULL,
+            route      VARCHAR(20),
+            key_mode   VARCHAR(8),
+            requested  INTEGER NOT NULL DEFAULT 0,
+            sent       INTEGER NOT NULL DEFAULT 0,
+            campaigns  INTEGER NOT NULL DEFAULT 0,
+            skipped    INTEGER NOT NULL DEFAULT 0,
+            failed     INTEGER NOT NULL DEFAULT 0,
+            deferred   INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    # Addresses we must not email again (recorded by a user, or when Outreach reports a bounce).
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS email_send_suppressions (
+            email      VARCHAR(254) PRIMARY KEY,
+            reason     VARCHAR(40),
+            added_by   VARCHAR(255),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
 def run_saas_migrations(conn: Any) -> None:
     cursor = conn.cursor()
     try:
@@ -570,6 +648,7 @@ def run_saas_migrations(conn: Any) -> None:
         create_planning_tables(cursor)
         create_market_engagement_tables(cursor)
         create_growth_tables(cursor)
+        create_email_send_tables(cursor)
         conn.commit()
     except Exception:
         conn.rollback()
