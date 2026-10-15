@@ -88,6 +88,15 @@ def build_payload(campaign_name: str, buyer: str, email: str, subject: str, body
 SENT_NOW = "sent_now"  # stored as the approval of a buyer sent with /v1/email/send (there is no campaign to approve)
 
 
+# Request fields that take the mailbox's address; any other field name is taken to want the mailbox's id.
+ADDRESS_MAILBOX_FIELDS = frozenset({"from", "from_email", "sender", "email"})
+
+
+def selects_by_address(*fields: str) -> bool:
+    """True when every request field used to choose a mailbox takes an address (so a mailbox with no id can be chosen)."""
+    return all((f or "").strip().lower() in ADDRESS_MAILBOX_FIELDS for f in fields)
+
+
 def find_mailbox(boxes: Iterable[Mapping[str, Any]], ref: str | None) -> dict[str, Any] | None:
     """The connected mailbox named by `ref` (its id or its address, any case), as {id, email, can_send, status, ref}.
     `ref` is what is sent to Outreach: the id when there is one, else the address."""

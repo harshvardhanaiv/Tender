@@ -686,6 +686,39 @@ def test_a_mailbox_that_is_not_connected_or_cannot_send_is_refused_before_anythi
     assert target_statuses(c, cid)["Alpha Borough Council"] == "not_sent"
 
 
+def test_a_mailbox_with_no_id_is_refused_before_anything_is_sent_unless_the_fields_take_an_address():
+    from tender_app.blueprints import growth_bp
+    install()
+
+    def no_ids(method, url, headers, data):
+        if url.endswith("/v1/wallets"):
+            return 200, {"credits": 40, "connected": {"mailboxes": [
+                {"email": "hello@aivhub.com", "can_send": True}, {"email": "harshvardhan@aivhub.com", "can_send": True}]}}
+        return FAKE.default(method, url, headers, data)
+
+    FAKE.handler = no_ids
+    c = client(USER_A)
+    status = call(c, "get", "/api/growth/outreach/status")[1]
+    assert status["wallet"]["select_by_address"] is False
+    cid, ids = make_campaign(USER_A)
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]], "mailbox": "harshvardhan@aivhub.com"})
+    assert code == 400 and "no mailbox id" in body["error"] and "Let Outreach choose" in body["error"], body
+    assert FAKE.sends() == [] and FAKE.posts() == []
+    # "Let Outreach choose" still sends, without any mailbox field
+    code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid}/outreach", {"target_ids": [ids[0]]})
+    assert code == 200 and "mailbox_id" not in FAKE.sends()[0]["body"]
+    # once the sending fields take an address, the address is what is sent
+    old = growth_bp.OUTREACH_SEND_MAILBOX_FIELD, growth_bp.OUTREACH_CAMPAIGN_MAILBOX_FIELD
+    growth_bp.OUTREACH_SEND_MAILBOX_FIELD = growth_bp.OUTREACH_CAMPAIGN_MAILBOX_FIELD = "from"
+    try:
+        assert call(c, "get", "/api/growth/outreach/status")[1]["wallet"]["select_by_address"] is True
+        cid2, ids2 = make_campaign(USER_A)
+        code, body, _ = call(c, "post", f"/api/growth/campaigns/{cid2}/outreach", {"target_ids": [ids2[0]], "mailbox": "harshvardhan@aivhub.com"})
+        assert code == 200 and FAKE.sends()[-1]["body"]["from"] == "harshvardhan@aivhub.com", body
+    finally:
+        growth_bp.OUTREACH_SEND_MAILBOX_FIELD, growth_bp.OUTREACH_CAMPAIGN_MAILBOX_FIELD = old
+
+
 def test_a_send_that_left_from_another_mailbox_is_flagged():
     install()
     two_mailboxes(send_from="hello@aivhub.com")  # Outreach ignored the choice

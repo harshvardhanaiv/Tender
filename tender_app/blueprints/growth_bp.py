@@ -1013,6 +1013,8 @@ def growth_outreach_status():
     try:
         out["wallet"] = oc.wallet_summary(_outreach_client().wallets())
         oc.apply_mailbox_ids(out["wallet"]["mailboxes"], oc.parse_mailbox_ids(OUTREACH_MAILBOX_IDS))
+        # a mailbox with no id can only be chosen when Outreach's sending fields take an address
+        out["wallet"]["select_by_address"] = go.selects_by_address(OUTREACH_SEND_MAILBOX_FIELD, OUTREACH_CAMPAIGN_MAILBOX_FIELD)
         out["ready"] = True
     except oc.OutreachError as exc:
         out["problem"] = exc.message
@@ -1130,6 +1132,10 @@ def growth_outreach_send(cid: int):
             raise _Http("That mailbox is not connected in Outreach. Choose one from the list.", 400)
         if chosen.get("can_send") is False:
             raise _Http(f"{chosen['email']} cannot send yet. Finish its setup in Outreach (warm-up or connection test).", 400)
+        if not chosen.get("id") and not go.selects_by_address(OUTREACH_SEND_MAILBOX_FIELD, OUTREACH_CAMPAIGN_MAILBOX_FIELD):
+            # Outreach looks the mailbox up by id; an address matches nothing and it answers "no mailbox can send"
+            raise _Http(f"Outreach cannot choose {chosen['email']} yet: it gives no mailbox id for it. Pick \"Let Outreach choose\", "
+                        "or ask Outreach for the mailbox id and set it in OUTREACH_MAILBOX_IDS on the server.", 400)
     username = _username()
     conn = _connect()
     try:

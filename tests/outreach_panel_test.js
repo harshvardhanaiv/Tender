@@ -209,6 +209,20 @@ test("with two or more mailboxes a Send from dropdown appears; with one there is
   assert.match(evil, /<select data-field="outreach-mailbox" disabled>/);
 });
 
+test("a mailbox Outreach gives no id for cannot be chosen, and the dropdown says why", () => {
+  const boxes = [{ id: null, email: "hello@aivhub.com", can_send: true }, { id: null, email: "harsh@aivhub.com", can_send: true }];
+  const html = panel({ info: Object.assign({}, ready, { wallet: { credits: 3, mailboxes: boxes } }), mailbox: "harsh@aivhub.com" });
+  assert.match(html, /<option value="hello@aivhub\.com" disabled>hello@aivhub\.com \(Outreach gives no id for this mailbox\)<\/option>/);
+  assert.ok(!/selected>harsh/.test(html), "an unchoosable mailbox is never preselected");
+  assert.match(html, /only "Let Outreach choose" works/);
+  // when the server says its fields take an address, they can be chosen
+  const ok = panel({ info: Object.assign({}, ready, { wallet: { credits: 3, select_by_address: true, mailboxes: boxes } }) });
+  assert.ok(!/disabled>hello@aivhub/.test(ok) && !/only "Let Outreach choose"/.test(ok));
+  // a mailbox that has an id is chosen by it, whatever the others are
+  const mixed = panel({ info: Object.assign({}, ready, { wallet: { mailboxes: [{ id: "mb_1", email: "a@x.test" }, boxes[0]] } }) });
+  assert.match(mixed, /<option value="mb_1">a@x\.test<\/option>/);
+});
+
 test("Refresh status reports the mailbox id Outreach holds for a sent email, or says it has none", () => {
   const html = V.outreachSeenNote([{ buyer: "Parliament UK", mailbox: "harsh@aivhub.com", mailbox_id: "mb_7", fields: ["id"] },
                                    { buyer: "Other", mailbox: "hello@aivhub.com", mailbox_id: null, fields: ["id", "status", "to"] },

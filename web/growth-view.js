@@ -612,13 +612,18 @@
     const boxes = (wallet && Array.isArray(wallet.mailboxes) ? wallet.mailboxes : []).filter((m) => m && m.email);
     if (boxes.length < 2) return "";
     const ref = (m) => (m.id ? String(m.id) : String(m.email));
-    const opts = boxes.map((m) =>
-      `<option value="${esc(ref(m))}"${ref(m) === selected ? " selected" : ""}${m.can_send === false ? " disabled" : ""}>${esc(m.email)}${m.can_send === false ? " (cannot send yet)" : ""}</option>`
-    );
+    // Outreach looks a mailbox up by id: one it reports without an id cannot be chosen (it would be refused)
+    const noId = (m) => !m.id && !(wallet && wallet.select_by_address);
+    const opts = boxes.map((m) => {
+      const off = m.can_send === false || noId(m);
+      const note = m.can_send === false ? " (cannot send yet)" : noId(m) ? " (Outreach gives no id for this mailbox)" : "";
+      return `<option value="${esc(ref(m))}"${ref(m) === selected && !off ? " selected" : ""}${off ? " disabled" : ""}>${esc(m.email)}${note}</option>`;
+    });
     return (
       `<label class="gs-inline gs-outreach__from">Send from ` +
       `<select data-field="outreach-mailbox"${disabled ? " disabled" : ""}>` +
-      `<option value=""${selected ? "" : " selected"}>Let Outreach choose</option>${opts.join("")}</select></label>`
+      `<option value=""${selected ? "" : " selected"}>Let Outreach choose</option>${opts.join("")}</select></label>` +
+      (boxes.some(noId) ? `<p class="gs-hint">Outreach does not give an id for some mailboxes yet, so only "Let Outreach choose" works for them. It sends from its default mailbox.</p>` : "")
     );
   }
 
