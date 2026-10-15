@@ -269,6 +269,28 @@ def resolve_supplier_company_number(cursor, conn, raw_cnum: Any, ppon: Any, supp
     if norm:
         return norm
 
+    # Check alias table: if raw_cnum or ppon is an aliased placeholder number, route directly to anchor
+    for candidate_cn in (raw_cnum, ppon):
+        if candidate_cn:
+            clean_cand = str(candidate_cn).strip().upper()
+            try:
+                _db_execute(
+                    cursor,
+                    conn,
+                    """
+                    SELECT s.company_number 
+                    FROM supplier_aliases a 
+                    JOIN suppliers s ON s.id = a.canonical_supplier_id 
+                    WHERE a.alias_company_number = ?;
+                """,
+                    (clean_cand,),
+                )
+                alias_match = cursor.fetchone()
+                if alias_match and alias_match[0]:
+                    return alias_match[0]
+            except Exception:
+                pass  # table may not exist in environments without migrations
+
     key = supplier_name_key(supplier_name)
     if len(key) >= 5:
         _db_execute(cursor, conn, "SELECT company_number FROM suppliers WHERE " + SUPPLIER_NAME_KEY_SQL + " = ? ORDER BY id LIMIT 50;", (key,))
@@ -292,6 +314,23 @@ def resolve_supplier_company_number(cursor, conn, raw_cnum: Any, ppon: Any, supp
     clean = key or "UNKNOWN"
     for salt in range(0, 20):
         cnum = _fallback_company_number("CF", clean + (str(salt) if salt else ""))
+        try:
+            _db_execute(
+                cursor,
+                conn,
+                """
+                SELECT s.company_number 
+                FROM supplier_aliases a 
+                JOIN suppliers s ON s.id = a.canonical_supplier_id 
+                WHERE a.alias_company_number = ?;
+            """,
+                (cnum,),
+            )
+            alias_match = cursor.fetchone()
+            if alias_match and alias_match[0]:
+                return alias_match[0]
+        except Exception:
+            pass
         _db_execute(cursor, conn, "SELECT name FROM suppliers WHERE company_number = ?;", (cnum,))
         row = cursor.fetchone()
         # 6-digit hash space collides across ~40k names: never reuse a number that belongs to a different supplier

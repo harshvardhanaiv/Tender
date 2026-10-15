@@ -24,3 +24,4 @@ scripts/run_live_geocode.sh
 
 # Large SQL dumps / sync data — never commit
 data/
+*.dump
