@@ -2255,6 +2255,37 @@
           <p id="emailAlertStatus" style="margin:4px 0 0; font-size:12px; color:var(--muted); display:none; text-align:right;"></p>
         </div>
 
+        <!-- ── Email through Outreach (web/email-outreach.js): shown only to people allowed to send ── -->
+        <div class="profile-section" id="emailOutreachSection" style="display:none; margin-top:16px;">
+          <style>
+            #emailOutreachSection .eo-hint { margin:4px 0; font-size:12px; color:var(--muted); }
+            #emailOutreachSection .eo-hint--warn, #emailOutreachSection .eo-warn { color:var(--danger, #b42318); font-size:12px; margin:6px 0 2px; }
+            #emailOutreachSection .eo-ok { color:var(--success, #067647); font-size:12px; margin:6px 0 2px; }
+            #emailOutreachSection .eo-list { margin:2px 0 6px 18px; padding:0; font-size:12px; color:var(--muted); }
+            #emailOutreachSection .eo-table { width:100%; border-collapse:collapse; font-size:12px; }
+            #emailOutreachSection .eo-table th, #emailOutreachSection .eo-table td { text-align:left; padding:4px 6px; border-bottom:1px solid var(--border); }
+            #emailOutreachSection .eo-details { font-size:12px; color:var(--muted); }
+            #emailOutreachSection label { font-size:12px; font-weight:600; display:block; margin:10px 0 4px; }
+          </style>
+          <h3 class="profile-section__title" style="margin:0; font-size:16px; font-weight:700;">Email (Outreach)</h3>
+          <p style="margin:2px 0 8px 0; font-size:12px; color:var(--muted);">One recipient is sent straight away. Two or more with the same message go out as one Outreach campaign, which sends inside its sending window.</p>
+          <div id="eoStatus"><p class="eo-hint">Checking Outreach…</p></div>
+          <label for="eoRecipients">Recipients (one per line: email, first name, company)</label>
+          <textarea id="eoRecipients" class="input" rows="4" style="width:100%; font-size:12px;" placeholder="procurement@council.gov.uk, Sam, Example Council"></textarea>
+          <label for="eoSubject">Subject (you can use {{firstName}} and {{company}})</label>
+          <input id="eoSubject" class="input" type="text" maxlength="200" style="width:100%; font-size:12px;">
+          <label for="eoBody">Message (it must include a way to opt out)</label>
+          <textarea id="eoBody" class="input" rows="7" style="width:100%; font-size:12px;"></textarea>
+          <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+            <button type="button" id="eoPreview" class="btn btn--secondary" style="font-size:12px; padding:6px 12px; height:auto;">Preview</button>
+            <button type="button" id="eoSend" class="btn btn--primary" style="font-size:12px; padding:6px 12px; height:auto;">Send</button>
+            <button type="button" id="eoRefresh" class="btn btn--secondary" style="font-size:12px; padding:6px 12px; height:auto;">Refresh status</button>
+          </div>
+          <div id="eoResult" aria-live="polite"></div>
+          <h4 style="margin:14px 0 4px; font-size:13px;">Recent sends</h4>
+          <div id="eoHistory"></div>
+        </div>
+
       </div>
 
       <!-- ── Sticky Bottom Save Footer ── -->
@@ -3215,6 +3246,7 @@
   <script src="/responsive-fixes.js?v=1" defer></script>
   <script src="/growth-view.js?v=8"></script>
   <script src="/growth-studio.js?v=8"></script>
+  <script src="/email-outreach.js?v=1"></script>
   <script src="/shell.js?v=4"></script>
   <script src="/search-filters.js?v=10"></script>
   <script>

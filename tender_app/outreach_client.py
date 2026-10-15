@@ -1,4 +1,4 @@
-"""Client for the Outreach by Aivhub API (https://api.outreach.aivhub.com, v1).
+"""Client for the Outreach by Aivhub API (https://outreach.aivhub.com, v1).
 
 TenderFlow uses it from Growth Studio to send a campaign message through Outreach. Outreach sends nothing
 until a campaign is approved (a separate permission, `email:approve`), so sending is two calls: draft the
@@ -7,6 +7,9 @@ campaign, then approve it. Growth Studio's Send button makes both, for the buyer
 What is used (from Outreach's own API reference):
 
     GET  /v1/wallets                  credits left and what is connected (mailboxes, social, phone numbers)
+    POST /v1/email/send               one email, sent straight away (scope email:approve; 25 a day per company)
+    GET  /v1/email/messages           per-email status (sent / replied / bounced); ?campaign_id=, ?status=, ?q=
+    GET  /v1/email/messages/{id}      one email, with the reply or bounce reason
     POST /v1/email/campaigns          draft an email campaign (scope email:write)
     POST /v1/email/campaigns/{id}/decision   approve it, which is what starts it sending (scope email:approve)
     GET  /v1/email/campaigns/{id}     its emails, how many went out, replies, approval state
@@ -23,8 +26,10 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Callable, Mapping
+from urllib.parse import urlencode
 
-DEFAULT_BASE_URL = "https://api.outreach.aivhub.com"
+# The API host api.outreach.aivhub.com currently fails its TLS handshake; /v1/* works on the main host.
+DEFAULT_BASE_URL = "https://outreach.aivhub.com"
 DEFAULT_TIMEOUT = 15.0
 
 _KEY_RE = re.compile(r"^sk_(test|live)_[A-Za-z0-9_\-]{6,}$")
@@ -46,11 +51,38 @@ def mask_key(key: str | None) -> str:
     return text[:8] + "…" if len(text) > 8 else ""
 
 
+_KEY_ANYWHERE_RE = re.compile(r"sk_(?:test|live)_[A-Za-z0-9_\-]+")
+
+
+def scrub(text: Any) -> str:
+    """`text` with anything shaped like an API key replaced by its masked form, for anything that is stored or shown."""
+    return _KEY_ANYWHERE_RE.sub(lambda m: mask_key(m.group(0)) or "sk_…", str(text if text is not None else ""))
+
+
+def config_problem(key: str | None, allow_live: bool) -> str | None:
+    """Why the configured key cannot be used, in the user's words; None when it can. The key is never quoted."""
+    text = (key or "").strip()
+    if not text:
+        return "Outreach is not connected. Ask your administrator to set OUTREACH_API_KEY on the server."
+    mode = key_mode(text)
+    if mode is None:
+        return "The configured Outreach key is not an sk_test_ or sk_live_ key."
+    if mode == "live" and not allow_live:
+        return "A live Outreach key is configured but live sending is switched off (OUTREACH_ALLOW_LIVE=0). Use an sk_test_ key."
+    return None
+
+
+# How the account's daily cap on single sends is worded is not documented, so it is recognised by its code or text.
+_DAILY_CODE_RE = re.compile(r"daily|per_day|day_limit|limit_reached|quota", re.IGNORECASE)
+_DAILY_TEXT_RE = re.compile(r"daily|per day|a day|24 hours", re.IGNORECASE)
+
+
 class OutreachError(Exception):
     """A failed call. `fatal` means that retrying the same request, or the next one, cannot succeed."""
 
     def __init__(self, message: str, status: int = 502, code: str = "outreach_error",
                  retry_after: int | None = None, details: Any = None):
+        message = scrub(message)
         super().__init__(message)
         self.message = message
         self.status = status
@@ -59,8 +91,21 @@ class OutreachError(Exception):
         self.details = details
 
     @property
+    def daily_limit(self) -> bool:
+        """The company's daily cap on single sends was reached. Sending more today cannot succeed."""
+        if self.status not in (402, 403, 409, 422, 429):
+            return False
+        return bool(_DAILY_CODE_RE.search(self.code or "") or _DAILY_TEXT_RE.search(self.message or ""))
+
+    @property
+    def setup_required(self) -> bool:
+        """Outreach needs setting up first (no connected mailbox / warm-up not started): nothing can send until then."""
+        return bool(re.search(r"connect a mailbox|no mailbox|mailbox.*(not connected|warm)", f"{self.code} {self.message}", re.IGNORECASE))
+
+    @property
     def fatal(self) -> bool:
-        return self.status in (401, 402, 403, 429) or self.code in ("unreachable", "not_configured")
+        return (self.status in (401, 402, 403, 429) or self.code in ("unreachable", "not_configured")
+                or self.daily_limit or self.setup_required)
 
 
 def _requests_transport(method: str, url: str, headers: Mapping[str, str], body: bytes | None, timeout: float):
@@ -168,6 +213,31 @@ class OutreachClient:
             raise OutreachError("An idempotency key is required to decide a campaign.", 400, "invalid_request")
         return self._call("POST", f"/v1/email/campaigns/{campaign_id}/decision", {"decision": decision}, idempotency_key)
 
+    def send_email(self, payload: Mapping[str, Any], idempotency_key: str) -> dict[str, Any]:
+        """One email, sent now (no warm-up wait, no sending hours). Skips anyone on the do-not-email list and adds
+        the unsubscribe link. Costs one credit; 25 a day per company. Needs the `email:approve` permission."""
+        if not idempotency_key:
+            raise OutreachError("An idempotency key is required to send an email.", 400, "invalid_request")
+        return self._call("POST", "/v1/email/send", payload, idempotency_key)
+
+    def list_email_messages(self, *, campaign_id: str | None = None, status: str | None = None,
+                            q: str | None = None) -> dict[str, Any]:
+        params: dict[str, str] = {}
+        if campaign_id:
+            if not _ID_RE.match(campaign_id):
+                raise OutreachError("That is not an Outreach campaign id.", 400, "invalid_request")
+            params["campaign_id"] = campaign_id
+        if status:
+            params["status"] = status[:30]
+        if q:
+            params["q"] = q[:200]
+        return self._call("GET", "/v1/email/messages" + (("?" + urlencode(params)) if params else ""))
+
+    def get_email_message(self, message_id: str) -> dict[str, Any]:
+        if not _ID_RE.match(message_id or ""):
+            raise OutreachError("That is not an Outreach message id.", 400, "invalid_request")
+        return self._call("GET", f"/v1/email/messages/{message_id}")
+
     def get_email_campaign(self, campaign_id: str) -> dict[str, Any]:
         if not _ID_RE.match(campaign_id or ""):
             raise OutreachError("That is not an Outreach campaign id.", 400, "invalid_request")
@@ -220,3 +290,33 @@ def wallet_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
         "connected": connected if isinstance(connected, (dict, list)) else None,
         "livemode": raw.get("livemode") if isinstance(raw.get("livemode"), bool) else None,
     }
+
+
+def send_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """The answer to /v1/email/send: id, status ("sent" is the only status that means it went), to, from."""
+    return {
+        "id": _text(_find(raw, ("id", "message_id")), 64),
+        "status": (_text(_find(raw, ("status", "state"))) or "").lower() or None,
+        "to": _text(_find(raw, ("to", "email")), 254),
+        "from": _text(_find(raw, ("from", "from_email")), 254),
+    }
+
+
+def message_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """One email as listed by /v1/email/messages: id, recipient, status, and why it bounced or what the reply was."""
+    reason = _find(raw, ("bounce_reason", "reason", "error"))
+    return {
+        "id": _text(_find(raw, ("id", "message_id")), 64),
+        "to": (_text(_find(raw, ("to", "email", "recipient")), 254) or "").lower() or None,
+        "status": (_text(_find(raw, ("status", "state"))) or "").lower() or None,
+        "reason": _text(reason, 300),
+    }
+
+
+def message_list(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The emails in a /v1/email/messages answer (a list under `messages`, `data` or `items`)."""
+    for name in ("messages", "data", "items", "results"):
+        items = raw.get(name) if isinstance(raw, dict) else None
+        if isinstance(items, list):
+            return [message_summary(i) for i in items if isinstance(i, dict)]
+    return []

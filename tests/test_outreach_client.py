@@ -183,6 +183,91 @@ def test_wallet_summary():
     assert oc.wallet_summary({})["credits"] is None
 
 
+# ── POST /v1/email/send, messages, the shared config check ─────────────────────────────────────────
+
+def test_default_host_is_the_main_host():
+    assert oc.DEFAULT_BASE_URL == "https://outreach.aivhub.com"
+    assert "api.outreach" not in oc.DEFAULT_BASE_URL
+
+
+def test_config_problem_covers_every_state_without_quoting_the_key():
+    assert "OUTREACH_API_KEY" in oc.config_problem("", False)
+    assert "OUTREACH_API_KEY" in oc.config_problem(None, True)
+    assert "sk_test_" in oc.config_problem("not-a-key", False)
+    live = oc.config_problem(LIVE, False)
+    assert live and "OUTREACH_ALLOW_LIVE" in live and LIVE not in live
+    assert oc.config_problem(LIVE, True) is None and oc.config_problem(KEY, False) is None
+
+
+def test_send_email_request_and_answer():
+    f = Fake(200, {"id": "msg_1", "status": "sent", "to": "a@x.co.uk", "from": "me@y.co.uk"})
+    answer = client(f).send_email({"to": "a@x.co.uk", "subject": "S", "body": "B"}, "tf-mail-abc")
+    call = f.calls[0]
+    assert call["method"] == "POST" and call["url"] == "https://api.example.test/v1/email/send"
+    assert call["headers"]["Authorization"] == f"Bearer {KEY}" and call["headers"]["Idempotency-Key"] == "tf-mail-abc"
+    assert json.loads(call["data"]) == {"to": "a@x.co.uk", "subject": "S", "body": "B"}
+    assert oc.send_summary(answer) == {"id": "msg_1", "status": "sent", "to": "a@x.co.uk", "from": "me@y.co.uk"}
+    raises(lambda: client(Fake()).send_email({"to": "a@x.co.uk"}, ""), 400, "invalid_request")
+
+
+def test_send_failures_each_have_a_status_and_the_right_fatal_flag():
+    for status, fatal in ((401, True), (402, True), (403, True), (429, True), (422, False), (404, False), (500, False)):
+        exc = raises(lambda s=status: client(Fake(s, {"error": {"code": "x", "message": "m"}})).send_email({"to": "a@x.co.uk"}, "k"), status)
+        assert exc.fatal is fatal, (status, exc.fatal)
+    exc = raises(lambda: client(Fake(403, {"error": {"code": "missing_scope", "message": "needs email:approve"}})).send_email({}, "k"), 403, "missing_scope")
+    assert "email:approve" in exc.message
+    exc = raises(lambda: client(Fake(429, {"error": {"code": "rate_limited"}}, {"Retry-After": "7"})).send_email({}, "k"), 429)
+    assert exc.retry_after == 7
+    # the web host answers {"detail", "code"} instead
+    exc = raises(lambda: client(Fake(401, {"detail": "bad key", "code": "unauthorized"})).send_email({}, "k"), 401, "unauthorized")
+    assert exc.message == "bad key"
+
+
+def test_the_daily_cap_is_recognised_however_it_is_worded():
+    shapes = [
+        (429, {"error": {"code": "daily_limit_reached", "message": "x"}}),
+        (403, {"error": {"code": "forbidden", "message": "You can send 25 emails a day."}}),
+        (422, {"error": {"code": "limit", "message": "Daily send limit reached"}}),
+        (402, {"error": {"code": "quota_exceeded", "message": "x"}}),
+        (409, {"detail": "Daily limit of 25 reached", "code": "conflict"}),
+    ]
+    for status, body in shapes:
+        exc = raises(lambda s=status, b=body: client(Fake(s, b)).send_email({}, "k"), status)
+        assert exc.daily_limit and exc.fatal, (status, body)
+    # an ordinary rate limit, a missing permission and a rejected request are not the daily cap
+    for status, body in ((429, {"error": {"code": "rate_limited", "message": "slow down"}}),
+                         (403, {"error": {"code": "missing_scope", "message": "needs email:approve"}}),
+                         (422, {"error": {"code": "invalid", "message": "subject is required"}}),
+                         (422, {"error": {"code": "invalid", "message": "send_at must not be before today"}}),
+                         (422, {"error": {"code": "invalid", "message": "Connect a mailbox first"}})):
+        exc = raises(lambda s=status, b=body: client(Fake(s, b)).send_email({}, "k"), status)
+        assert not exc.daily_limit, (status, body)
+
+
+def test_message_lookups_build_safe_urls():
+    f = Fake(200, {"messages": [{"id": "m1", "to": "A@X.co.uk", "status": "Replied", "reason": None}]})
+    out = client(f).list_email_messages(campaign_id="cp_1", status="sent", q="a b&c")
+    url = f.calls[0]["url"]
+    assert f.calls[0]["method"] == "GET" and url.startswith("https://api.example.test/v1/email/messages?")
+    assert "campaign_id=cp_1" in url and "status=sent" in url and "q=a+b%26c" in url
+    assert oc.message_list(out) == [{"id": "m1", "to": "a@x.co.uk", "status": "replied", "reason": None}]
+    raises(lambda: client(Fake()).list_email_messages(campaign_id="../x"), 400, "invalid_request")
+    g = Fake(200, {"id": "m9", "status": "bounced", "bounce_reason": "mailbox full"})
+    assert oc.message_summary(client(g).get_email_message("msg_9"))["reason"] == "mailbox full"
+    assert g.calls[0]["url"].endswith("/v1/email/messages/msg_9")
+    raises(lambda: client(Fake()).get_email_message("a/b"), 400, "invalid_request")
+
+
+def test_scrub_masks_keys_anywhere_in_text():
+    text = f"rejected {KEY} and {LIVE}"
+    out = oc.scrub(text)
+    assert KEY not in out and LIVE not in out and "sk_test_…" in out and "sk_live_…" in out
+    exc = oc.OutreachError(f"bad {KEY}", 401)
+    assert KEY not in exc.message and KEY not in str(exc)
+    echo = raises(lambda: client(Fake(401, {"error": {"message": f"key {KEY} unknown"}})).wallets(), 401)
+    assert KEY not in echo.message
+
+
 if __name__ == "__main__":
     failures = 0
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]

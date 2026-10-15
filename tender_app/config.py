@@ -138,9 +138,18 @@ ENABLE_GROWTH_STUDIO = os.environ.get("ENABLE_GROWTH_STUDIO", "1") == "1"
 # server only. Without a key the "Send to Outreach" panel says it is not connected. A live (sk_live_)
 # key is refused unless OUTREACH_ALLOW_LIVE=1, so the first version cannot send anything real.
 OUTREACH_API_KEY = os.environ.get("OUTREACH_API_KEY", "")
-OUTREACH_API_BASE = os.environ.get("OUTREACH_API_BASE", "https://api.outreach.aivhub.com")
+OUTREACH_API_BASE = os.environ.get("OUTREACH_API_BASE", "https://outreach.aivhub.com")
 OUTREACH_ALLOW_LIVE = os.environ.get("OUTREACH_ALLOW_LIVE", "0") == "1"
 OUTREACH_TIMEOUT_SECONDS = float(os.environ.get("OUTREACH_TIMEOUT_SECONDS", "15"))
+
+# Email through Outreach (tender_app/blueprints/email_bp.py, email_send.py): one recipient goes through the
+# immediate /v1/email/send (a company may send 25 of those a day), two or more with the same message through one
+# approved campaign (it sends inside its sending window, after mailbox warm-up). The key and every limit live on
+# the server only. OUTREACH_CAMPAIGN_MERGE_FIELDS=1 sends {{firstName}} / {{company}} unfilled and lets Outreach
+# fill them per lead; leave it 0 until a test key has confirmed that Outreach does.
+OUTREACH_DAILY_SEND_CAP = int(os.environ.get("OUTREACH_DAILY_SEND_CAP", "25"))
+OUTREACH_MAX_BATCH = int(os.environ.get("OUTREACH_MAX_BATCH", "200"))
+OUTREACH_CAMPAIGN_MERGE_FIELDS = os.environ.get("OUTREACH_CAMPAIGN_MERGE_FIELDS", "0") == "1"
 
 # Fernet key that encrypts users' own mailbox passwords (Growth Studio "Sender mailbox"). Generate one with:
 #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
