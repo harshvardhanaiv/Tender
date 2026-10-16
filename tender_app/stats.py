@@ -144,8 +144,8 @@ def refresh_supplier_stats(conn) -> int:
         agg AS (
             SELECT sid,
                    COUNT(aid) AS total_awards,
-                   COALESCE(SUM(CASE WHEN (is_framework IS NULL OR is_framework = 0) AND contract_value <= {SINGLE_AWARD_STATS_CEILING_GBP} THEN contract_value ELSE 0 END), 0) AS total_value,
-                   COALESCE(AVG(CASE WHEN (is_framework IS NULL OR is_framework = 0) AND contract_value <= {SINGLE_AWARD_STATS_CEILING_GBP} THEN contract_value END), 0) AS avg_value,
+                   COALESCE(SUM(CASE WHEN (is_framework IS NULL OR is_framework = 0) AND contract_value BETWEEN 0 AND {SINGLE_AWARD_STATS_CEILING_GBP} THEN contract_value ELSE 0 END), 0) AS total_value,
+                   COALESCE(AVG(CASE WHEN (is_framework IS NULL OR is_framework = 0) AND contract_value BETWEEN 0 AND {SINGLE_AWARD_STATS_CEILING_GBP} THEN contract_value END), 0) AS avg_value,
                    COALESCE(SUM(CASE WHEN is_framework = 1 THEN contract_value ELSE 0 END), 0) AS fw_ceiling,
                    COUNT(CASE WHEN is_framework = 1 THEN 1 END) AS fw_count,
                    MAX(date_signed) AS latest
@@ -187,8 +187,8 @@ def refresh_buyer_stats(conn) -> int:
                     LENGTH(authority_name) DESC, TRIM(authority_name) ASC))[1],
                MAX(buyer_type),
                COUNT(*),
-               SUM(CASE WHEN is_framework = 1 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE contract_value END),
-               SUM(contract_value),
+               SUM(CASE WHEN is_framework = 1 OR contract_value < 0 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE contract_value END),
+               SUM(CASE WHEN contract_value < 0 THEN 0 ELSE contract_value END),
                COUNT(DISTINCT supplier_name),
                MIN(CASE WHEN contract_end_date >= %s THEN contract_end_date END),
                MAX(date_signed),
@@ -197,7 +197,7 @@ def refresh_buyer_stats(conn) -> int:
                (ARRAY_AGG(longitude ORDER BY date_signed DESC NULLS LAST) FILTER (WHERE {_REAL_COORD_SQL}))[1],
                ARRAY_AGG(DISTINCT LEFT(cpv_code, 2)) FILTER (WHERE cpv_code IS NOT NULL AND cpv_code <> ''),
                CURRENT_TIMESTAMP,
-               AVG(CASE WHEN is_framework = 1 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN NULL ELSE contract_value END)
+               AVG(CASE WHEN is_framework = 1 OR contract_value < 0 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN NULL ELSE contract_value END)
         FROM (
             SELECT *, {_norm_auth_sql('authority_name')} AS k
             FROM deduped_awards

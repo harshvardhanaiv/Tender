@@ -433,8 +433,8 @@ def search_buyers():
             # framework (seen live: several buyers showing spend in the hundreds of
             # billions). When frameworks_only is set the user is deliberately looking
             # at ceiling values, so only exclude them from the general spend view.
-            spend_expr = "SUM(ca.contract_value)" if frameworks_only else f"SUM(CASE WHEN ca.is_framework = 1 OR ca.contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE ca.contract_value END)"
-            avg_expr = "AVG(ca.contract_value)" if frameworks_only else f"AVG(CASE WHEN ca.is_framework = 1 OR ca.contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN NULL ELSE ca.contract_value END)"
+            spend_expr = "SUM(ca.contract_value)" if frameworks_only else f"SUM(CASE WHEN ca.is_framework = 1 OR ca.contract_value < 0 OR ca.contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE ca.contract_value END)"
+            avg_expr = "AVG(ca.contract_value)" if frameworks_only else f"AVG(CASE WHEN ca.is_framework = 1 OR ca.contract_value < 0 OR ca.contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN NULL ELSE ca.contract_value END)"
 
             having_sql = f"HAVING MAX(TRIM(ca.authority_name)) != '' AND COUNT(DISTINCT ca.id) > 0 AND {spend_expr} >= ?"
             params.append(min_spend)
@@ -578,8 +578,8 @@ def get_buyer_detail(authority_name: str):
             WITH {buyer_cte}
             SELECT
                 COUNT(DISTINCT ca.id) as total_contracts,
-                SUM(CASE WHEN ca.is_framework = 1 OR ca.contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE ca.contract_value END) as total_spend,
-                AVG(CASE WHEN ca.is_framework = 1 OR ca.contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN NULL ELSE ca.contract_value END) as avg_contract_value,
+                SUM(CASE WHEN ca.is_framework = 1 OR ca.contract_value < 0 OR ca.contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE ca.contract_value END) as total_spend,
+                AVG(CASE WHEN ca.is_framework = 1 OR ca.contract_value < 0 OR ca.contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN NULL ELSE ca.contract_value END) as avg_contract_value,
                 SUM(CASE WHEN ca.is_framework = 1 THEN ca.contract_value ELSE 0 END) as framework_total_ceiling,
                 COUNT(CASE WHEN ca.is_framework = 1 THEN 1 ELSE NULL END) as framework_appointments,
                 MIN(ca.date_signed) as earliest_award,
@@ -656,7 +656,7 @@ def get_buyer_detail(authority_name: str):
             SELECT
                 supplier_name,
                 COUNT(DISTINCT id) as contracts_won,
-                SUM(CASE WHEN is_framework = 1 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE contract_value END) as total_value,
+                SUM(CASE WHEN is_framework = 1 OR contract_value < 0 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE contract_value END) as total_value,
                 SUM(CASE WHEN is_framework = 1 THEN contract_value ELSE 0 END) as framework_total_ceiling,
                 COUNT(CASE WHEN is_framework = 1 THEN 1 END) as framework_appointments,
                 MAX(date_signed) as last_award_date
@@ -745,7 +745,7 @@ def get_buyer_detail(authority_name: str):
                 {cpv_code_expr} as cpv_code,
                 {cpv_desc_expr} as cpv_description,
                 COUNT(DISTINCT id) as count,
-                SUM(CASE WHEN is_framework = 1 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE contract_value END) as total_value
+                SUM(CASE WHEN is_framework = 1 OR contract_value < 0 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE contract_value END) as total_value
             FROM deduped_awards
             WHERE {_norm_auth_sql("authority_name")} = {_norm_auth_sql("?")}
             GROUP BY {cpv_code_expr}, {cpv_desc_expr}
@@ -1228,7 +1228,7 @@ def get_opportunity_feed():
             # buyer_stats' own refresh) -- this was the one place still missing it, which is
             # exactly why this card's total could run into the billions while the profile modal
             # (and this feed's own "fast" pass from buyer_stats) showed the correct, excluded figure.
-            spend_expr = "SUM(ca.contract_value)" if frameworks_only else f"SUM(CASE WHEN ca.is_framework = 1 OR ca.contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE ca.contract_value END)"
+            spend_expr = "SUM(ca.contract_value)" if frameworks_only else f"SUM(CASE WHEN ca.is_framework = 1 OR ca.contract_value < 0 OR ca.contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE ca.contract_value END)"
 
             # Group by a case/whitespace-normalized key (see _norm_auth_sql) so the same
             # real buyer published under different casing across portals doesn't fragment
