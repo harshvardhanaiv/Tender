@@ -414,6 +414,7 @@ function loadPrefs() {
   const cachedPlan = lsGet("tf_user_plan", null);
   if (cachedPlan) {
     state.plan = cachedPlan;
+    updatePlanBadge(); // show the real plan from the first paint, not the markup's placeholder
   }
   updateCreditDisplay();
 
@@ -695,6 +696,7 @@ async function loadCurrentUser() {
       lsSet("tf_user_plan", state.plan);
     }
     state.lowCredit = !!data.low_credit;
+    updatePlanBadge(); // updateCreditDisplay() returns before this while the balance is unknown
     state.role = data.role || "member";
     state.isAdmin = !!data.is_admin;
     if (data.csrf_token) {
@@ -17021,12 +17023,10 @@ function applyColorPreview(color) {
   if (stop1) stop1.setAttribute("stop-color", cleanHex);
   if (stop2) stop2.setAttribute("stop-color", hoverHex);
 
-  // ── Plan badge: tint with accent color ──
-  const planBadgePro = document.getElementById("headerPlanBadge");
-  if (planBadgePro && rgb) {
-    planBadgePro.style.background = `linear-gradient(135deg, ${cleanHex} 0%, ${hoverHex} 100%)`;
-    planBadgePro.style.color = "#ffffff";
-    planBadgePro.style.boxShadow = `0 2px 6px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)`;
+  // ── Plan badge: the Solo badge takes the accent colour (styles.css reads these); Teams and Free keep their own ──
+  if (rgb) {
+    root.style.setProperty("--plan-badge-bg", `linear-gradient(135deg, ${cleanHex} 0%, ${hoverHex} 100%)`);
+    root.style.setProperty("--plan-badge-shadow", `0 2px 6px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)`);
   }
 
   // ── Active nav/filter highlight ──
@@ -17120,12 +17120,8 @@ function resetDefaultThemeColor() {
   if (stop1) stop1.setAttribute("stop-color", DEFAULT_ACCENT_COLOR);
   if (stop2) stop2.setAttribute("stop-color", "#6D5FA3");
 
-  const planBadgePro = document.getElementById("headerPlanBadge");
-  if (planBadgePro) {
-    planBadgePro.style.background = "";
-    planBadgePro.style.color = "";
-    planBadgePro.style.boxShadow = "";
-  }
+  root.style.removeProperty("--plan-badge-bg");
+  root.style.removeProperty("--plan-badge-shadow");
 
   const hexDisplay = $("selectedHexDisplay");
   if (hexDisplay) hexDisplay.textContent = DEFAULT_ACCENT_COLOR;

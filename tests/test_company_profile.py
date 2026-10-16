@@ -59,6 +59,31 @@ def test_errors_not_cached_and_soft():
     assert not cp._CACHE, "a failed call must be retried, not remembered"
 
 
+def _http_error(code, body=b"{}"):
+    import io
+    import urllib.error
+    return urllib.error.HTTPError("https://places.googleapis.com/v1/places:searchText", code, "x", {}, io.BytesIO(body))
+
+
+def test_a_google_failure_says_why_without_leaking_anything():
+    import urllib.error
+    config.GOOGLE_PLACES_API_KEY = "sk-secret-key-123"
+    for exc, needle in [
+        (_http_error(403, b'{"error":{"message":"Places API (New) has not been used in project 123 before"}}'), "Places API (New) is enabled"),
+        (_http_error(400), "rejected the request"),
+        (_http_error(429), "quota"),
+        (_http_error(500), "HTTP 500"),
+        (urllib.error.URLError("timed out"), "did not answer within"),
+        (ValueError("not json"), "could not be read"),
+    ]:
+        cp._CACHE.clear()
+        cp._get_json = fake({"places:searchText": exc})
+        g = cp.google("Acme Ltd", None)
+        assert g["status"] == "error" and needle in g["detail"], (exc, g)
+        assert "sk-secret-key-123" not in str(g) and "project 123" not in g["detail"]
+        assert not cp._CACHE
+
+
 def test_google():
     cp._CACHE.clear()
     config.GOOGLE_PLACES_API_KEY = "k"

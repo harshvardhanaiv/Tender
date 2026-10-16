@@ -547,6 +547,16 @@ body {
   box-shadow: 0 2px 6px rgba(249, 115, 22, 0.3);
 }
 
+/* Header badge: empty and invisible until the plan is known, so it never shows a placeholder plan then switches.
+   Solo follows the user's accent colour (set as --plan-badge-* by applyColorPreview); Teams and Free keep their own. */
+.plan-badge--pending {
+  visibility: hidden;
+}
+#headerPlanBadge.plan-badge--pro {
+  background: var(--plan-badge-bg, linear-gradient(135deg, #7c3aed 0%, #6366f1 100%));
+  box-shadow: var(--plan-badge-shadow, 0 2px 6px rgba(124, 58, 237, 0.2));
+}
+
 .topbar__left {
   display: flex;
   align-items: center;

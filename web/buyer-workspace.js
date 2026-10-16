@@ -692,7 +692,10 @@
   const SOURCE_NOTE = { not_connected: "Not connected: no API key is configured.", not_found: "No confident match found.", no_reviews: "Listed, but no reviews yet.", error: "Unavailable right now." };
   function ratingCardHtml(label, r) {
     const head = `<div class="bw-stat__label">${esc(label)}</div>`;
-    if (!r || r.status !== "ok") return `<div class="bw-stat">${head}<div class="bw-stat__value bw-stat__value--sm bw-faint">–</div><div class="bw-stat__hint">${esc(SOURCE_NOTE[r && r.status] || SOURCE_NOTE.error)}</div></div>`;
+    if (!r || r.status !== "ok") {
+      const why = r && r.status === "error" && typeof r.detail === "string" && r.detail ? `<div class="bw-stat__hint">${esc(r.detail)}</div>` : "";
+      return `<div class="bw-stat">${head}<div class="bw-stat__value bw-stat__value--sm bw-faint">–</div><div class="bw-stat__hint">${esc(SOURCE_NOTE[r && r.status] || SOURCE_NOTE.error)}</div>${why}</div>`;
+    }
     const link = safeUrl(r.url) ? ` <a class="bw-link" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">View</a>` : "";
     return `<div class="bw-stat">${head}<div class="bw-stat__value">${esc(Number(r.rating).toFixed(1))} <small>/ 5</small></div><div class="bw-stat__hint">${fmtInt(r.count || 0)} reviews${link}</div></div>`;
   }
