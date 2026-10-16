@@ -15,6 +15,7 @@ from etenders_scraper.awards import (
     SINGLE_AWARD_STATS_CEILING_GBP,
     DEDUPED_AWARDS_CTE_SQL,
 )
+from tender_app.security import rate_limit
 from tender_app.geo import geo_radius_clause
 from tender_app.supplier_classifier import classify_supplier_real_data, is_known_large_enterprise
 from tender_app.ch_matcher import normalize_ch_company_number, is_valid_ch_company_number, calculate_name_similarity, clean_contact_field
@@ -999,6 +1000,98 @@ def get_supplier_companies_house(supplier_id: int):
         conn.close()
 
 
+# ── contact details found on the supplier's own website ────────────────────────────────────────
+_CONTACT_FRESH_DAYS = {"found": 30, "partial": 30, "not_found": 7, "skipped": 7}
+
+
+def _ensure_contact_table(cursor, conn) -> None:
+    from tender_app.db_ext import create_supplier_contact_tables
+    create_supplier_contact_tables(cursor)
+    conn.commit()
+
+
+def _cached_contacts(cursor, conn, supplier_id: int) -> dict[str, Any] | None:
+    """The stored lookup for a supplier, shaped for the panel, or None when none (or no table yet)."""
+    import json as _json
+    try:
+        _execute(cursor, conn, "SELECT status, website, emails, phones, social, source_url, verified_by, checked_at "
+                               "FROM supplier_contact_enrichment WHERE supplier_id = ?;", (supplier_id,))
+        row = cursor.fetchone()
+    except Exception:
+        conn.rollback()
+        return None
+    if not row:
+        return None
+    status, website, emails, phones, social, source_url, verified_by, checked_at = row[:8]
+
+    def _load(text, default):
+        try:
+            return _json.loads(text) if text else default
+        except ValueError:
+            return default
+    return {"status": status, "website": website or "", "emails": _load(emails, []), "phones": _load(phones, []),
+            "social": _load(social, {}), "source_url": source_url or "", "verified_by": verified_by or "",
+            "checked_at": checked_at.isoformat() if checked_at else None}
+
+
+def _contacts_are_fresh(cached: dict[str, Any] | None) -> bool:
+    from datetime import datetime, timedelta
+    if not cached or not cached.get("checked_at"):
+        return False
+    try:
+        age = datetime.utcnow() - datetime.fromisoformat(cached["checked_at"])
+    except ValueError:
+        return False
+    return age < timedelta(days=_CONTACT_FRESH_DAYS.get(cached["status"], 7))
+
+
+def _contact_search(query: str) -> list[dict]:
+    """Web search used only to find a company's own site (the app's existing search helper)."""
+    from tender_app.blueprints.profiles_bp import search_duckduckgo
+    return search_duckduckgo(query, max_results=6)
+
+
+@suppliers_bp.route("/api/suppliers/<int:supplier_id>/contacts/enrich", methods=["POST"])
+@rate_limit(20, 60)
+def enrich_supplier_contacts(supplier_id: int):
+    """Look the supplier's website, email, phone and social links up on its own site and keep what was found.
+    Answers from the stored result when it is recent (30 days; 7 days for 'nothing found'). Reads only public pages."""
+    from tender_app import supplier_contacts as sc
+    import json as _json
+    conn = _get_connection()
+    cursor = conn.cursor()
+    try:
+        _ensure_contact_table(cursor, conn)
+        _execute(cursor, conn, "SELECT id, name, company_number, address, email, website FROM suppliers WHERE id = ?;", (supplier_id,))
+        row = cursor.fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Supplier not found"}), 404
+        cached = _cached_contacts(cursor, conn, supplier_id)
+        if _contacts_are_fresh(cached) and request.args.get("force") != "1":
+            return jsonify({"ok": True, "cached": True, "found_contacts": cached})
+        sid, name, cnum, address, email, website = row[:6]
+        result = sc.enrich_supplier(
+            name, address=clean_contact_field(address), company_number=normalize_ch_company_number(cnum) or "",
+            email=clean_contact_field(email), website=clean_contact_field(website), search=_contact_search,
+        )
+        _execute(cursor, conn, """
+            INSERT INTO supplier_contact_enrichment (supplier_id, status, website, emails, phones, social, source_url, verified_by, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, (NOW() AT TIME ZONE 'utc'))
+            ON CONFLICT (supplier_id) DO UPDATE SET status = EXCLUDED.status, website = EXCLUDED.website, emails = EXCLUDED.emails,
+                phones = EXCLUDED.phones, social = EXCLUDED.social, source_url = EXCLUDED.source_url,
+                verified_by = EXCLUDED.verified_by, checked_at = EXCLUDED.checked_at;
+        """, (supplier_id, result.get("status") or "not_found", result.get("website"), _json.dumps(result.get("emails") or []),
+              _json.dumps(result.get("phones") or []), _json.dumps(result.get("social") or {}), result.get("source_url"),
+              result.get("verified_by")))
+        conn.commit()
+        return jsonify({"ok": True, "cached": False, "found_contacts": _cached_contacts(cursor, conn, supplier_id)})
+    except Exception as ex:
+        conn.rollback()
+        return jsonify({"ok": False, "error": str(ex)}), 500
+    finally:
+        conn.close()
+
+
 @suppliers_bp.route("/api/suppliers/<identifier>", methods=["GET"])
 def get_supplier_detail(identifier: str):
     """Fetch complete supplier profile and aggregated intelligence metrics with date range filtering."""
@@ -1084,7 +1177,8 @@ def get_supplier_detail(identifier: str):
             "region": sup_row.get("region") or "UK",
             "sme_status": sme_st,
             "vcse_status": vcse_st,
-            "created_at": str(sup_row.get("created_at", ""))
+            "created_at": str(sup_row.get("created_at", "")),
+            "found_contacts": _cached_contacts(cursor, conn, sup_id) if name_match_confident else None,
         }
 
         # Contract awards list with date filtering (scoped to the 6 real UK/IE portals)

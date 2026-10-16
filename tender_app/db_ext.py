@@ -611,6 +611,26 @@ def create_growth_tables(cursor) -> None:
     )
 
 
+def create_supplier_contact_tables(cursor) -> None:
+    """What tender_app/supplier_contacts.py found on a supplier's own website (kept apart from suppliers.email/phone/
+    website, which come from the notice and are never overwritten). emails/phones/social are JSON text."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supplier_contact_enrichment (
+            supplier_id  INTEGER PRIMARY KEY REFERENCES suppliers(id) ON DELETE CASCADE,
+            status       TEXT NOT NULL,
+            website      TEXT,
+            emails       TEXT,
+            phones       TEXT,
+            social       TEXT,
+            source_url   TEXT,
+            verified_by  TEXT,
+            checked_at   TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+        )
+        """
+    )
+
+
 def create_email_send_tables(cursor) -> None:
     """Email sent through Outreach (tender_app/email_send.py, email_send_service.py, blueprints/email_bp.py).
 
@@ -706,6 +726,7 @@ def run_saas_migrations(conn: Any) -> None:
         create_market_engagement_tables(cursor)
         create_growth_tables(cursor)
         create_email_send_tables(cursor)
+        create_supplier_contact_tables(cursor)
         conn.commit()
     except Exception:
         conn.rollback()
