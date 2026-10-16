@@ -47,6 +47,9 @@ NOT_A_COMPANY_SITE = (
 )
 ROLE_LOCALPARTS = ("info", "enquiries", "enquiry", "contact", "hello", "office", "sales", "admin", "mail", "customerservice",
                    "customer.service", "support", "bids", "tenders", "procurement", "reception", "business", "general")
+BUYER_WORDS = ("procurement", "tender", "contracts", "commercial", "purchasing", "sourcing", "supplier")
+BUYER_LINK_WORDS = r"procure|tender|contract|commission|supplier|business|contact|enquir"
+BUYER_PATHS = ("/procurement", "/business/procurement", "/contact-us", "/contact")
 JUNK_EMAIL_DOMAINS = ("example.com", "example.org", "sentry.io", "sentry-next.wixpress.com", "wixpress.com", "domain.com",
                       "email.com", "yourdomain.com", "yoursite.com", "mysite.com", "schema.org", "w3.org")
 JUNK_EMAIL_SUFFIX = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js", ".woff", ".woff2")
@@ -156,15 +159,26 @@ def candidate_domains(name: str, limit: int = 6) -> list[str]:
     return out[:limit]
 
 
-def usable_website(url: str | None) -> str:
-    """The site root of a URL, or '' when it is empty, a directory/social/registry site, or not a web address."""
+GOV_SERVICE_HOSTS = ("service.gov.uk", "contractsfinder", "find-tender")
+
+
+def usable_website(url: str | None, allow_gov: bool = False) -> str:
+    """The site root of a URL, or '' when it is empty, a directory/social/registry site, or not a web address.
+    allow_gov: a buyer's own site (council.gov.uk, trust.nhs.uk) is wanted; GOV.UK services and registers still are not."""
     u = (url or "").strip()
     if not u or u.lower() in ("n/a", "not available", "none", "-"):
         return ""
     if "//" not in u:
         u = "https://" + u
     host = (urlparse(u).hostname or "").lower()
-    if not host or "." not in host or any(bad in host for bad in NOT_A_COMPANY_SITE):
+    if not host or "." not in host:
+        return ""
+    if allow_gov:
+        if host in ("gov.uk", "www.gov.uk") or any(bad in host for bad in GOV_SERVICE_HOSTS):
+            return ""
+        if any(bad in host for bad in NOT_A_COMPANY_SITE if bad != "gov.uk"):
+            return ""
+    elif any(bad in host for bad in NOT_A_COMPANY_SITE):
         return ""
     return site_root(u)
 
@@ -227,7 +241,7 @@ def normalise_phone(raw: str) -> str:
     return f"+44 {digits[:4]} {digits[4:]}" if digits[0] == "1" else f"+44 {digits[:3]} {digits[3:6]} {digits[6:]}"
 
 
-def extract_contacts(html: str, base_url: str = "") -> dict[str, Any]:
+def extract_contacts(html: str, base_url: str = "", link_words: str = r"contact|get-in-touch|get in touch|enquir|find-us|find us|about") -> dict[str, Any]:
     """Emails, phones and social links from one page. Links (mailto:/tel:) come first because they are deliberate."""
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(html or "", "html.parser")
@@ -259,7 +273,7 @@ def extract_contacts(html: str, base_url: str = "") -> dict[str, Any]:
                 if path.strip("/") not in ("share", "intent", "home"):
                     social["twitter"] = absolute.split("?")[0].rstrip("/")
             label = (a.get_text(" ") or "").lower()
-            if base_url and re.search(r"contact|get-in-touch|get in touch|enquir|find-us|find us|about", label + " " + path):
+            if base_url and re.search(link_words, label + " " + path):
                 if (urlparse(absolute).hostname or "") == (urlparse(base_url).hostname or "") and absolute not in contact_links:
                     contact_links.append(absolute.split("#")[0])
 
@@ -271,13 +285,15 @@ def extract_contacts(html: str, base_url: str = "") -> dict[str, Any]:
     return {"emails": emails, "phones": phones, "social": social, "contact_links": contact_links[:6], "text": text}
 
 
-def rank_emails(emails: list[str], site_domain: str, limit: int = 3) -> list[str]:
-    """On the company's own domain first, role mailboxes (info@, enquiries@) before personal-looking ones."""
-    def score(e: str) -> tuple[int, int]:
+def rank_emails(emails: list[str], site_domain: str, limit: int = 3, prefer: tuple[str, ...] = ()) -> list[str]:
+    """On the company's own domain first, role mailboxes (info@, enquiries@) before personal-looking ones.
+    prefer: words that should come first of all (a buyer's procurement / tenders / contracts inbox)."""
+    def score(e: str) -> tuple[int, int, int]:
         local, _, dom = e.partition("@")
         own = 0 if registrable_domain(dom) == registrable_domain(site_domain) else 1
         role = 0 if local.split("+")[0] in ROLE_LOCALPARTS else 1
-        return (own, role)
+        wanted = 0 if prefer and any(w in local for w in prefer) else 1
+        return (wanted, own, role)
     kept = [e for e in emails if registrable_domain(e.partition("@")[2]) == registrable_domain(site_domain)
             or e.partition("@")[2] in FREE_MAIL]
     return sorted(dict.fromkeys(kept), key=score)[:limit]
@@ -348,7 +364,7 @@ def allowed_by_robots(url: str, fetcher: Callable[[str], tuple[str, str] | None]
 # ── finding the company ─────────────────────────────────────────────────────────────────────────
 
 def _check_site(root: str, name: str, postcode: str, company_number: str, get: Callable[[str], tuple[str, str] | None],
-                deadline: float, budget: list[int], trusted: bool = False) -> dict[str, Any] | None:
+                deadline: float, budget: list[int], trusted: bool = False, buyer: bool = False) -> dict[str, Any] | None:
     """Read the home page (and up to two contact/about pages). Returns the contacts only if the site is that company,
     unless the address came from the supplier itself (their notice's website or email domain), which is trusted."""
     def grab(url: str) -> tuple[str, str] | None:
@@ -361,13 +377,14 @@ def _check_site(root: str, name: str, postcode: str, company_number: str, get: C
     if not home:
         return None
     final_url, html = home
-    pages = [extract_contacts(html, final_url)]
+    link_words = BUYER_LINK_WORDS if buyer else r"contact|get-in-touch|get in touch|enquir|find-us|find us|about"
+    pages = [extract_contacts(html, final_url, link_words)]
     text = pages[0]["text"]
     if not trusted and not name_matches(name, text) and not pages[0]["contact_links"]:
         return None  # not them, and nothing to read further: do not spend the fetch budget guessing pages
     seen = {final_url}
     extra = list(pages[0]["contact_links"])
-    for guess in ("/contact", "/contact-us", "/about"):
+    for guess in (BUYER_PATHS if buyer else ("/contact", "/contact-us", "/about")):
         extra.append(root + guess)
     fetched_extra = 0
     for link in extra:
@@ -377,7 +394,7 @@ def _check_site(root: str, name: str, postcode: str, company_number: str, get: C
         got = grab(link)
         if got:
             fetched_extra += 1
-            c = extract_contacts(got[1], got[0])
+            c = extract_contacts(got[1], got[0], link_words)
             pages.append(c)
             text += " " + c["text"]
     if not trusted and not name_matches(name, text):
@@ -399,13 +416,14 @@ def _check_site(root: str, name: str, postcode: str, company_number: str, get: C
         for k, v in p["social"].items():
             social.setdefault(k, v)
     host = urlparse(final_url).hostname or ""
-    return {"website": site_root(final_url), "emails": rank_emails(emails, host), "phones": phones[:3], "social": social,
+    return {"website": site_root(final_url), "emails": rank_emails(emails, host, prefer=BUYER_WORDS if buyer else ()), "phones": phones[:3], "social": social,
             "source_url": final_url, "verified_by": "supplier_notice" if trusted else ("address_or_number" if strong else "name")}
 
 
 def enrich_supplier(name: str, *, address: str | None = None, company_number: str | None = None, email: str | None = None,
                     website: str | None = None, search: Callable[[str], list[dict]] | None = None,
-                    get: Callable[[str], tuple[str, str] | None] | None = None, now: Callable[[], float] = time.time) -> dict[str, Any]:
+                    get: Callable[[str], tuple[str, str] | None] | None = None, now: Callable[[], float] = time.time,
+                    buyer: bool = False) -> dict[str, Any]:
     """Look one supplier up. Always returns a dict with status 'found' (website + something), 'partial' (a website only),
     'not_found', or 'skipped' (nothing to go on). Never raises for network trouble."""
     get = get or fetch
@@ -418,7 +436,7 @@ def enrich_supplier(name: str, *, address: str | None = None, company_number: st
     postcode = postcode_of(address)
 
     roots: list[str] = []
-    known = usable_website(website)
+    known = usable_website(website, allow_gov=buyer)
     if known:
         roots.append(known)
     dom = domain_of_email(email)
@@ -427,11 +445,11 @@ def enrich_supplier(name: str, *, address: str | None = None, company_number: st
     trusted_roots = set(roots)  # given by the supplier itself, so no name check
     if search and not roots:
         try:
-            hits = search(f'"{name}" official website')[:6]
+            hits = search(f'"{name}" procurement contact email' if buyer else f'"{name}" official website')[:6]
         except Exception:
             hits = []
         for h in hits:
-            root = usable_website(h.get("link"))
+            root = usable_website(h.get("link"), allow_gov=buyer)
             if root and root not in roots:
                 roots.append(root)
     if not roots:
@@ -443,7 +461,7 @@ def enrich_supplier(name: str, *, address: str | None = None, company_number: st
         if key in tried or budget[0] <= 0 or now() > deadline:
             continue
         tried.add(key)
-        found = _check_site(root, name, postcode, company_number or "", get, deadline, budget, trusted=root in trusted_roots)
+        found = _check_site(root, name, postcode, company_number or "", get, deadline, budget, trusted=root in trusted_roots, buyer=buyer)
         if found:
             found["status"] = "found" if (found["emails"] or found["phones"] or found["social"]) else "partial"
             return found

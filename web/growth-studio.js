@@ -18,6 +18,7 @@
     return {
       status: "idle", id: null, detail: null, draft: null, dirty: false, preview: null, previewTarget: null, previewSeq: 0,
       warnings: null, drafting: false, error: null, lastField: "body", aiNote: "",
+      lookups: {}, // target id -> "looking" | "found" | "not_found" | "personal_only": buyer contact lookups
       outreach: {
         status: "idle", info: null, drafts: null, last: null, pushing: false, refreshing: false, personal: false, error: null,
         mail: { status: "idle", info: null, open: false, form: null, saving: false, testing: false, error: null, notice: null },
@@ -199,8 +200,15 @@
     updateTabCounts();
   }
 
+  // The client-only state of a contact lookup rides on each target for the view to read.
+  function withLookup(t) {
+    t._lookup = state.builder.lookups[t.id];
+    return t;
+  }
+
   function renderBuilder() {
     const b = state.builder;
+    if (b.detail && b.detail.targets) b.detail.targets.forEach(withLookup);
     keepFocus(() => {
       byId(PANES.builder).innerHTML = V.builderPane({
         status: b.status, error: b.error, detail: b.detail, draft: b.draft, dirty: b.dirty, preview: b.preview, previewTarget: b.previewTarget,
@@ -473,6 +481,50 @@
     renderBuilder();
     refreshPreview();
     loadOutreach();
+    queueContactLookups();
+  }
+
+  // Addresses typed but not yet saved survive a re-render triggered by a lookup finishing: what the user typed wins.
+  function keepTypedEmails(render) {
+    const typed = {};
+    document.querySelectorAll('#gsPaneBuilder input[data-field="contact_email"]').forEach((i) => { if (i.value) typed[i.dataset.id] = i.value; });
+    render();
+    Object.keys(typed).forEach((tid) => {
+      const input = document.querySelector(`#gsPaneBuilder input[data-field="contact_email"][data-id="${tid}"]`);
+      if (input) input.value = typed[tid];
+    });
+  }
+
+  // Ask the server for the contact inbox of every buyer that has none, two at a time, once per buyer per campaign.
+  // A found address is saved by the server and shown with where it came from; nothing is sent to anyone.
+  async function queueContactLookups() {
+    const b = state.builder;
+    const id = b.id;
+    const todo = ((b.detail && b.detail.targets) || []).filter((t) => !t.contact_email && !t.opted_out && !(t.id in b.lookups));
+    if (!id || !todo.length) return;
+    todo.forEach((t) => { b.lookups[t.id] = "looking"; });
+    renderBuilder();
+    const queue = todo.slice();
+    const worker = async () => {
+      while (queue.length) {
+        const t = queue.shift();
+        if (state.builder !== b || b.id !== id) return; // another campaign was opened meanwhile
+        try {
+          const res = await api("POST", `/api/growth/campaigns/${id}/targets/${t.id}/find-contact`, {});
+          if (state.builder !== b) return;
+          const outcome = (res.find_contact || {}).status;
+          b.lookups[t.id] = outcome === "found" ? "found" : outcome === "personal_only" ? "personal_only" : outcome === "already" ? "found" : "not_found";
+          keepTypedEmails(() => {
+            if (outcome === "found") applyDetail(res, false);
+            else { b.detail = res; renderBuilder(); }
+          });
+        } catch (err) {
+          b.lookups[t.id] = "not_found"; // a failed lookup leaves the manual route in place
+          keepTypedEmails(renderBuilder);
+        }
+      }
+    };
+    await Promise.all([worker(), worker()]);
   }
 
   // Whether Outreach is connected and which buyers of this campaign it has already been given (read only).
@@ -615,7 +667,7 @@
       b.detail = res;
       const target = targetId && res.targets.find((t) => t.id === targetId);
       const row = target && document.querySelector(`#gsPaneBuilder tr.gs-target[data-id="${targetId}"]`);
-      if (row && target) row.outerHTML = V.targetRow(target);
+      if (row && target) row.outerHTML = V.targetRow(withLookup(target));
       refreshPreview();
     } catch (err) {
       renderBuilder(); // put the control back to what the server has
