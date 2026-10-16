@@ -27,10 +27,15 @@ from typing import Any, Callable, Iterable
 from urllib.parse import urljoin, urlparse
 
 USER_AGENT = "TenderFlowBot/1.0 (business contact lookup; respects robots.txt)"
+# The GOV.UK notice portals answer 403 to a bot and 200 to a browser; the app already reads them with a browser agent
+# (etenders_scraper/sources). Used only for those portals' notice pages, never for a company or council site.
+BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 MAX_BYTES = 1_500_000
 MAX_FETCHES = 6
+BUYER_MAX_FETCHES = 10  # a council site needs its home page and a procurement page or two, and a wrong guess costs one
 FETCH_TIMEOUT = 4.0
 DEADLINE_SECONDS = 14.0
+BUYER_DEADLINE_SECONDS = 20.0
 MAX_REDIRECTS = 3
 
 LEGAL_WORDS = {"ltd", "limited", "plc", "llp", "llc", "inc", "corp", "corporation", "company", "co", "the", "and", "of",
@@ -49,7 +54,8 @@ ROLE_LOCALPARTS = ("info", "enquiries", "enquiry", "contact", "hello", "office",
                    "customer.service", "support", "bids", "tenders", "procurement", "reception", "business", "general")
 BUYER_WORDS = ("procurement", "tender", "contracts", "commercial", "purchasing", "sourcing", "supplier")
 BUYER_LINK_WORDS = r"procure|tender|contract|commission|supplier|business|contact|enquir"
-BUYER_PATHS = ("/procurement", "/business/procurement", "/contact-us", "/contact")
+BUYER_PATHS = ("/procurement", "/business/procurement", "/business/tenders-and-contracts", "/tenders", "/contact-us", "/contact")
+BUYER_FIRST = re.compile(r"procure|tender|contract|supplier|commission", re.I)  # pages most likely to name a procurement inbox
 JUNK_EMAIL_DOMAINS = ("example.com", "example.org", "sentry.io", "sentry-next.wixpress.com", "wixpress.com", "domain.com",
                       "email.com", "yourdomain.com", "yoursite.com", "mysite.com", "schema.org", "w3.org")
 JUNK_EMAIL_SUFFIX = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js", ".woff", ".woff2")
@@ -301,7 +307,7 @@ def rank_emails(emails: list[str], site_domain: str, limit: int = 3, prefer: tup
 
 # ── the network (injectable) ────────────────────────────────────────────────────────────────────
 
-def fetch(url: str, *, timeout: float = FETCH_TIMEOUT) -> tuple[str, str] | None:
+def fetch(url: str, *, timeout: float = FETCH_TIMEOUT, user_agent: str | None = None) -> tuple[str, str] | None:
     """(final_url, html) for a public HTML page, or None. Follows at most MAX_REDIRECTS hops, re-checking each one."""
     import requests
     current = url
@@ -309,7 +315,7 @@ def fetch(url: str, *, timeout: float = FETCH_TIMEOUT) -> tuple[str, str] | None
         if not is_public_http_url(current):
             return None
         try:
-            with requests.get(current, headers={"User-Agent": USER_AGENT, "Accept": "text/html,*/*;q=0.5"}, timeout=timeout,
+            with requests.get(current, headers={"User-Agent": user_agent or USER_AGENT, "Accept": "text/html,*/*;q=0.5"}, timeout=timeout,
                               allow_redirects=False, stream=True) as r:
                 if r.is_redirect or r.status_code in (301, 302, 303, 307, 308):
                     nxt = r.headers.get("Location")
@@ -386,9 +392,12 @@ def _check_site(root: str, name: str, postcode: str, company_number: str, get: C
     extra = list(pages[0]["contact_links"])
     for guess in (BUYER_PATHS if buyer else ("/contact", "/contact-us", "/about")):
         extra.append(root + guess)
+    if buyer:  # a procurement or tenders page is read before a general contact page
+        extra.sort(key=lambda u: 0 if BUYER_FIRST.search(urlparse(u).path) else 1)
+    max_extra = 3 if buyer else 2
     fetched_extra = 0
     for link in extra:
-        if fetched_extra >= 2 or link in seen:
+        if fetched_extra >= max_extra or link in seen:
             continue
         seen.add(link)
         got = grab(link)
@@ -423,13 +432,13 @@ def _check_site(root: str, name: str, postcode: str, company_number: str, get: C
 def enrich_supplier(name: str, *, address: str | None = None, company_number: str | None = None, email: str | None = None,
                     website: str | None = None, search: Callable[[str], list[dict]] | None = None,
                     get: Callable[[str], tuple[str, str] | None] | None = None, now: Callable[[], float] = time.time,
-                    buyer: bool = False) -> dict[str, Any]:
+                    buyer: bool = False, extra_roots: Iterable[str] = ()) -> dict[str, Any]:
     """Look one supplier up. Always returns a dict with status 'found' (website + something), 'partial' (a website only),
     'not_found', or 'skipped' (nothing to go on). Never raises for network trouble."""
     get = get or fetch
     start = now()
-    deadline = start + DEADLINE_SECONDS
-    budget = [MAX_FETCHES]
+    deadline = start + (BUYER_DEADLINE_SECONDS if buyer else DEADLINE_SECONDS)
+    budget = [BUYER_MAX_FETCHES if buyer else MAX_FETCHES]
     name = (name or "").strip()
     if not name_tokens(name):
         return {"status": "skipped", "reason": "no usable name"}
@@ -443,26 +452,45 @@ def enrich_supplier(name: str, *, address: str | None = None, company_number: st
     if dom and f"https://{dom}" not in roots:
         roots.append(f"https://{dom}")
     trusted_roots = set(roots)  # given by the supplier itself, so no name check
-    if search and not roots:
+    # sites the caller expects (a council's usual domain): tried before any search, but only believed once the page names the buyer
+    for r in extra_roots:
+        root = usable_website(r, allow_gov=buyer)
+        if root and root not in roots:
+            roots.append(root)
+
+    tried: set[str] = set()
+
+    def attempt(candidates: list[str]) -> dict[str, Any] | None:
+        for root in candidates[:6]:
+            host = urlparse(root).hostname or ""
+            key = host if buyer else registrable_domain(host)  # www. and the bare domain are different servers for a council
+            if key in tried or budget[0] <= 0 or now() > deadline:
+                continue
+            tried.add(key)
+            found = _check_site(root, name, postcode, company_number or "", get, deadline, budget, trusted=root in trusted_roots, buyer=buyer)
+            if found:
+                found["status"] = "found" if (found["emails"] or found["phones"] or found["social"]) else "partial"
+                return found
+        return None
+
+    got = attempt(roots)
+    if got:
+        return got
+    found_roots: list[str] = []
+    if search and not trusted_roots:
         try:
             hits = search(f'"{name}" procurement contact email' if buyer else f'"{name}" official website')[:6]
         except Exception:
             hits = []
         for h in hits:
             root = usable_website(h.get("link"), allow_gov=buyer)
-            if root and root not in roots:
-                roots.append(root)
-    if not roots:
-        roots.extend(f"https://{d}" for d in candidate_domains(name))
-
-    tried: set[str] = set()
-    for root in roots[:6]:
-        key = registrable_domain(urlparse(root).hostname or "")
-        if key in tried or budget[0] <= 0 or now() > deadline:
-            continue
-        tried.add(key)
-        found = _check_site(root, name, postcode, company_number or "", get, deadline, budget, trusted=root in trusted_roots, buyer=buyer)
-        if found:
-            found["status"] = "found" if (found["emails"] or found["phones"] or found["social"]) else "partial"
-            return found
+            if root and root not in roots and root not in found_roots:
+                found_roots.append(root)
+        got = attempt(found_roots)
+        if got:
+            return got
+    if not roots and not found_roots:
+        got = attempt([f"https://{d}" for d in candidate_domains(name)])
+        if got:
+            return got
     return {"status": "not_found"}

@@ -652,6 +652,11 @@ def create_buyer_contact_cache(cursor) -> None:
         )
         """
     )
+    # an answer found by an older, weaker lookup (version 1) is looked up again instead of being believed for days
+    # (checked first, so the usual request does not take the table lock an ALTER needs)
+    cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'buyer_contact_cache' AND column_name = 'lookup_version'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE buyer_contact_cache ADD COLUMN IF NOT EXISTS lookup_version INTEGER NOT NULL DEFAULT 1")
 
 
 def create_email_send_tables(cursor) -> None:

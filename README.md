@@ -255,6 +255,15 @@ Public Contracts Scotland; only those exact hosts are ever fetched) and the buye
 contact pages). Only addresses that look like the public body's own are kept (an award notice also names the winning
 supplier, and every notice carries the portal's helpdesk), and role inboxes (procurement@, tenders@, contracts@, info@)
 are preferred. The inbox is saved in the empty contact box with where it was found, never over an address the user typed.
-A named person's address is not filled in automatically; the user is told and adds a role inbox themselves.
+A named person's address is not filled in automatically, but it is offered with a **Use this address** button (the
+response carries `find_contact.suggestion`), so the user does not have to open the notice.
+Where the buyer's website comes from, in order: the website the notice states, the domain of the notice's address,
+the usual domain of a public body of that name (`public_body_domains`: swale.gov.uk for Swale Borough Council,
+x.ac.uk, x.police.uk, x.nhs.uk; only believed once the page names the buyer), and only then a web search (which is
+often blocked, so it is no longer the first resort). The GOV.UK notice portals answer 403 to a bot, so their notice
+pages are read with a browser user agent, as the app's scrapers already do; a council's own site is always fetched with
+the honest TenderFlowBot agent. A site that blocks us (Swale's answers 403 to everything) is not worked around: the
+notice's named contact is offered instead and nothing is guessed. `buyer_contact_cache.lookup_version` is 2; answers
+from the older, weaker lookup are looked up again.
 `POST /api/growth/campaigns/<id>/targets/<tid>/find-contact`; answers are cached per buyer in `buyer_contact_cache`
 (30 days; 7 days for "nothing published"). Nothing is emailed by looking an address up.

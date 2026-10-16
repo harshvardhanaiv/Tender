@@ -804,6 +804,7 @@ def growth_update_target(cid: int, tid: int):
 
 # ── find a buyer's contact inbox instead of sending the user to the notice ───────────────────────
 _CONTACT_FRESH_DAYS = {"found": 30, "not_found": 7}
+_CONTACT_LOOKUP_VERSION = 2  # 2: notice read with a browser agent, notice website and council domains tried (1 missed most councils)
 
 
 def _contact_search(query: str) -> list[dict]:
@@ -812,17 +813,17 @@ def _contact_search(query: str) -> list[dict]:
 
 
 def _cached_buyer_contact(cur, buyer_key: str) -> dict[str, Any] | None:
-    cur.execute("SELECT status, email, candidates, source, source_url, website, checked_at FROM buyer_contact_cache WHERE buyer_key = %s", (buyer_key,))
+    cur.execute("SELECT status, email, candidates, source, source_url, website, checked_at, lookup_version FROM buyer_contact_cache WHERE buyer_key = %s", (buyer_key,))
     row = cur.fetchone()
     if not row:
         return None
-    status, email, candidates, source, source_url, website, checked_at = row
+    status, email, candidates, source, source_url, website, checked_at, version = row
     try:
         cands = json.loads(candidates) if candidates else []
     except ValueError:
         cands = []
     from datetime import datetime, timedelta
-    fresh = bool(checked_at) and datetime.utcnow() - checked_at < timedelta(days=_CONTACT_FRESH_DAYS.get(status, 7))
+    fresh = bool(checked_at) and (version or 1) >= _CONTACT_LOOKUP_VERSION and datetime.utcnow() - checked_at < timedelta(days=_CONTACT_FRESH_DAYS.get(status, 7))
     return {"fresh": fresh, "status": status, "email": email, "candidates": cands, "source": source,
             "source_url": source_url, "website": website}
 
@@ -854,13 +855,13 @@ def growth_find_contact(cid: int, tid: int):
                 urls = [l.get("url") for l in (target["snapshot"].get("links") or []) if isinstance(l, dict)]
                 found = bcn.find_buyer_contact(target["buyer_name"], urls, search=_contact_search)
                 cur.execute(
-                    """INSERT INTO buyer_contact_cache (buyer_key, status, email, candidates, source, source_url, website, checked_at)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, (NOW() AT TIME ZONE 'utc'))
+                    """INSERT INTO buyer_contact_cache (buyer_key, status, email, candidates, source, source_url, website, checked_at, lookup_version)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, (NOW() AT TIME ZONE 'utc'), %s)
                        ON CONFLICT (buyer_key) DO UPDATE SET status = EXCLUDED.status, email = EXCLUDED.email,
                            candidates = EXCLUDED.candidates, source = EXCLUDED.source, source_url = EXCLUDED.source_url,
-                           website = EXCLUDED.website, checked_at = EXCLUDED.checked_at""",
+                           website = EXCLUDED.website, checked_at = EXCLUDED.checked_at, lookup_version = EXCLUDED.lookup_version""",
                     (target["buyer_key"], found["status"], found.get("email"), json.dumps(found.get("candidates") or []),
-                     found.get("source"), found.get("source_url"), found.get("website")),
+                     found.get("source"), found.get("source_url"), found.get("website"), _CONTACT_LOOKUP_VERSION),
                 )
                 conn.commit()
                 result = {"status": found["status"], "email": found.get("email"), "candidates": found.get("candidates") or [],
@@ -881,7 +882,11 @@ def growth_find_contact(cid: int, tid: int):
                     status = "found"
                 else:
                     status = "personal_only"
-        return jsonify(_detail(conn, username, cid, find_contact={"target_id": tid, "status": status}))
+        fc: dict[str, Any] = {"target_id": tid, "status": status}
+        if status == "personal_only" and best and gs.valid_email(best.get("email")):
+            # a named person's address is never filled in by itself; it is offered, and the user decides
+            fc["suggestion"] = {"email": best["email"], "source": best.get("source"), "url": best.get("source_url")}
+        return jsonify(_detail(conn, username, cid, find_contact=fc))
     finally:
         conn.close()
 

@@ -443,7 +443,15 @@
     const manual = link
       ? ` <a class="gs-link" href="${esc(link)}" target="_blank" rel="noreferrer noopener">Check the notice ↗</a>`
       : " Look on the buyer's website for a procurement inbox.";
-    if (t._lookup === "personal_only") return `<div class="gs-hint">Only a named person's address is published. Add a role inbox yourself.${manual}</div>`;
+    if (t._lookup === "personal_only") {
+      const sg = t._suggest;
+      const from = sg && sg.source === "website" ? "the buyer's website" : "the notice";
+      return sg && sg.email
+        ? `<div class="gs-hint">${esc(from[0].toUpperCase() + from.slice(1))} names a contact: <b>${esc(sg.email)}</b> (a named person, not a shared inbox). ` +
+          `<button type="button" class="gs-btn gs-btn--sm" data-action="use-suggestion" data-id="${esc(t.id)}" data-email="${esc(sg.email)}">Use this address</button> ` +
+          `or type a role inbox yourself.${manual}</div>`
+        : `<div class="gs-hint">Only a named person's address is published. Add a role inbox yourself.${manual}</div>`;
+    }
     if (t._lookup === "not_found") return `<div class="gs-hint">No public inbox found.${manual}</div>`;
     return link
       ? `<div class="gs-hint">No address yet. <a class="gs-link" href="${esc(link)}" target="_blank" rel="noreferrer noopener">Find the contact on the notice ↗</a></div>`

@@ -153,6 +153,56 @@ def test_a_named_persons_address_is_not_filled_in():
     with_fake(fake, run)
 
 
+def test_a_named_contact_is_offered_to_the_user_but_still_not_filled_in():
+    fake = Fake({buyer(3): found("jane.smith@three.example", role=False, source="notice")})
+
+    def run():
+        c = client(USER_A)
+        cid, (tid,) = make_campaign(USER_A, [(buyer(3), "", "not_sent")])
+        code, body = post(c, cid, tid)
+        assert code == 200 and body["find_contact"]["status"] == "personal_only"
+        assert body["find_contact"]["suggestion"] == {"email": "jane.smith@three.example", "source": "notice", "url": NOTICE}
+        assert not target(body, tid)["contact_email"], "offered, never saved until the user accepts"
+        # accepting is an ordinary edit of the box
+        r = c.patch(f"/api/growth/campaigns/{cid}/targets/{tid}", headers=H, json={"contact_email": body["find_contact"]["suggestion"]["email"]})
+        assert r.status_code == 200 and target(r.get_json(), tid)["contact_email"] == "jane.smith@three.example"
+    with_fake(fake, run)
+
+
+def test_a_role_inbox_carries_no_suggestion():
+    fake = Fake({buyer(8): found("procurement@eight.example")})
+
+    def run():
+        cid, (tid,) = make_campaign(USER_A, [(buyer(8), "", "not_sent")])
+        body = post(client(USER_A), cid, tid)[1]
+        assert body["find_contact"]["status"] == "found" and "suggestion" not in body["find_contact"]
+    with_fake(fake, run)
+
+
+def test_an_answer_from_the_older_weaker_lookup_is_looked_up_again():
+    fake = Fake({buyer(9): found("procurement@nine.example")})
+
+    def run():
+        c = client(USER_A)
+        conn = db()
+        try:
+            with conn.cursor() as cur:
+                from tender_app.db_ext import create_buyer_contact_cache
+                create_buyer_contact_cache(cur)
+                cur.execute("""INSERT INTO buyer_contact_cache (buyer_key, status, email, candidates, source, source_url, website, checked_at, lookup_version)
+                               VALUES (%s, 'not_found', NULL, '[]', NULL, NULL, NULL, (NOW() AT TIME ZONE 'utc'), 1)""", (buyer(9).upper(),))
+            conn.commit()
+        finally:
+            conn.close()
+        cid, (tid,) = make_campaign(USER_A, [(buyer(9), "", "not_sent")])
+        code, body = post(c, cid, tid)
+        assert body["find_contact"]["status"] == "found" and len(fake.calls) == 1, "a fresh version-1 'not found' must not be believed"
+        cid2, (t2,) = make_campaign(USER_A, [(buyer(9), "", "not_sent")])
+        post(c, cid2, t2)
+        assert len(fake.calls) == 1, "the new answer is cached as usual"
+    with_fake(fake, run)
+
+
 def test_nothing_published_leaves_the_box_empty_and_is_remembered():
     fake = Fake({buyer(4): {"status": "not_found", "email": None, "candidates": [], "website": None}})
 

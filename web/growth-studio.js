@@ -19,6 +19,7 @@
       status: "idle", id: null, detail: null, draft: null, dirty: false, preview: null, previewTarget: null, previewSeq: 0,
       warnings: null, drafting: false, error: null, lastField: "body", aiNote: "",
       lookups: {}, // target id -> "looking" | "found" | "not_found" | "personal_only": buyer contact lookups
+      suggest: {}, // target id -> {email, source, url}: a named person's address the notice gives, offered but never filled in
       outreach: {
         status: "idle", info: null, drafts: null, last: null, pushing: false, refreshing: false, personal: false, error: null,
         mail: { status: "idle", info: null, open: false, form: null, saving: false, testing: false, error: null, notice: null },
@@ -203,6 +204,7 @@
   // The client-only state of a contact lookup rides on each target for the view to read.
   function withLookup(t) {
     t._lookup = state.builder.lookups[t.id];
+    t._suggest = (state.builder.suggest || {})[t.id];
     return t;
   }
 
@@ -513,6 +515,7 @@
           const res = await api("POST", `/api/growth/campaigns/${id}/targets/${t.id}/find-contact`, {});
           if (state.builder !== b) return;
           const outcome = (res.find_contact || {}).status;
+          if (outcome === "personal_only" && (res.find_contact || {}).suggestion) b.suggest[t.id] = res.find_contact.suggestion;
           b.lookups[t.id] = outcome === "found" ? "found" : outcome === "personal_only" ? "personal_only" : outcome === "already" ? "found" : "not_found";
           keepTypedEmails(() => {
             if (outcome === "found") applyDetail(res, false);
@@ -859,6 +862,8 @@
       input.scrollIntoView({ block: "center", behavior: "smooth" });
       input.focus();
     },
+    // a named person's address from the notice, accepted by the user: saved like one they typed
+    "use-suggestion": (a) => run(() => patchQuietly({ contact_email: a.dataset.email }, Number(a.dataset.id))),
     "mail-edit": () => {
       const mail = state.builder.outreach.mail;
       mail.open = true;
