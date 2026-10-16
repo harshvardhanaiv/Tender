@@ -178,3 +178,19 @@ Never commit `.env`, `.env.production`, service-account JSON or database files â
 - Use a reasonable delay between requests to portals (default 1 second).
 - Check each portal's terms before large automated use.
 - Unofficial tool â€” not affiliated with any government or portal operator.
+
+## Supplier contact details (website, email, phone, LinkedIn)
+
+Tender notices rarely carry contact details, so opening a supplier looks them up instead of showing a search link.
+`tender_app/supplier_contacts.py` uses the website already on the notice (or the domain of a known email); otherwise it
+searches for the company's own site, or guesses one from its name, and only accepts a site whose text contains the
+company's name (and its postcode or Companies House number when known). It reads the home page and up to two
+contact/about pages and keeps business emails, UK phone numbers and the company's LinkedIn page.
+
+* It reads public pages only: every address and redirect must resolve to a public IP, robots.txt is respected, at most
+  six small fetches per supplier, 14 s overall.
+* Results are stored in `supplier_contact_enrichment` (30 days; 7 days for "nothing found") and shown in the panel as
+  "from website". The notice's own email/phone/website fields are never overwritten.
+* `POST /api/suppliers/<id>/contacts/enrich` (rate limited; `?force=1` to look again); `GET /api/suppliers/<id>` returns
+  `found_contacts`.
+* These are business contact details from a company's own site. Check PECR/GDPR rules before using them for marketing.

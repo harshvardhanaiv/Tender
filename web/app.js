@@ -18752,6 +18752,68 @@ function queueCompaniesHouseLookup(supplierId) {
     .catch(() => { /* enrichment is optional */ });
 }
 
+// Contact details for the supplier panel: the notice's own value when it has one, otherwise what the server found on
+// the company's own website (found_contacts). Never opens a search page unless nothing was found.
+const _contactLookupsAsked = new Set();
+function queueContactLookup(supplierId) {
+  if (_contactLookupsAsked.has(supplierId)) return;  // once per supplier per session; the server remembers the answer
+  _contactLookupsAsked.add(supplierId);
+  fetch(`/api/suppliers/${supplierId}/contacts/enrich`, { method: "POST" })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      const fc = data && data.found_contacts;
+      if (fc && (fc.status === "found" || fc.status === "partial") && _selectedSupplierId === supplierId) loadSupplierDetail(supplierId);
+    })
+    .catch(() => { /* optional */ });
+}
+
+function supplierContactDisplays(s, opts = {}) {
+  const usable = (v) => (v && !/not available|n\/a/i.test(String(v)) ? String(v) : "");
+  const fc = s.found_contacts || null;
+  const found = fc && (fc.status === "found" || fc.status === "partial") ? fc : null;
+  const lookingUp = !fc;
+  const underline = opts.underline ? " text-decoration:underline;" : "";
+  const link = `color:var(--primary, #2563eb); font-weight:700;${underline}`;
+  const muted = (text, title) => `<span style="color:var(--muted,#94a3b8); font-weight:normal;" title="${esc(title)}">${text}</span>`;
+  const fromSite = ' <span style="color:var(--muted,#94a3b8); font-size:10px; font-weight:600;" title="Found on the company\'s own website">· from website</span>';
+  const pending = muted("Looking up…", "Checking the company's own website");
+  const missing = muted("Not found", "Not on the tender notice or on the company's website");
+
+  const list = (values, render) => {
+    const [first, ...rest] = values;
+    return render(first) + (rest.length ? ` <span style="color:var(--muted,#94a3b8); font-size:10px;" title="${esc(rest.join(", "))}">+${rest.length}</span>` : "") + fromSite;
+  };
+
+  const noticeEmail = usable(s.email);
+  const emails = found ? (found.emails || []) : [];
+  const email = noticeEmail
+    ? `<a href="mailto:${esc(noticeEmail)}" style="${link}">${esc(noticeEmail)}</a>`
+    : emails.length ? list(emails, (e) => `<a href="mailto:${esc(e)}" style="${link}">${esc(e)}</a>`) : (lookingUp ? pending : missing);
+
+  const noticePhone = usable(s.phone);
+  const phones = found ? (found.phones || []) : [];
+  const phone = noticePhone
+    ? `<a href="tel:${esc(noticePhone)}" style="${link}">${esc(noticePhone)}</a>`
+    : phones.length ? list(phones, (p) => `<a href="tel:${esc(p.replace(/\s+/g, ""))}" style="${link}">${esc(p)}</a>`) : (lookingUp ? pending : missing);
+
+  const noticeSite = usable(s.website);
+  const siteUrl = noticeSite ? (noticeSite.startsWith("http") ? noticeSite : "https://" + noticeSite) : (found && found.website) || "";
+  let website;
+  if (siteUrl) {
+    const shown = (noticeSite || found.website).replace(/^https?:\/\//, "").replace(/\/$/, "");
+    website = `<a href="${esc(siteUrl)}" target="_blank" rel="noopener noreferrer" style="${link}">${esc(shown)} ↗</a>${noticeSite ? "" : fromSite}`;
+  } else if (lookingUp) {
+    website = pending;
+  } else {
+    const q = `https://www.google.com/search?q=${encodeURIComponent((s.name || "") + " UK website")}`;
+    website = `<a href="${esc(q)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary, #2563eb); font-size:11px; text-decoration:underline;" title="Not found automatically: search for it">🔍 Find Website ↗</a>`;
+  }
+
+  const exactLinkedin = found && found.social && found.social.linkedin;
+  const linkedinUrl = exactLinkedin || `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(s.name || "")}`;
+  return { email, phone, website, linkedinUrl, linkedinExact: !!exactLinkedin, lookingUp };
+}
+
 async function loadSupplierDetail(supplierId) {
   _selectedSupplierId = supplierId;
 
@@ -18786,6 +18848,7 @@ async function loadSupplierDetail(supplierId) {
     if (!res.ok) throw new Error("Failed to load supplier details");
     const data = await res.json();
     if (data.supplier && !data.supplier.company_number) queueCompaniesHouseLookup(supplierId);
+    if (data.supplier && !data.supplier.found_contacts && !(data.supplier.email && data.supplier.phone && data.supplier.website)) queueContactLookup(supplierId);
 
     const s = data.supplier;
     const m = data.metrics;
@@ -18893,24 +18956,11 @@ async function loadSupplierDetail(supplierId) {
       ? (chUrl ? `<a href="${esc(chUrl)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary, #2563eb); font-weight:700; text-decoration:underline;">#${esc(s.company_number)} ↗</a>` : `#${esc(s.company_number)}`)
       : '<span style="color:var(--muted,#94a3b8);">Not available</span>';
 
-    const hasEmail = s.email && !s.email.toLowerCase().includes('not available') && !s.email.toLowerCase().includes('n/a');
-    const emailDisplay = hasEmail
-      ? `<a href="mailto:${esc(s.email)}" style="color:var(--primary, #2563eb); font-weight:700;">${esc(s.email)}</a>`
-      : '<span style="color:var(--muted,#94a3b8);" title="Unlisted on tender notice">Unlisted on notice</span>';
-
-    const hasPhone = s.phone && !s.phone.toLowerCase().includes('not available') && !s.phone.toLowerCase().includes('n/a');
-    const phoneDisplay = hasPhone
-      ? `<a href="tel:${esc(s.phone)}" style="color:var(--primary, #2563eb); font-weight:700;">${esc(s.phone)}</a>`
-      : '<span style="color:var(--muted,#94a3b8);" title="Unlisted on tender notice">Unlisted on notice</span>';
-
-    const hasWebsite = s.website && !s.website.toLowerCase().includes('not available') && !s.website.toLowerCase().includes('n/a');
-    const websiteUrl = hasWebsite ? (s.website.startsWith('http') ? s.website : 'https://' + s.website) : `https://www.google.com/search?q=${encodeURIComponent(s.name + ' UK website')}`;
-    const websiteDisplay = hasWebsite
-      ? `<a href="${esc(websiteUrl)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary, #2563eb); font-weight:700;">${esc(s.website)} ↗</a>`
-      : `<a href="${esc(websiteUrl)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary, #2563eb); font-size:11px; text-decoration:underline;" title="Search company website on Google">🔍 Find Website ↗</a>`;
-
-    const linkedinCompanyUrl = `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(s.name)}`;
-    const linkedinDisplay = `<a href="${esc(linkedinCompanyUrl)}" target="_blank" rel="noopener noreferrer" style="color:#0a66c2; font-weight:700; text-decoration:underline;">Search Company ↗</a>`;
+    const _c = supplierContactDisplays(s);
+    const emailDisplay = _c.email;
+    const phoneDisplay = _c.phone;
+    const websiteDisplay = _c.website;
+    const linkedinDisplay = `<a href="${esc(_c.linkedinUrl)}" target="_blank" rel="noopener noreferrer" style="color:#0a66c2; font-weight:700; text-decoration:underline;">${_c.linkedinExact ? "Company page" : "Search Company"} ↗</a>`;
 
     panel.innerHTML = `
       <!-- Supplier Header Card -->
@@ -19797,23 +19847,11 @@ async function showBDPlaybookModal(supplierId, awardId) {
     const chNum = hasRegNumber ? (s.company_number || regData.company_number) : '';
     const chUrl = regData.profile_url || s.ch_profile_url || (chNum && !chNum.startsWith('CF') ? `https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(chNum)}` : null);
 
-    const hasBannerEmail = s.email && !s.email.toLowerCase().includes('not available') && !s.email.toLowerCase().includes('n/a');
-    const bannerEmailDisplay = hasBannerEmail
-      ? `<a href="mailto:${esc(s.email)}" style="color:#2563eb; font-weight:700; text-decoration:underline;">${esc(s.email)}</a>`
-      : '<span style="color:#94a3b8; font-weight:normal;" title="Unlisted on tender notice">Unlisted on notice</span>';
-
-    const hasBannerPhone = s.phone && !s.phone.toLowerCase().includes('not available') && !s.phone.toLowerCase().includes('n/a');
-    const bannerPhoneDisplay = hasBannerPhone
-      ? `<a href="tel:${esc(s.phone)}" style="color:#2563eb; font-weight:700; text-decoration:underline;">${esc(s.phone)}</a>`
-      : '<span style="color:#94a3b8; font-weight:normal;" title="Unlisted on tender notice">Unlisted on notice</span>';
-
-    const hasBannerWebsite = s.website && !s.website.toLowerCase().includes('not available') && !s.website.toLowerCase().includes('n/a');
-    const bannerWebsiteUrl = hasBannerWebsite ? (s.website.startsWith('http') ? s.website : 'https://' + s.website) : `https://www.google.com/search?q=${encodeURIComponent(s.name + ' UK website')}`;
-    const bannerWebsiteDisplay = hasBannerWebsite
-      ? `<a href="${esc(bannerWebsiteUrl)}" target="_blank" rel="noopener noreferrer" style="color:#2563eb; font-weight:700; text-decoration:underline;">${esc(s.website)} ↗</a>`
-      : `<a href="${esc(bannerWebsiteUrl)}" target="_blank" rel="noopener noreferrer" style="color:#2563eb; font-size:11px; text-decoration:underline;" title="Search company website on Google">🔍 Find Website ↗</a>`;
-
-    const bannerLinkedinCompanyUrl = `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(s.name)}`;
+    const _bc = supplierContactDisplays(s, { underline: true });
+    const bannerEmailDisplay = _bc.email;
+    const bannerPhoneDisplay = _bc.phone;
+    const bannerWebsiteDisplay = _bc.website;
+    const bannerLinkedinCompanyUrl = _bc.linkedinUrl;
     const bannerLinkedinPeopleUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(s.name)}`;
 
     content.innerHTML = `
