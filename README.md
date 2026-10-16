@@ -182,7 +182,7 @@ Uses the same key. Give it `social:write` and `social:approve` for posts, and `v
   caps it at 5 MB) or *No picture*. The API only creates a post from a prompt, so a caption used as written is sent as
   "publish exactly this", and it, and any own picture, are then set **by hand** with `PATCH` once Outreach has finished writing
   (the browser does that by itself on the next refresh; an edit while the AI is still writing would be overwritten, so it is
-  refused). The preview also has *Edit by hand* (caption box, own picture) next to *ask the AI to improve it*. A hand edit goes
+  refused). Under the caption the preview has tabs: *Approve*, *Edit* (caption box, own picture), *Improve with AI* (write the text, the picture or both again, with a note) and *Schedule*. A finished post (published, rejected, cancelled, failed, expired) cannot change, so it offers *Start a new post from this*, which puts its wording in the caption box. A hand edit goes
   back for approval and never publishes. **Unverified against live Outreach:** its docs say a post can be edited "by hand" but
   not which fields; `caption` and `image_url` (a data URL) are the names its own editor uses and are set in one place
   (`HAND_CAPTION_FIELD`, `HAND_PICTURE_FIELD` in `tender_app/outreach_channels.py`).

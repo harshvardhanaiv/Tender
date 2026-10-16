@@ -137,17 +137,18 @@ test("how the post reads on each channel is shown when Outreach gives it", () =>
 });
 
 test("the schedule shows when the post goes out and lets the time be changed only once it differs", () => {
-  const html = C.socialPreview(model());
+  const tm = (o) => social(Object.assign({ panel: "time" }, o));
+  const html = C.socialPreview(model({ social: tm() }));
   assert.match(html, /Goes out <strong>/);
   assert.match(html, /test mode: nothing really goes out/);
   assert.match(html, /data-field="ch-edit-time"/);
   assert.match(button(html, "ch-post-time"), /disabled/, "unchanged time: nothing to save");
   assert.match(html, /sends the post back for approval/);
-  const changed = C.socialPreview(model({ social: social({ edit: { time: "2026-12-24T10:30", kind: "text", note: "", busy: false, error: null } }) }));
+  const changed = C.socialPreview(model({ social: tm({ edit: { time: "2026-12-24T10:30", kind: "text", note: "", busy: false, error: null } }) }));
   assert.ok(!/disabled/.test(button(changed, "ch-post-time")));
   assert.match(button(changed, "ch-post-time"), /data-id="1"/);
-  assert.match(C.socialPreview(model({ social: social({ edit: { time: "2026-12-24T10:30", busy: "time" } }) })), />Saving…</);
-  assert.match(C.socialPreview(model({ social: social({ posts: [post({ publish_at: null })], edit: { time: "" } }) })), /No publish time set/);
+  assert.match(C.socialPreview(model({ social: tm({ edit: { time: "2026-12-24T10:30", busy: "time" } }) })), />Saving…</);
+  assert.match(C.socialPreview(model({ social: tm({ posts: [post({ publish_at: null })], edit: { time: "" } }) })), /No publish time set/);
 });
 
 test("times are shown and edited in local time and sent as UTC", () => {
@@ -192,22 +193,24 @@ test("an approved post can only be cancelled and says when it goes out", () => {
 test("a finished post has no schedule editor, no rewrite and no buttons", () => {
   for (const s of ["published", "rejected", "cancelled", "failed", "expired"]) {
     const html = C.socialPreview(model({ social: social({ posts: [post({ status: s, published_url: s === "published" ? "https://www.linkedin.com/feed/update/1" : null })] }) }));
-    assert.ok(!html.includes("data-action"), s);
-    assert.ok(!html.includes("data-field"), s);
+    assert.ok(!/data-action="(?!ch-post-reuse)/.test(html), s + ": only the start-a-new-post button is left");
+    assert.ok(!html.includes("data-field") && !html.includes("ch-panel") && !html.includes("data-decision"), s);
     assert.match(html, /Nothing more can be done with it/);
+    assert.match(button(html, "ch-post-reuse"), /data-id="1"/);
+    assert.match(html, /Start a new post from this/);
   }
   assert.match(C.socialPreview(model({ social: social({ posts: [post({ status: "published", published_url: "https://www.linkedin.com/feed/update/1" })] }) })), /See the live post/);
 });
 
 test("the AI can be asked to write the text, the picture or both again, with a note", () => {
-  const html = C.socialPreview(model({ social: social({ edit: { time: "", kind: "picture", note: "Shorter <b>x</b>", busy: false, error: null } }) }));
-  assert.match(html, /ask the AI to improve it/i);
+  const html = C.socialPreview(model({ social: social({ panel: "ai", edit: { time: "", kind: "picture", note: "Shorter <b>x</b>", busy: false, error: null } }) }));
+  assert.match(html, /data-panel="ai"[^>]*aria-selected="true">Improve with AI</);
   assert.match(html, /<option value="picture" selected>The picture<\/option>/);
   for (const v of ["text", "picture", "both"]) assert.match(html, new RegExp(`<option value="${v}"`));
   assert.match(html, /value="Shorter &lt;b&gt;x&lt;\/b&gt;"/);
   assert.match(button(html, "ch-post-rewrite"), /data-id="1"/);
   assert.match(html, /never publishes by itself/);
-  assert.match(button(C.socialPreview(model({ social: social({ edit: { time: "", kind: "text", note: "", busy: "rewrite" } }) })), "ch-post-rewrite"), /disabled/);
+  assert.match(button(C.socialPreview(model({ social: social({ panel: "ai", edit: { time: "", kind: "text", note: "", busy: "rewrite" } }) })), "ch-post-rewrite"), /disabled/);
 });
 
 test("a refused change or approval shows the reason on the preview", () => {
@@ -293,27 +296,64 @@ test("the picture is the AI's, the user's own, or none; an own picture is never 
 
 test("the preview lets the user edit the caption by hand and use their own picture", () => {
   const edit = (o) => Object.assign({ time: "", kind: "text", note: "", caption: null, pictureData: null, pictureError: null, busy: false, error: null }, o);
-  const html = C.socialPreview(model({ social: social({ edit: edit() }) }));
-  assert.match(html, /Edit by hand/);
+  const html = C.socialPreview(model({ social: social({ panel: "edit", edit: edit() }) }));
+  assert.match(html, /data-panel="edit"[^>]*aria-selected="true">Edit</);
   assert.match(html, /<textarea id="gsChEditCaption"[^>]*data-field="ch-edit-caption"[^>]*>Our new Leeds office opens 1 November<\/textarea>/);
   assert.match(button(html, "ch-post-caption"), /disabled/, "nothing to save until the caption changes");
   assert.ok(html.includes('data-field="ch-edit-picture-file"') && !html.includes("ch-post-picture"));
-  const typed = C.socialPreview(model({ social: social({ edit: edit({ caption: "A better <i>caption</i>" }) }) }));
+  const typed = C.socialPreview(model({ social: social({ panel: "edit", edit: edit({ caption: "A better <i>caption</i>" }) }) }));
   assert.ok(!/disabled/.test(button(typed, "ch-post-caption")) && typed.includes("A better &lt;i&gt;caption&lt;/i&gt;") && !typed.includes("<i>caption"));
   for (const bad of ["", "  ", "ab", "Our new Leeds office opens 1 November", "x".repeat(3001)]) {
-    assert.match(button(C.socialPreview(model({ social: social({ edit: edit({ caption: bad }) }) })), "ch-post-caption"), /disabled/, JSON.stringify(bad.slice(0, 12)));
+    assert.match(button(C.socialPreview(model({ social: social({ panel: "edit", edit: edit({ caption: bad }) }) })), "ch-post-caption"), /disabled/, JSON.stringify(bad.slice(0, 12)));
   }
-  assert.match(button(C.socialPreview(model({ social: social({ edit: edit({ caption: "New words here", busy: "caption" }) }) })), "ch-post-caption"), /disabled/);
-  const pic = C.socialPreview(model({ social: social({ edit: edit({ pictureData: PNG }) }) }));
+  assert.match(button(C.socialPreview(model({ social: social({ panel: "edit", edit: edit({ caption: "New words here", busy: "caption" }) }) })), "ch-post-caption"), /disabled/);
+  const pic = C.socialPreview(model({ social: social({ panel: "edit", edit: edit({ pictureData: PNG }) }) }));
   assert.ok(pic.includes(`src="${PNG}"`) && /data-action="ch-post-picture" data-id="1"/.test(pic) && /Use this picture/.test(pic));
 });
 
 test("while the AI is still writing, the hand edit waits (it would be overwritten); a finished post cannot be edited", () => {
-  const writing = C.socialPreview(model({ social: social({ posts: [post({ status: "writing" })] }) }));
+  const writing = C.socialPreview(model({ social: social({ panel: "edit", posts: [post({ status: "writing" })] }) }));
   assert.match(writing, /once Outreach has finished writing/);
   assert.ok(!writing.includes("ch-post-caption") && !writing.includes("ch-edit-picture-file"));
   const done = C.socialPreview(model({ social: social({ posts: [post({ status: "published" })] }) }));
-  assert.ok(!done.includes("Edit by hand"));
+  assert.ok(!done.includes("Edit by hand") && !done.includes("ch-edit-caption"));
+});
+
+test("an open post has tabs under the caption (Approve, Edit, Improve with AI, Schedule) and shows one panel at a time", () => {
+  const html = C.socialPreview(model());
+  assert.deepEqual([...html.matchAll(/data-action="ch-panel" data-panel="(\w+)"/g)].map((m) => m[1]), ["approve", "edit", "ai", "time"]);
+  assert.match(html, /role="tablist"/);
+  assert.match(html, /data-panel="approve" aria-selected="true">Approve</, "Approve is the one open at first");
+  assert.ok(html.indexOf("gs-sp-caption") < html.indexOf("gs-sp-tabs"), "the tabs sit under the caption");
+  assert.ok(html.includes("ch-post-decide") && !html.includes("ch-rewrite-note") && !html.includes("ch-edit-caption") && !html.includes("ch-edit-time"));
+  for (const [panel, field] of [["edit", "ch-edit-caption"], ["ai", "ch-rewrite-note"], ["time", "ch-edit-time"]]) {
+    const one = C.socialPreview(model({ social: social({ panel }) }));
+    assert.ok(one.includes(field) && !one.includes("ch-post-decide"), panel);
+    assert.match(one, new RegExp(`data-panel="${panel}" aria-selected="true"`));
+  }
+  assert.equal(C.panelOf({ panel: "bogus" }), "approve");
+  assert.equal(C.panelOf({ panel: "ai" }), "ai");
+  assert.match(C.socialPreview(model({ social: social({ posts: [post({ status: "writing" })] }) })), /data-panel="edit"/, "the tabs are there while the AI writes, and say what waits");
+  assert.match(C.socialPreview(model({ social: social({ posts: [post({ status: "approved" })] }) })), /data-panel="time"/);
+});
+
+test("the caption is shown in a box of its own, escaped", () => {
+  const html = C.socialPreview(model({ social: social({ posts: [post({ caption: "Line one\n<b>two</b>" })] }) }));
+  assert.match(html, /<div class="gs-sp-caption"><p class="gs-ch-caption">Line one\n&lt;b&gt;two&lt;\/b&gt;<\/p><\/div>/);
+});
+
+test("the composer's choices are segmented buttons and channel chips, each still a real radio or checkbox", () => {
+  const html = C.socialComposer(model());
+  assert.equal((html.match(/class="gs-seg"/g) || []).length, 2, "how to write it, and the picture");
+  assert.equal((html.match(/<label class="gs-seg__opt"><input type="radio"/g) || []).length, 5);
+  assert.match(html, /<div class="gs-picks"><label class="gs-pick"><input type="checkbox" data-field="ch-channel" value="linkedin" checked>/);
+});
+
+test("a finished post can start a new one: its words are the way to edit or improve them", () => {
+  const html = C.socialPreview(model({ social: social({ posts: [post({ status: "cancelled", caption: "We signed a new contract <3" })] }) }));
+  assert.match(html, /start a new post from it/);
+  assert.match(button(html, "ch-post-reuse"), /data-id="1"/);
+  assert.ok(!C.socialPreview(model({ social: social({ posts: [post({ status: "cancelled", caption: "", prompt: "" })] }) })).includes("ch-post-reuse"), "nothing to start from");
 });
 
 test("a picture is scaled down to fit, never up, keeping its shape", () => {

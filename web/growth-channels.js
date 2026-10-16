@@ -204,11 +204,11 @@
     const f = s.form || {};
     const reported = ((m.info && m.info.wallet && m.info.wallet.social_channels) || []).filter(Boolean);
     const choices = reported.length ? reported : DEFAULT_CHANNELS;
-    const checks = choices.map((c) => `<label class="gs-inline"><input type="checkbox" data-field="ch-channel" value="${esc(c)}"${(f.channels || []).indexOf(c) >= 0 ? " checked" : ""}> ${esc(chLabel(c))}</label>`).join("");
+    const checks = choices.map((c) => `<label class="gs-pick"><input type="checkbox" data-field="ch-channel" value="${esc(c)}"${(f.channels || []).indexOf(c) >= 0 ? " checked" : ""}> ${esc(chLabel(c))}</label>`).join("");
     const how = howOf(f);
     const kind = pictureKindOf(f);
     const radio = (field, value, checked, text) =>
-      `<label class="gs-inline"><input type="radio" name="${field}" data-field="${field}" value="${value}"${checked ? " checked" : ""}> ${text}</label>`;
+      `<label class="gs-seg__opt"><input type="radio" name="${field}" data-field="${field}" value="${value}"${checked ? " checked" : ""}> ${text}</label>`;
     const writing = how === "mine"
       ? `<label class="gs-label" for="gsChCaption">Your caption</label>` +
         `<textarea id="gsChCaption" class="gs-textarea gs-textarea--mid" data-field="ch-caption" maxlength="${MAX_DRAFT}" rows="5" placeholder="Write the caption exactly as it should read">${esc(f.caption || "")}</textarea>` +
@@ -221,18 +221,18 @@
         `<label class="gs-label" for="gsChPrompt">What should the post say?</label>` +
         `<textarea id="gsChPrompt" class="gs-textarea gs-textarea--mid" data-field="ch-prompt" maxlength="1500" rows="4" placeholder="e.g. Announce our new Leeds office opening on 1 November">${esc(f.prompt || "")}</textarea>`;
     const picture =
-      `<div class="gs-label">Picture</div><div class="gs-ch-checks gs-sp-how">` +
+      `<div class="gs-label">Picture</div><div class="gs-seg" role="radiogroup" aria-label="Picture">` +
       radio("ch-picture-kind", "ai", kind === "ai", "AI picture") + radio("ch-picture-kind", "mine", kind === "mine", "My own picture") + radio("ch-picture-kind", "none", kind === "none", "No picture") + `</div>` +
       (kind === "ai" ? `<label class="gs-label" for="gsChPic">Picture idea (optional)</label><input id="gsChPic" class="gs-input gs-input--sm" data-field="ch-picture-note" maxlength="300" value="${esc(f.pictureNote || "")}" placeholder="e.g. A bright modern office">` : "") +
       (kind === "mine" ? pictureChooser(f.pictureData, f.pictureError, "ch-picture-file", "ch-picture-clear") : "");
     return (
       `<div class="gs-card" id="gsChSocial"><div class="gs-card__title">New post</div>` +
       companyField(m) +
-      `<div class="gs-label">How do you want to write it?</div><div class="gs-ch-checks gs-sp-how">` +
+      `<div class="gs-label">How do you want to write it?</div><div class="gs-seg" role="radiogroup" aria-label="How to write the post">` +
       radio("ch-how", "ai", how === "ai", "Let the AI write it") + radio("ch-how", "mine", how === "mine", "I'll write the caption") + `</div>` +
       `<p class="gs-hint gs-hint--block">${how === "mine" ? "Write the caption yourself. " : "Describe the post and Outreach's AI writes the caption. "}<strong>Nothing is published until you read the preview and approve it.</strong> Do not include a buyer's or a customer's confidential details.</p>` +
       writing +
-      `<div class="gs-label">Post to</div><div class="gs-ch-checks">${checks}</div>` +
+      `<div class="gs-label">Post to</div><div class="gs-picks">${checks}</div>` +
       (reported.length ? "" : `<p class="gs-hint">Outreach did not list your connected channels, so the usual ones are shown. Outreach refuses one that is not connected.</p>`) +
       `<div class="gs-ch-row"><label class="gs-inline">Publish at <input type="datetime-local" class="gs-input gs-input--sm" data-field="ch-publish" value="${esc(f.publishAt || "")}"></label></div>` +
       picture +
@@ -340,6 +340,7 @@
     return (
       `<div class="gs-sp-section"><div class="gs-label">Approval</div>` +
       (done ? `<p class="gs-hint">Approved${when ? `. Outreach publishes it ${esc(when)}` : ""}. You can still cancel it before then.</p>` : "") +
+      (!done && when ? `<p class="gs-sp-when">Will be published <strong>${esc(when)}</strong> once you approve. Change it under Schedule.</p>` : "") +
       (writing ? `<p class="gs-hint">Approving is possible once Outreach has finished writing. Press Refresh in a moment.</p>` : "") +
       `<div class="gs-actions">` +
       (!done && !writing ? `<button type="button" class="gs-btn gs-btn--primary gs-btn--sm" data-action="ch-post-decide" data-id="${esc(p.id)}" data-decision="approve">Approve and publish</button>` : "") +
@@ -364,20 +365,46 @@
     const channels = (p.channels || []).map(chLabel).join(", ");
     const variants = (p.variants || []).filter((v) => v && v.text);
     const links = [httpsLink(p.preview_url, "Open Outreach's full preview"), httpsLink(p.published_url, "See the live post")].filter(Boolean).join(" · ");
+    const panel = panelOf(s);
     return (
       `<div class="gs-card gs-sp-preview" data-preview="${esc(p.id)}">` +
       `<div class="gs-card__title">Preview</div>` +
       `<div class="gs-ch-item__head">${badge(label(POST_STATUS, status))} <strong>${esc(channels || "No channel")}</strong>${p.company_name ? ` <span class="gs-hint">· as ${esc(p.company_name)}</span>` : ""}</div>` +
       pictureBlock(p, status) +
-      (p.caption ? `<p class="gs-ch-caption">${esc(p.caption)}</p>` : `<p class="gs-hint">${status === "writing" ? "The caption appears here when Outreach has written it. Press Refresh." : "No caption yet."}</p>`) +
+      (p.caption ? `<div class="gs-sp-caption"><p class="gs-ch-caption">${esc(p.caption)}</p></div>` : `<p class="gs-hint">${status === "writing" ? "The caption appears here when Outreach has written it. Press Refresh." : "No caption yet."}</p>`) +
       (variants.length ? `<details class="gs-notes"><summary>How it reads on each channel</summary>${variants.map((v) => `<div class="gs-sp-variant"><strong>${esc(chLabel(v.channel))}</strong><p class="gs-ch-caption">${esc(v.text)}</p></div>`).join("")}</details>` : "") +
       (links ? `<p class="gs-hint">${links}</p>` : "") +
       (p.error ? `<p class="gs-hint gs-hint--warn">${esc(p.error)}</p>` : "") +
-      scheduleBlock(p, s.edit, final, status) +
-      (final ? "" : handBlock(p, s.edit, status) + rewriteBlock(p, s.edit)) +
-      approvalBlock(p, s.edit, status, final) +
+      (final ? finishedBlock(p, status) : panelTabs(panel) + `<div class="gs-sp-panel" role="tabpanel" id="gsChPanel">${panelBody(panel, p, s.edit, status)}</div>`) +
       ((s.edit && s.edit.error) ? `<p class="gs-hint gs-hint--warn" role="alert">${esc(s.edit.error)}</p>` : "") +
       `<p class="gs-hint">Your idea: ${esc(String(p.prompt || "").slice(0, 160))}${String(p.prompt || "").length > 160 ? "…" : ""}</p>` +
+      `</div>`
+    );
+  }
+
+  // What can be done with a post that is still open, one choice at a time, so each is easy to find under the caption.
+  const PANELS = [["approve", "Approve"], ["edit", "Edit"], ["ai", "Improve with AI"], ["time", "Schedule"]];
+  const panelOf = (s) => (PANELS.some((x) => x[0] === (s && s.panel)) ? s.panel : "approve");
+  function panelTabs(panel) {
+    return (
+      `<div class="gs-sp-tabs" role="tablist" aria-label="What to do with this post">` +
+      PANELS.map(([k, l]) => `<button type="button" role="tab" class="gs-sp-tab${k === panel ? " is-active" : ""}" data-action="ch-panel" data-panel="${k}" aria-selected="${k === panel ? "true" : "false"}">${esc(l)}</button>`).join("") +
+      `</div>`
+    );
+  }
+  function panelBody(panel, p, edit, status) {
+    if (panel === "edit") return handBlock(p, edit, status);
+    if (panel === "ai") return rewriteBlock(p, edit);
+    if (panel === "time") return scheduleBlock(p, edit, false, status);
+    return approvalBlock(p, edit, status, false);
+  }
+  // A finished post (published, rejected, cancelled, failed, expired) cannot change; its words can start a new one.
+  function finishedBlock(p, status) {
+    return (
+      `<div class="gs-sp-section"><div class="gs-label">${esc(label(POST_STATUS, status)[0])}</div>` +
+      `<p class="gs-hint">This post is ${esc((label(POST_STATUS, status)[0] || status).toLowerCase())}. Nothing more can be done with it.</p>` +
+      (p.caption || p.prompt ? `<p class="gs-hint">To edit this wording or have the AI improve it, start a new post from it.</p>` +
+        `<div class="gs-actions"><button type="button" class="gs-btn gs-btn--primary gs-btn--sm" data-action="ch-post-reuse" data-id="${esc(p.id)}">Start a new post from this</button></div>` : "") +
       `</div>`
     );
   }
@@ -474,7 +501,7 @@
 
   const api = {
     POST_STATUS, CALL_STATUS, STARTER_TEXT, postReady, callReady, publishIso, postBody, callBody, toLocalInput, whenText, timeChanged, selectedPost,
-    howOf, pictureKindOf, fitSize, captionChanged, pictureChooser, handBlock,
+    PANELS, panelOf, panelTabs, finishedBlock, howOf, pictureKindOf, fitSize, captionChanged, pictureChooser, handBlock,
     postListItem, companyField, socialComposer, socialHistory, socialPreview, socialPane, answersHtml, callRow, callForm, callHistory, callsPane, plural,
   };
   root.GrowthChannels = api;
@@ -611,7 +638,27 @@
 
   function select(id) {
     model.social.selectedId = id;
+    model.social.panel = "approve";
     model.social.edit = freshEdit(selectedPost(model.social));
+  }
+
+  // A finished post cannot change, but its words can start a new one: they go into the "I'll write the caption" box.
+  function reusePost(id) {
+    const post = model.social.posts.find((p) => String(p.id) === String(id));
+    if (!post) return;
+    const f = model.social.form;
+    f.how = "mine";
+    f.caption = String(post.caption || post.prompt || "").slice(0, MAX_DRAFT);
+    f.polish = false;
+    f.channels = (post.channels || []).slice();
+    f.error = null;
+    render();
+    const box = byId("gsChCaption");
+    if (box) {
+      if (box.scrollIntoView) box.scrollIntoView({ block: "center", behavior: "smooth" });
+      box.focus();
+    }
+    toast("The wording is in the caption box. Edit it, or tick \"Let the AI polish it\", then create the post.");
   }
 
   async function loadPosts(refresh) {
@@ -904,6 +951,8 @@
     if (act === "ch-post-create") run(createPost());
     else if (act === "ch-post-refresh") run(loadPosts(true));
     else if (act === "ch-post-select") { select(a.dataset.id); render(); }
+    else if (act === "ch-panel") { model.social.panel = a.dataset.panel; render(); }
+    else if (act === "ch-post-reuse") reusePost(a.dataset.id);
     else if (act === "ch-post-decide") run(decidePost(a.dataset.id, a.dataset.decision, a.dataset.newtime === "1"));
     else if (act === "ch-post-time") run(changePost(a.dataset.id, { publish_at: publishIso(edit.time) }, "time", "Time changed. Read the preview and approve the post again."));
     else if (act === "ch-post-rewrite") run(changePost(a.dataset.id, { regenerate: edit.kind || "text", instruction: edit.note || undefined }, "rewrite", "Outreach is writing it again. Read the new version, then approve it."));
