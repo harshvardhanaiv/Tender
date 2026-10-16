@@ -141,7 +141,7 @@ def supplier_win_counts(awards: list[dict[str, Any]]) -> dict[str, int]:
     total = len(awards)
     framework = sum(1 for a in awards if a.get("is_framework"))
     valued = sum(1 for a in awards
-                 if not a.get("is_framework") and float(a.get("contract_value") or 0) <= SINGLE_AWARD_STATS_CEILING_GBP)
+                 if not a.get("is_framework") and 0 <= float(a.get("contract_value") or 0) <= SINGLE_AWARD_STATS_CEILING_GBP)
     return {"total_awards": total, "direct_awards": total - framework,
             "framework_appointments": framework, "valued_direct_awards": valued}
 
@@ -656,8 +656,8 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
     ctes.append(f"""agg AS (
         SELECT sid,
                COUNT(aid) AS total_awards,
-               COALESCE(SUM(CASE WHEN (is_framework IS NULL OR is_framework = 0) AND contract_value <= {SINGLE_AWARD_STATS_CEILING_GBP} THEN contract_value ELSE 0 END), 0) AS total_value,
-               COALESCE(AVG(CASE WHEN (is_framework IS NULL OR is_framework = 0) AND contract_value <= {SINGLE_AWARD_STATS_CEILING_GBP} THEN contract_value END), 0) AS avg_value,
+               COALESCE(SUM(CASE WHEN (is_framework IS NULL OR is_framework = 0) AND contract_value BETWEEN 0 AND {SINGLE_AWARD_STATS_CEILING_GBP} THEN contract_value ELSE 0 END), 0) AS total_value,
+               COALESCE(AVG(CASE WHEN (is_framework IS NULL OR is_framework = 0) AND contract_value BETWEEN 0 AND {SINGLE_AWARD_STATS_CEILING_GBP} THEN contract_value END), 0) AS avg_value,
                COALESCE(SUM(CASE WHEN is_framework = 1 THEN contract_value ELSE 0 END), 0) AS framework_total_ceiling,
                COUNT(CASE WHEN is_framework = 1 THEN 1 END) AS framework_appointments_count
         FROM links GROUP BY sid
@@ -1291,7 +1291,7 @@ def get_supplier_executive_summary(identifier: str):
         # See SINGLE_AWARD_STATS_CEILING_GBP's docstring: a single non-framework award above this
         # is untrustworthy scraper/source noise, excluded from direct value/count (still counted
         # in total_awards above) to match every other aggregation path.
-        direct_awards_in_ceiling = [a for a in direct_awards if float(a.get("contract_value") or 0) <= SINGLE_AWARD_STATS_CEILING_GBP]
+        direct_awards_in_ceiling = [a for a in direct_awards if 0 <= float(a.get("contract_value") or 0) <= SINGLE_AWARD_STATS_CEILING_GBP]
 
         total_value = sum(float(a.get("contract_value") or 0) for a in direct_awards_in_ceiling)
         framework_total_ceiling = sum(float(a.get("contract_value") or 0) for a in framework_awards)
