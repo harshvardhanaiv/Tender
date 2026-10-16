@@ -35,6 +35,27 @@ test("the four filters are offered and the chosen one is pressed", () => {
   assert.match(html, /data-filter="replies"[^>]*aria-pressed="false"/);
 });
 
+test("every row has a Delete button beside it (not inside the row button), and an opened email has one too", () => {
+  const html = I.rowHtml(item(), false);
+  assert.match(html, /<button type="button" class="gs-in-del" data-action="in-delete" data-id="m1"[^>]*>Delete<\/button>/);
+  const row = html.match(/<button type="button" class="gs-in-row"[\s\S]*?<\/button>/)[0];
+  assert.ok(!row.includes("in-delete"), "a button cannot sit inside another button");
+  const open = I.rowHtml(item(), detail());
+  assert.equal((open.match(/data-action="in-delete"/g) || []).length, 2, "the row's and the opened email's");
+  assert.match(open, /gs-btn--danger" data-action="in-delete" data-id="m1">Delete</);
+  assert.ok(!I.detailHtml({ message: { status: "replied", replies: [] } }).includes("in-delete"), "no id, nothing to delete");
+});
+
+test("the footnote says Delete only removes it from this list, because Outreach keeps its own record", () => {
+  const html = I.inboxPane(model());
+  assert.match(html, /Delete removes an email from this list only: Outreach keeps its own record and the email stays sent/);
+});
+
+test("a hostile id cannot break out of the delete button", () => {
+  const html = I.rowHtml(item({ id: 'a"><img src=x onerror=alert(1)>' }), false);
+  assert.ok(!/<img src=x/.test(html));
+});
+
 test("a row shows the buyer, the address, the subject, the campaign, a status and New for an unread reply", () => {
   const html = I.rowHtml(item(), false);
   assert.match(html, /Alpha Council/);

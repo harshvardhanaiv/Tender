@@ -27,6 +27,7 @@ own rows:
     /api/growth/voice/calls/<id>   (GET, DELETE) one call as Outreach holds it; hang up a live call
     /api/growth/voice/scripts, /voice/lookup    saved scripts; the phone number a buyer published on a notice
     /api/growth/inbox, /inbox/<message id>       the user's emails sent through Outreach and the replies to them
+                                                 (DELETE hides one for this user, POST .../restore brings it back)
     /api/growth/performance                     tiles, funnel and campaign -> Pipeline outcomes
 
 Every campaign, target and state row belongs to the user who made it and is always looked up by
@@ -1920,6 +1921,7 @@ def growth_inbox():
     conn = _connect()
     try:
         owner = _inbox_owner(conn, username)
+        hidden = _hidden_messages(conn, username)
         items: list[dict[str, Any]] = []
         pages = 0
         more = cursor
@@ -1932,7 +1934,7 @@ def growth_inbox():
                 raise _Http(exc.message, 403 if exc.status == 403 else 502)
             pages += 1
             more = page["next_cursor"]
-            items += [m for m in page["items"] if m["id"] and go.owned_message(m, owner["message_ids"], owner["emails"], owner["ambiguous"])]
+            items += [m for m in page["items"] if m["id"] and m["id"] not in hidden and go.owned_message(m, owner["message_ids"], owner["emails"], owner["ambiguous"])]
             if not more:
                 break
         seen: set[str] = set()
@@ -1952,6 +1954,61 @@ def growth_inbox():
                     marked.append(name)
         return jsonify({"items": items, "next_cursor": more, "filter": which, "marked": marked,
                         "unread": sum(1 for m in items if m["unread"])})
+    finally:
+        conn.close()
+
+
+def _hidden_messages(conn, username: str) -> set[str]:
+    """The ids of the emails this user has deleted from their inbox."""
+    from tender_app.db_ext import create_growth_inbox_hidden
+    with conn.cursor() as cur:
+        create_growth_inbox_hidden(cur)
+        cur.execute("SELECT message_id FROM growth_inbox_hidden WHERE username = %s", (username,))
+        return {r[0] for r in cur.fetchall()}
+
+
+@growth_bp.delete("/api/growth/inbox/<message_id>")
+def growth_inbox_delete(message_id: str):
+    """Delete an email (a sent email, or one with a reply) from the user's inbox. Outreach's API has no call that erases a
+    sent email, so this hides it for this user only: Outreach keeps its record, and the email is not unsent. Only an email
+    that is the user's own can be hidden. Undone by POST .../restore."""
+    if not _MESSAGE_ID_RE.match(message_id):
+        raise _Http("That is not an Outreach message id.")
+    client = _outreach_client()
+    username = _username()
+    conn = _connect()
+    try:
+        try:
+            raw = client.get_email_message(message_id)
+        except oc.OutreachError as exc:
+            raise _Http(exc.message, 404 if exc.status == 404 else 403 if exc.status == 403 else 502)
+        detail = oc.reply_detail(raw)
+        detail["id"] = detail["id"] or message_id
+        owner = _inbox_owner(conn, username)
+        if detail["id"] != message_id or not go.owned_message(detail, owner["message_ids"], owner["emails"], owner["ambiguous"]):
+            raise _Http("Message not found", 404)
+        _hidden_messages(conn, username)  # makes sure the table exists
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO growth_inbox_hidden (username, message_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (username, message_id))
+        conn.commit()
+        return jsonify({"deleted": message_id})
+    finally:
+        conn.close()
+
+
+@growth_bp.post("/api/growth/inbox/<message_id>/restore")
+def growth_inbox_restore(message_id: str):
+    """Undo a delete: the email shows in the user's inbox again."""
+    if not _MESSAGE_ID_RE.match(message_id):
+        raise _Http("That is not an Outreach message id.")
+    username = _username()
+    conn = _connect()
+    try:
+        _hidden_messages(conn, username)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM growth_inbox_hidden WHERE username = %s AND message_id = %s", (username, message_id))
+        conn.commit()
+        return jsonify({"restored": message_id})
     finally:
         conn.close()
 

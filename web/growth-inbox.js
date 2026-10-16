@@ -63,6 +63,7 @@
       (canMark && (status === "sent" || status === "replied") ? `<button type="button" class="gs-btn gs-btn--sm" data-action="in-meeting" data-target="${esc(d.target_id)}" data-campaign="${esc(d.campaign.id)}">Meeting booked</button>` : "") +
       (canMark && status !== "opted_out" ? `<button type="button" class="gs-btn gs-btn--sm" data-action="in-optout" data-target="${esc(d.target_id)}" data-campaign="${esc(d.campaign.id)}">Add to do-not-contact</button>` : "") +
       (status === "opted_out" ? V.badge("On your do-not-contact list", "muted") : "") +
+      (msg.id ? `<button type="button" class="gs-btn gs-btn--sm gs-btn--danger" data-action="in-delete" data-id="${esc(msg.id)}">Delete</button>` : "") +
       `</div></div>`
     );
   }
@@ -73,10 +74,12 @@
     const when = stamp(m.replied_at || m.sent_at);
     return (
       `<li class="gs-in-item${m.unread ? " is-unread" : ""}" data-message="${esc(m.id)}">` +
+      `<div class="gs-in-line">` +
       `<button type="button" class="gs-in-row" data-action="in-open" data-id="${esc(m.id)}" aria-expanded="${open ? "true" : "false"}">` +
       `<span class="gs-in-dot" aria-hidden="true"></span><span class="gs-in-who"><strong>${esc(who)}</strong>${m.buyer && m.to ? ` <span class="gs-hint">${esc(m.to)}</span>` : ""}</span>` +
       `<span class="gs-in-subject">${esc(m.subject || "(no subject)")}${m.campaign_name ? ` <span class="gs-hint">· ${esc(m.campaign_name)}</span>` : ""}</span>` +
       `<span class="gs-in-meta">${V.badge(esc(st[0]), st[1])}${m.unread ? " " + V.badge("New", "accent") : ""} <span class="gs-hint">${when}</span></span></button>` +
+      `<button type="button" class="gs-in-del" data-action="in-delete" data-id="${esc(m.id)}" aria-label="Delete this email from your inbox" title="Delete">Delete</button></div>` +
       (open ? detailHtml(open === true ? null : open) : "") +
       `</li>`
     );
@@ -98,7 +101,7 @@
       list +
       (m.error && items.length ? `<p class="gs-hint gs-hint--warn">${esc(m.error)}</p>` : "") +
       (m.nextCursor ? `<div class="gs-actions"><button type="button" class="gs-btn gs-btn--sm" data-action="in-more"${m.loadingMore ? " disabled" : ""}>${m.loadingMore ? "Loading…" : "Look further back"}</button></div>` : "") +
-      `<p class="gs-hint">Shows the emails you sent through Outreach and the replies to them. Outreach holds the full conversation; answer from your own mail program with Reply by email.</p>`
+      `<p class="gs-hint">Shows the emails you sent through Outreach and the replies to them. Outreach holds the full conversation; answer from your own mail program with Reply by email. Delete removes an email from this list only: Outreach keeps its own record and the email stays sent.</p>`
     );
   }
 
@@ -224,6 +227,44 @@
     render();
   }
 
+  // Delete hides the email from this user's list (Outreach cannot erase a sent email); the toast offers Undo.
+  async function deleteMessage(id) {
+    const row = model.items.find((x) => x.id === id);
+    const what = row && row.status === "replied" ? "this reply and the email it answers" : "this email";
+    if (!(await confirmIt(`Delete ${what} from your inbox? It stays sent: Outreach keeps its own record. You can undo straight after.`))) return;
+    await fetchJson("DELETE", `/api/growth/inbox/${encodeURIComponent(id)}`);
+    model.items = model.items.filter((x) => x.id !== id);
+    delete model.details[id];
+    if (model.openId === id) model.openId = null;
+    model.lastDeleted = id;
+    render();
+    undoToast("Deleted from your inbox.");
+  }
+  async function undoDelete() {
+    const id = model.lastDeleted;
+    if (!id) return;
+    model.lastDeleted = null;
+    try {
+      await fetchJson("POST", `/api/growth/inbox/${encodeURIComponent(id)}/restore`, {});
+      toast("Brought back.");
+      await load(false);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+  function undoToast(message) {
+    const el = byId("gsToast");
+    if (!el) return;
+    el.className = "gs-toast is-on";
+    el.innerHTML = `<span>${esc(message)}</span> <button type="button" class="gs-btn gs-btn--sm" data-action="in-undo">Undo</button>`;
+    clearTimeout(toast.t);
+    toast.t = setTimeout(() => { el.classList.remove("is-on"); model.lastDeleted = null; }, 9000);
+  }
+  function onToastClick(event) {
+    const b = event.target.closest && event.target.closest('#gsToast [data-action="in-undo"]');
+    if (b) undoDelete();
+  }
+
   function onClick(event) {
     const a = event.target.closest("[data-action]");
     const pane = byId("gsPaneInbox");
@@ -234,6 +275,7 @@
     else if (act === "in-search" || act === "in-refresh") { model.details = {}; run(load(false)); }
     else if (act === "in-more") run(load(true));
     else if (act === "in-open") run(openMessage(a.dataset.id));
+    else if (act === "in-delete") run(deleteMessage(a.dataset.id));
     else if (act === "in-optout") run(setBuyerStatus(a.dataset.campaign, a.dataset.target, "opted_out", "Add this buyer to your do-not-contact list? They will not be emailed again from Growth Studio."));
     else if (act === "in-meeting") run(setBuyerStatus(a.dataset.campaign, a.dataset.target, "meeting", null));
     else if (act === "outreach-check") run(loadStatus());
@@ -262,6 +304,7 @@
         pane.addEventListener("input", onInput);
         pane.addEventListener("keydown", onKeydown);
       }
+      document.addEventListener("click", onToastClick);
       loadStatus();
     } else if (model.info && model.info.ready) {
       model.details = {};

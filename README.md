@@ -158,6 +158,13 @@ in the campaign (counted on the Performance tab); a buyer already in a meeting o
 marks it read. A reply that reads like "stop" is flagged, with a button to add the buyer to the do-not-contact list.
 **Reply by email** opens the user's own mail program: nothing is sent from the inbox.
 
+**Delete** (on every row and on an opened email, with a confirmation and an **Undo** for nine seconds) removes a sent email
+or a reply from the user's list: `DELETE /api/growth/inbox/<id>` writes a row in `growth_inbox_hidden`, `POST .../restore`
+removes it. It hides, it does not erase: Outreach's public API has no call that deletes a sent email (its mail plugin's
+`messages.move` / `messages.delete` work on a connected mailbox's own messages, need `mail:write` / `mail:delete`, and use
+different ids), so Outreach keeps its record and the email stays sent. It affects only the user who deleted it, and only an
+email that is theirs can be hidden.
+
 ### Social posts and phone calls (Growth Studio, "Social" and "Calls" tabs)
 
 Uses the same key. Give it `social:write` and `social:approve` for posts, and `voice:calls` for calls, in Outreach's Keys tab.

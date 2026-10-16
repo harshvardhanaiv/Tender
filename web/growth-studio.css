@@ -349,3 +349,12 @@ body.tf-shell #growthFilterBar select.tf-chip--select { flex: none; width: auto;
 .gs-sp-panel { padding: 4px 0 8px; }
 .gs-sp-panel > .gs-sp-section { border-top: 0; margin-top: 8px; padding-top: 0; }
 .gs-sp-panel > .gs-sp-section > .gs-label:first-child { display: none; }
+/* Inbox: delete */
+.gs-in-line { display: flex; align-items: center; }
+.gs-in-line .gs-in-row { flex: 1; min-width: 0; width: auto; }
+.gs-in-del { appearance: none; margin: 0 12px 0 0; padding: 4px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--gs-neg, #b42318); font: inherit; font-size: 12px; cursor: pointer; }
+.gs-in-del:hover { background: var(--gs-neg-soft, #fdecea); border-color: var(--gs-neg, #b42318); }
+.gs-in-del:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px; }
+.gs-btn--danger { color: var(--gs-neg, #b42318); }
+.gs-btn--danger:hover { background: var(--gs-neg-soft, #fdecea); border-color: var(--gs-neg, #b42318); }
+@media (max-width: 720px) { .gs-in-line { align-items: flex-start; } .gs-in-del { margin-top: 10px; } }
