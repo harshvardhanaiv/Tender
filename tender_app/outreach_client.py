@@ -284,15 +284,31 @@ class OutreachClient:
             raise OutreachError("That is not an Outreach post id.", 400, "invalid_request")
         return self._call("GET", f"/v1/social/posts/{post_id}")
 
-    def decide_social_post(self, post_id: str, decision: str, idempotency_key: str) -> dict[str, Any]:
-        """Approve ("approve", the only way a post goes live), reject or cancel it. Needs `social:approve`."""
+    def update_social_post(self, post_id: str, payload: Mapping[str, Any], idempotency_key: str) -> dict[str, Any]:
+        """Change a post: its publish time, or ask the AI to write the text, the picture or both again. Outreach sends a
+        changed post back for approval, so this never publishes anything."""
+        if not _ID_RE.match(post_id or ""):
+            raise OutreachError("That is not an Outreach post id.", 400, "invalid_request")
+        if not payload:
+            raise OutreachError("Nothing to change.", 400, "invalid_request")
+        if not idempotency_key:
+            raise OutreachError("An idempotency key is required to change a post.", 400, "invalid_request")
+        return self._call("PATCH", f"/v1/social/posts/{post_id}", payload, idempotency_key)
+
+    def decide_social_post(self, post_id: str, decision: str, idempotency_key: str, publish_at: str | None = None) -> dict[str, Any]:
+        """Approve ("approve", the only way a post goes live), reject or cancel it. Needs `social:approve`. An approval
+        may carry a new `publish_at`: approval closes at the publish time, so a post whose time has passed is approved
+        for a later one."""
         if decision not in ("approve", "reject", "cancel"):
             raise OutreachError("decision must be approve, reject or cancel.", 400, "invalid_request")
         if not _ID_RE.match(post_id or ""):
             raise OutreachError("That is not an Outreach post id.", 400, "invalid_request")
         if not idempotency_key:
             raise OutreachError("An idempotency key is required to decide a post.", 400, "invalid_request")
-        return self._call("POST", f"/v1/social/posts/{post_id}/decision", {"decision": decision}, idempotency_key)
+        body: dict[str, Any] = {"decision": decision}
+        if publish_at and decision == "approve":
+            body["publish_at"] = publish_at
+        return self._call("POST", f"/v1/social/posts/{post_id}/decision", body, idempotency_key)
 
     # ── phone calls ──────────────────────────────────────────────────────────────────────────────
 
@@ -514,8 +530,40 @@ def phone_number_count(raw: Mapping[str, Any]) -> int | None:
     return None
 
 
+def _image_link(raw: Mapping[str, Any]) -> str | None:
+    """The post's picture as a plain https link, whether Outreach gives it as a string, an object or a list."""
+    v = _find(raw, ("image_url", "picture_url", "image", "picture", "thumbnail", "media", "images"))
+    if isinstance(v, list):
+        v = v[0] if v else None
+    if isinstance(v, dict):
+        v = _find(v, ("url", "src", "href", "image_url", "link"))
+    return _https_url(_text(v, 500))
+
+
+def _variants(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """How the post reads on each channel ("how it looks on each channel"): [{channel, text}], text as plain text."""
+    src = _find(raw, ("previews", "per_channel", "by_channel", "variants", "channel_previews"))
+    items: list[tuple[Any, Any]] = []
+    if isinstance(src, dict):
+        items = list(src.items())
+    else:
+        entries = src if isinstance(src, list) else _find(raw, ("channels",))
+        for e in (entries if isinstance(entries, list) else []):
+            if isinstance(e, dict):
+                items.append((_find(e, ("channel", "platform", "network", "name")), e))
+    out: list[dict[str, Any]] = []
+    for name, v in items[:8]:
+        text = v if isinstance(v, str) else (_find(v, ("text", "caption", "body", "preview", "content")) if isinstance(v, dict) else None)
+        label = _names([name])
+        t = plain_text(text, 3000)
+        if label and t:
+            out.append({"channel": label[0], "text": t})
+    return out
+
+
 def post_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
-    """A social post: id, status, caption, channels, preview link (https only) and the published link if there is one."""
+    """A social post: id, status, caption, picture, how it reads per channel, channels, preview link (https only) and
+    the published link if there is one."""
     channels = _find(raw, ("channels",))
     result = _find(raw, ("result", "published", "publication"))
     link = _find(result, ("url", "link", "permalink")) if isinstance(result, dict) else _find(raw, ("published_url", "post_url"))
@@ -525,6 +573,8 @@ def post_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
         "caption": _text(_find(raw, ("caption", "text", "body")), 3000),
         "channels": _names(channels),
         "preview_url": _https_url(_text(_find(raw, ("preview_url", "preview")), 500)),
+        "image_url": _image_link(raw),
+        "variants": _variants(raw),
         "published_url": _https_url(_text(link, 500)),
         "publish_at": _text(_find(raw, ("publish_at", "scheduled_for")), 40),
         "reason": _text(_find(raw, ("error", "reason", "failure_reason")), 300),

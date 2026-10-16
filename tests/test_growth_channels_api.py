@@ -46,7 +46,13 @@ def handler(*, social=("linkedin", "facebook"), phones=1, post_status="writing",
                          "preview_url": "https://outreach.example/api/p/abc"}
         if method == "GET" and "/v1/social/posts/" in url:
             return 200, {"id": "v2_fake0001", "status": state["post_status"], "caption": "Our new Leeds office opens 1 November",
-                         "preview_url": "https://outreach.example/api/p/abc"}
+                         "preview_url": "https://outreach.example/api/p/abc", "image": {"url": "https://outreach.example/img/office.png"},
+                         "previews": {"linkedin": "Long LinkedIn text", "facebook": "Short FB text"}, "publish_at": state.get("publish_at")}
+        if method == "PATCH" and "/v1/social/posts/" in url:
+            b = json.loads(data)
+            if b.get("publish_at"):
+                state["publish_at"] = b["publish_at"]
+            return 200, {"id": "v2_fake0001", "status": "writing" if b.get("regenerate") else "needs_approval", "publish_at": state.get("publish_at")}
         if method == "POST" and url.endswith("/decision") and "/social/posts/" in url:
             d = json.loads(data)["decision"]
             return 200, {"id": "v2_fake0001", "status": {"approve": "approved", "reject": "rejected", "cancel": "cancelled"}[d]}
@@ -79,6 +85,7 @@ def cleanup():
             cur.execute("DELETE FROM growth_social_posts WHERE username = ANY(%s)", (base.USERS,))
             cur.execute("DELETE FROM growth_voice_calls WHERE username = ANY(%s)", (base.USERS,))
             cur.execute("DELETE FROM growth_suppressions WHERE username = ANY(%s)", (base.USERS,))
+            cur.execute("DELETE FROM company_profiles WHERE username = ANY(%s)", (base.USERS,))
         conn.commit()
     finally:
         conn.close()
@@ -183,6 +190,238 @@ def test_approving_needs_a_confirmation_and_a_post_that_is_ready():
     code, body, _ = call(c, "post", url, {"decision": "cancel", "attempt": attempt()})
     assert code == 409 and "already published" in body["error"]
     assert call(c, "post", url, {"decision": "bogus", "attempt": attempt()})[0] == 400
+
+
+def add_company(user, name="TVD Driveways Ltd", text="TVD Driveways lays resin and block-paved driveways for councils and housing associations across Hampshire.",
+                meta=None, default=True):
+    meta = meta if meta is not None else {"org_name": "TVD Driveways Limited", "city": "Winchester", "county": "Hampshire", "website": "tvd-driveways.example",
+                                          "contact_name": "Sam Private", "email": "sam.private@tvd.example", "phone": "01962 000000", "vat_number": "GB123456789"}
+    conn = db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO company_profiles (username, name, profile_text, meta_json, is_default) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                        (user, name, text, json.dumps(meta), default))
+            pid = cur.fetchone()[0]
+        conn.commit()
+        return pid
+    finally:
+        conn.close()
+
+
+def test_a_post_is_written_as_the_chosen_company_using_only_what_its_profile_says():
+    use()
+    c = client(USER_A)
+    pid = add_company(USER_A)
+    code, body, _ = make_post(c, profile_id=pid, prompt="Announce our new Leeds office opening")
+    assert code == 200, body
+    sent = only("POST", "/v1/social/posts")[0]["body"]["prompt"]
+    assert sent.startswith("Announce our new Leeds office opening\n\nWrite it as TVD Driveways Limited, based in Winchester, Hampshire.")
+    assert "About the company: TVD Driveways lays resin" in sent and "Website: https://tvd-driveways.example" in sent
+    assert "Do not invent" in sent
+    for private in ("Sam Private", "sam.private", "01962", "GB123456789"):
+        assert private not in sent, private
+    post = body["post"]
+    assert post["prompt"] == "Announce our new Leeds office opening", "the user's own words are what is kept and shown"
+    assert post["company_name"] == "TVD Driveways Limited" and post["profile_id"] == pid
+
+
+def test_a_post_with_no_company_is_sent_as_written():
+    use()
+    c = client(USER_A)
+    add_company(USER_A)
+    code, body, _ = make_post(c, profile_id=None)
+    assert code == 200 and only("POST", "/v1/social/posts")[0]["body"]["prompt"] == GOOD_PROMPT
+    assert body["post"]["company_name"] is None and body["post"]["profile_id"] is None
+
+
+def test_only_the_users_own_company_can_be_used():
+    use()
+    other = add_company(USER_B, name="Other Co", text="Other Co does other things for other people every single day.")
+    code, body, _ = make_post(client(USER_A), profile_id=other)
+    assert code == 404 and "not found" in body["error"] and only("POST", "/v1/social/posts") == []
+    code, body, _ = make_post(client(USER_A), profile_id="abc")
+    assert code == 400 and only("POST", "/v1/social/posts") == []
+
+
+def test_the_company_list_shows_what_the_ai_would_be_told_and_what_to_add():
+    use()
+    c = client(USER_A)
+    code, body, _ = call(c, "get", "/api/growth/social/company")
+    assert code == 200 and body["profiles"] == [] and body["brief"] is None and body["profile_id"] is None
+    assert "No company is set up" in body["hints"][0]
+    first = add_company(USER_A)
+    second = add_company(USER_A, name="Thin Co", text="", meta={}, default=False)
+    code, body, _ = call(c, "get", "/api/growth/social/company")
+    assert [p["name"] for p in body["profiles"]] == ["TVD Driveways Ltd", "Thin Co"]
+    assert body["profile_id"] == first and body["brief"]["name"] == "TVD Driveways Limited" and body["hints"] == []
+    assert body["profiles"][0]["has_description"] is True and body["profiles"][1]["has_description"] is False
+    assert "sam.private" not in json.dumps(body) and "01962" not in json.dumps(body)
+    code, body, _ = call(c, "get", f"/api/growth/social/company?profile_id={second}")
+    assert body["brief"] == {"name": "Thin Co", "about": "", "where": "", "website": ""} and any("no description" in h for h in body["hints"])
+    other = add_company(USER_B, name="Other Co")
+    assert call(c, "get", f"/api/growth/social/company?profile_id={other}")[0] == 404
+    assert call(client(USER_B), "get", "/api/growth/social/company")[1]["profiles"][0]["name"] == "Other Co"
+
+
+def test_a_refresh_keeps_the_picture_and_how_the_post_reads_on_each_channel():
+    use()
+    c = client(USER_A)
+    make_post(c)
+    FAKE.handler.state["post_status"] = "needs_approval"
+    p = call(c, "get", "/api/growth/social/posts?refresh=1")[1]["posts"][0]
+    assert p["image_url"] == "https://outreach.example/img/office.png"
+    assert p["variants"] == [{"channel": "linkedin", "text": "Long LinkedIn text"}, {"channel": "facebook", "text": "Short FB text"}]
+    again = call(c, "get", "/api/growth/social/posts")[1]["posts"][0]
+    assert again["image_url"] == p["image_url"] and len(again["variants"]) == 2, "kept for the next visit"
+
+
+def test_a_post_time_can_be_changed_and_the_post_goes_back_for_approval():
+    use(post_status="needs_approval")
+    c = client(USER_A)
+    pid = make_post(c)[1]["post"]["id"]
+    when = (datetime.now(timezone.utc) + timedelta(days=3)).replace(microsecond=0)
+    code, body, _ = call(c, "patch", f"/api/growth/social/posts/{pid}", {"publish_at": when.isoformat(), "attempt": attempt()})
+    assert code == 200, body
+    sent = only("PATCH", "/v1/social/posts/v2_fake0001")
+    assert len(sent) == 1 and sent[0]["body"] == {"publish_at": when.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    assert sent[0]["headers"]["Idempotency-Key"].startswith("tf-post-edit-")
+    assert body["post"]["publish_at"] == when.strftime("%Y-%m-%dT%H:%M:%SZ") and body["post"]["status"] == "needs_approval"
+    assert only("POST", "/decision") == [], "changing a time never approves"
+    assert call(c, "get", "/api/growth/social/posts")[1]["posts"][0]["publish_at"] == body["post"]["publish_at"]
+
+
+def test_the_ai_can_be_asked_to_write_the_picture_again():
+    use(post_status="needs_approval")
+    c = client(USER_A)
+    pid = make_post(c)[1]["post"]["id"]
+    code, body, _ = call(c, "patch", f"/api/growth/social/posts/{pid}", {"regenerate": "picture", "instruction": "A brighter office", "attempt": attempt()})
+    assert code == 200 and body["post"]["status"] == "writing", body
+    assert only("PATCH", "/v1/social/posts/v2_fake0001")[0]["body"] == {"regenerate": "picture", "instruction": "A brighter office"}
+    assert only("POST", "/decision") == []
+
+
+def test_a_bad_change_is_refused_before_outreach_is_asked():
+    use(post_status="needs_approval")
+    c = client(USER_A)
+    pid = make_post(c)[1]["post"]["id"]
+    url = f"/api/growth/social/posts/{pid}"
+    soon = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    for over, word in (({}, "Choose a new time"), ({"regenerate": "poem"}, "text, the picture or both"), ({"publish_at": "2020-01-01T09:00:00Z"}, "at least 5 minutes"),
+                       ({"publish_at": soon, "regenerate": "text"}, "two steps")):
+        code, body, _ = call(c, "patch", url, {"attempt": attempt(), **over})
+        assert code == 400 and word in body["error"], (over, body)
+    assert call(c, "patch", url, {"regenerate": "text"})[0] == 400  # no attempt token
+    assert only("PATCH", "/v1/social/posts/v2_fake0001") == []
+
+
+def test_a_finished_post_cannot_be_changed_and_another_user_cannot_change_it():
+    use(post_status="needs_approval")
+    c = client(USER_A)
+    pid = make_post(c)[1]["post"]["id"]
+    FAKE.calls.clear()
+    assert call(client(USER_B), "patch", f"/api/growth/social/posts/{pid}", {"regenerate": "text", "attempt": attempt()})[0] == 404
+    assert only("PATCH", "/v1/social/posts/v2_fake0001") == []
+    FAKE.handler.state["post_status"] = "published"
+    code, body, _ = call(c, "patch", f"/api/growth/social/posts/{pid}", {"regenerate": "text", "attempt": attempt()})
+    assert code == 409 and "already published" in body["error"] and only("PATCH", "/v1/social/posts/v2_fake0001") == []
+
+
+PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
+
+
+def test_a_post_can_start_from_the_users_own_caption_used_as_written():
+    use()
+    c = client(USER_A)
+    code, body, _ = call(c, "post", "/api/growth/social/posts", {"caption": "Our Leeds office is open.\nCome and say hello.", "channels": ["linkedin"],
+                                                                "picture": {"mode": "none"}, "attempt": attempt()})
+    assert code == 200, body
+    sent = only("POST", "/v1/social/posts")[0]["body"]
+    assert "exactly as written" in sent["prompt"] and sent["prompt"].endswith("Our Leeds office is open.\nCome and say hello.")
+    assert "image" not in sent, "the user's own picture is set by hand afterwards; the AI draws nothing"
+    assert only("POST", "/decision") == []
+    assert body["post"]["prompt"] == "Our Leeds office is open.\nCome and say hello.", "the stored text is the user's own words"
+
+
+def test_a_caption_can_be_polished_by_the_ai_and_a_company_is_still_named():
+    use()
+    c = client(USER_A)
+    code, body, _ = call(c, "post", "/api/growth/social/posts", {"caption": "Our Leeds office is open.", "polish": True, "channels": ["linkedin"], "attempt": attempt()})
+    assert code == 200, body
+    sent = only("POST", "/v1/social/posts")[0]["body"]
+    assert "Improve this draft post for linkedin" in sent["prompt"] and "Add no new facts" in sent["prompt"] and "Our Leeds office is open." in sent["prompt"]
+    assert sent["image"] == {"mode": "ai"}
+
+
+def test_a_bad_own_caption_is_refused_before_a_post_is_made():
+    use()
+    c = client(USER_A)
+    for over, word in (({"caption": "hi"}, "few words"), ({"caption": "x" * 1600}, "too long"), ({"channels": []}, "at least one channel"),
+                       ({"channels": ["instagram"]}, "Not connected in Outreach")):
+        code, body, _ = call(c, "post", "/api/growth/social/posts", {"caption": "Our Leeds office is open.", "channels": ["linkedin"], "attempt": attempt(), **over})
+        assert code == 400 and word in body["error"], (over, body)
+    assert only("POST", "/v1/social/posts") == []
+
+
+def test_the_users_own_caption_and_picture_are_set_by_hand_and_the_post_goes_back_for_approval():
+    use(post_status="needs_approval")
+    c = client(USER_A)
+    pid = make_post(c)[1]["post"]["id"]
+    code, body, _ = call(c, "patch", f"/api/growth/social/posts/{pid}", {"caption": "  Our Leeds office is open.  ", "picture_data": PNG, "attempt": attempt()})
+    assert code == 200, body
+    sent = only("PATCH", "/v1/social/posts/v2_fake0001")
+    assert len(sent) == 1 and sent[0]["body"] == {"caption": "Our Leeds office is open.", "image_url": PNG}
+    assert sent[0]["headers"]["Idempotency-Key"].startswith("tf-post-edit-")
+    assert body["post"]["caption"] == "Our Leeds office is open.", "the post shows the user's words"
+    assert body["post"]["status"] == "needs_approval"
+    assert only("POST", "/decision") == [], "a hand edit never approves"
+    assert call(c, "get", "/api/growth/social/posts")[1]["posts"][0]["caption"] == "Our Leeds office is open."
+
+
+def test_a_bad_hand_edit_is_refused_before_outreach_is_asked():
+    use(post_status="needs_approval")
+    c = client(USER_A)
+    pid = make_post(c)[1]["post"]["id"]
+    url = f"/api/growth/social/posts/{pid}"
+    soon = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    for over, word in (({"caption": "no"}, "few words"), ({"caption": "x" * 3100}, "too long"), ({"picture_data": "data:image/gif;base64,R0lGODlh"}, "PNG, JPG or WebP"),
+                       ({"picture_data": "data:image/png;base64,PGh0bWw+PHNjcmlwdD4="}, "not really"), ({"picture_data": "javascript:alert(1)"}, "PNG, JPG or WebP"),
+                       ({"caption": "New words here", "publish_at": soon}, "on its own"), ({"caption": "New words here", "regenerate": "text"}, "on its own")):
+        code, body, _ = call(c, "patch", url, {"attempt": attempt(), **over})
+        assert code == 400 and word in body["error"], (over, body)
+    assert only("PATCH", "/v1/social/posts/v2_fake0001") == []
+
+
+def test_a_post_the_ai_is_still_writing_cannot_be_edited_by_hand_but_can_be_scheduled():
+    use(post_status="writing")
+    c = client(USER_A)
+    pid = make_post(c)[1]["post"]["id"]
+    url = f"/api/growth/social/posts/{pid}"
+    code, body, _ = call(c, "patch", url, {"caption": "New words here", "attempt": attempt()})
+    assert code == 409 and "still writing" in body["error"] and only("PATCH", "/v1/social/posts/v2_fake0001") == []
+    when = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    assert call(c, "patch", url, {"publish_at": when, "attempt": attempt()})[0] == 200
+
+
+def test_another_user_cannot_edit_a_post_by_hand():
+    use(post_status="needs_approval")
+    pid = make_post(client(USER_A))[1]["post"]["id"]
+    FAKE.calls.clear()
+    assert call(client(USER_B), "patch", f"/api/growth/social/posts/{pid}", {"caption": "Hijacked caption", "attempt": attempt()})[0] == 404
+    assert only("PATCH", "/v1/social/posts/v2_fake0001") == []
+
+
+def test_an_approval_can_carry_a_new_time_and_a_bad_one_is_refused():
+    use(post_status="needs_approval")
+    c = client(USER_A)
+    pid = make_post(c)[1]["post"]["id"]
+    url = f"/api/growth/social/posts/{pid}/decision"
+    code, body, _ = call(c, "post", url, {"decision": "approve", "confirm": True, "publish_at": "2020-01-01T09:00:00Z", "attempt": attempt()})
+    assert code == 400 and "at least 5 minutes" in body["error"] and only("POST", "/decision") == []
+    when = (datetime.now(timezone.utc) + timedelta(days=2)).replace(microsecond=0)
+    code, body, _ = call(c, "post", url, {"decision": "approve", "confirm": True, "publish_at": when.isoformat(), "attempt": attempt()})
+    assert code == 200 and body["post"]["status"] == "approved", body
+    assert only("POST", "/decision")[0]["body"] == {"decision": "approve", "publish_at": when.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    assert body["post"]["publish_at"] == when.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def test_a_post_can_be_rejected_without_a_confirmation():

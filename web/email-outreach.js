@@ -31,8 +31,8 @@
     const connected = !!info.configured;
     const url = connected ? info.manage_url : info.connect_url;
     if (typeof url !== "string" || !/^https:\/\//i.test(url)) return "";
-    return `<p class="eo-hint"><a class="eo-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${connected ? "Manage in Outreach" : "Connect Outreach"}</a>` +
-      (connected ? "" : ` &middot; sign in or sign up there, choose a plan and connect your mailbox, then reload this page.`) + `</p>`;
+    return `<p class="eo-hint"><a class="eo-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" data-outreach-link="${connected ? "manage" : "connect"}">${connected ? "Manage in Outreach" : "Connect Outreach"}</a>` +
+      (connected ? "" : ` &middot; opens in a small window: sign in or sign up there, choose a plan and connect your mailbox, then close the window.`) + `</p>`;
   }
 
   function statusHtml(info) {
@@ -182,6 +182,8 @@
     $("eoPreview").addEventListener("click", () => act("preview"));
     $("eoSend").addEventListener("click", () => act("send"));
     $("eoRefresh").addEventListener("click", () => act("refresh"));
+    // the small Outreach window (outreach-popup.js) was closed: the user may have connected, so look again
+    document.addEventListener("outreach:window-closed", () => loadStatus());
     loadStatus();
   }
 

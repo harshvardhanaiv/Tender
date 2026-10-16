@@ -289,3 +289,38 @@ body.tf-shell #growthFilterBar select.tf-chip--select { flex: none; width: auto;
   .gs-in-subject, .gs-in-meta { grid-column: 2; white-space: normal; }
   .gs-in-detail { padding-left: 14px; }
 }
+
+/* Social tab: composer and posts on the left, the post as Outreach made it on the right */
+.gs-sp-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.gs-sp-preview { position: sticky; top: 8px; }
+.gs-sp-image { margin: 8px 0 0; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-2); overflow: hidden; }
+.gs-sp-image img { display: block; width: 100%; max-height: 420px; object-fit: cover; }
+.gs-sp-image--empty { padding: 36px 18px; text-align: center; color: var(--slate); font-size: 13px; line-height: 1.5; }
+.gs-sp-section { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+.gs-sp-when { margin: 4px 0 8px; font-size: 14px; }
+.gs-sp-variant { margin-top: 10px; }
+.gs-sp-item { padding: 0; }
+.gs-sp-pick { display: block; width: 100%; padding: 10px 6px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 3px; }
+.gs-sp-pick:hover { background: var(--panel-2); }
+.gs-sp-pick:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: -2px; }
+.gs-sp-item.is-selected .gs-sp-pick { background: var(--gs-accent-soft, var(--panel-2)); box-shadow: inset 3px 0 0 var(--accent); }
+.gs-sp-pick__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.gs-sp-pick__text { display: block; margin-top: 4px; font-size: 13px; color: var(--slate); line-height: 1.4; }
+.gs-actions--tight { margin-top: 0; }
+@media (max-width: 900px) {
+  .gs-sp-grid { grid-template-columns: 1fr; }
+  .gs-sp-preview { position: static; }
+}
+
+/* Social tab: the company the post is written as */
+.gs-sp-company { margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.gs-sp-company .gs-label { margin-top: 0; }
+.gs-sp-company .gs-notes { margin-top: 8px; }
+
+/* Social tab: write the caption by hand, own picture */
+.gs-sp-how { gap: 6px 18px; }
+.gs-label--sub { margin-top: 10px; font-weight: 600; }
+.gs-sp-own { margin: 6px 0 4px; }
+.gs-sp-thumb { display: block; max-width: 100%; max-height: 180px; margin: 0 0 8px; border: 1px solid var(--line); border-radius: 4px; object-fit: contain; background: var(--panel-2); }
+.gs-sp-file { position: relative; display: inline-block; cursor: pointer; overflow: hidden; }
+.gs-sp-file__input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }

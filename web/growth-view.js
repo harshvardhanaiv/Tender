@@ -590,7 +590,7 @@
     return lines.length ? `<ul class="gs-warnings gs-outreach__result">${lines.join("")}</ul>` : "";
   }
 
-  // Where "Connect Outreach" / "Manage in Outreach" go: Outreach's own web app, in a new tab, so the user signs in or
+  // Where "Connect Outreach" / "Manage in Outreach" go: Outreach's own web app, in a small window (outreach-popup.js), so the user signs in or
   // signs up there, chooses a plan and connects a mailbox. Only an https link from the server is ever used.
   function outreachConnectBox(info) {
     const pick = (u) => (typeof u === "string" && /^https:\/\//i.test(u) ? u : "");
@@ -604,7 +604,7 @@
       `</div>` +
       (connected
         ? ""
-        : `<p class="gs-hint">Outreach opens in a new tab. Sign in or sign up there, choose a plan and connect your mailbox, then come back and check again. TenderFlow sends from the mailbox you connect.</p>`)
+        : `<p class="gs-hint">Outreach opens in a small window. Sign in or sign up there, choose a plan and connect your mailbox, then close the window and this panel checks again by itself. TenderFlow sends from the mailbox you connect.</p>`)
     );
   }
 

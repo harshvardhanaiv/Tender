@@ -553,6 +553,10 @@ def create_growth_tables(cursor) -> None:
         )
         """
     )
+    cursor.execute("ALTER TABLE growth_social_posts ADD COLUMN IF NOT EXISTS image_url TEXT")
+    cursor.execute("ALTER TABLE growth_social_posts ADD COLUMN IF NOT EXISTS variants_json TEXT")
+    cursor.execute("ALTER TABLE growth_social_posts ADD COLUMN IF NOT EXISTS profile_id INTEGER")
+    cursor.execute("ALTER TABLE growth_social_posts ADD COLUMN IF NOT EXISTS company_name TEXT")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_growth_social_posts_user ON growth_social_posts (username, created_at DESC)")
     cursor.execute(
         """

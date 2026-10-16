@@ -108,7 +108,7 @@ text (the panel shows `sk_test_…`, the first 8 characters). Growth Studio's "S
 | `OUTREACH_API_KEY` | none | Bearer key, `sk_test_...` or `sk_live_...` |
 | `OUTREACH_API_BASE` | `https://outreach.aivhub.com` | `api.outreach.aivhub.com` currently fails its TLS handshake; `/v1/*` works on the main host |
 | `OUTREACH_SEND_MAILBOX_FIELD` / `OUTREACH_CAMPAIGN_MAILBOX_FIELD` | `mailbox_id` / `mailbox_ids` | Field names sent when a mailbox is chosen in Growth Studio's "Send from" dropdown (shown when Outreach reports two or more mailboxes). Outreach has not documented them yet, so the answer's `from` is checked and a mismatch is flagged |
-| `OUTREACH_WEB_URL` | `https://outreach.aivhub.com` | Outreach's web app: where "Connect Outreach" and "Manage in Outreach" open (new tab) so the user signs in or up, chooses a plan and connects a mailbox. https only |
+| `OUTREACH_WEB_URL` | `https://outreach.aivhub.com` | Outreach's web app: where "Connect Outreach" and "Manage in Outreach" open in a small centred window (a normal new tab if the browser blocks it; the panel re-checks when the window closes) so the user signs in or up, chooses a plan and connects a mailbox. https only |
 | `OUTREACH_CONNECT_URL` / `OUTREACH_MANAGE_URL` | blank | Optional deeper links (its sign-up or plans page, its Mailboxes page). Blank uses `OUTREACH_WEB_URL` |
 | `OUTREACH_ALLOW_LIVE` | `0` | While `0` a `sk_live_` key is refused with a clear message. Set `1` only when real sending is intended |
 | `OUTREACH_TIMEOUT_SECONDS` | `15` | Per request |
@@ -158,7 +158,7 @@ in the campaign (counted on the Performance tab); a buyer already in a meeting o
 marks it read. A reply that reads like "stop" is flagged, with a button to add the buyer to the do-not-contact list.
 **Reply by email** opens the user's own mail program: nothing is sent from the inbox.
 
-### Social posts and phone calls (Growth Studio, "Social & calls" tab)
+### Social posts and phone calls (Growth Studio, "Social" and "Calls" tabs)
 
 Uses the same key. Give it `social:write` and `social:approve` for posts, and `voice:calls` for calls, in Outreach's Keys tab.
 
@@ -166,6 +166,26 @@ Uses the same key. Give it `social:write` and `social:approve` for posts, and `v
   Creating a post never publishes it: it waits as *Ready to approve*, and only the **Approve and publish** button
   (after a confirmation) sends the approval (`.../decision`). TenderFlow reads Outreach's own state before approving,
   so a post still being written or already finished is refused. Channels come from `/v1/wallets`.
+  The **Social** tab has the composer and the list of posts on the left and, on the right, the selected post as Outreach
+  made it: the AI picture, the caption and how it reads on each channel, its **schedule** (change the time with
+  `PATCH /v1/social/posts/{id}`; approve for a new time with `publish_at` on the decision) and the approval choices
+  (approve, reject, cancel), plus **Write again** (the AI rewrites the text, the picture or both). A change sends the post
+  back for approval and never publishes it.
+  **Post as your company:** the composer's *Post as* field lists the user's company profiles from TenderFlow (the one Growth
+  Studio uses, else the default, is preselected). The AI is told the company's name, what it does, where it is and its website,
+  taken from the profile, plus an instruction to use only those facts; contact people, emails, phones, VAT and turnover are never
+  sent. The panel shows exactly what is sent, and hints say what to add to the profile. Only the user's own profiles can be used.
+  With no company set up, a general post can still be written.
+  **Write it with the AI or yourself:** the composer asks *Let the AI write it* (an idea) or *I'll write the caption*
+  (optionally *Let the AI polish it*: same meaning and facts, nothing added). The picture is *AI picture*, *My own picture*
+  (PNG/JPG/WebP up to 8 MB, shrunk to 1600 px in the browser; the server checks the bytes really are that kind of picture and
+  caps it at 5 MB) or *No picture*. The API only creates a post from a prompt, so a caption used as written is sent as
+  "publish exactly this", and it, and any own picture, are then set **by hand** with `PATCH` once Outreach has finished writing
+  (the browser does that by itself on the next refresh; an edit while the AI is still writing would be overwritten, so it is
+  refused). The preview also has *Edit by hand* (caption box, own picture) next to *ask the AI to improve it*. A hand edit goes
+  back for approval and never publishes. **Unverified against live Outreach:** its docs say a post can be edited "by hand" but
+  not which fields; `caption` and `image_url` (a data URL) are the names its own editor uses and are set in one place
+  (`HAND_CAPTION_FIELD`, `HAND_PICTURE_FIELD` in `tender_app/outreach_channels.py`).
 - **Phone call.** One number per request, placed only by the **Call now** button after a confirmation
   (`POST /v1/voice/calls`). UK PECR: a marketing call may go to an organisation, not an individual, and never to a
   number on the TPS / CTPS, so the call is refused unless the user ticked both confirmations for that call, the number is

@@ -19,8 +19,10 @@ own rows:
     /api/growth/campaigns/<id>/export           CSV, Mailchimp audience, Mailchimp message
     /api/growth/outreach/status                 is Outreach connected, test or live key, credits
     /api/growth/campaigns/<id>/outreach         (GET, POST) its Outreach campaigns; send through Outreach
+    /api/growth/social/company                  the user's companies and what a post would say about the chosen one
     /api/growth/social/posts       (GET, POST)  Outreach social posts: write one (the AI), list, refresh
-    /api/growth/social/posts/<id>/decision (POST)  approve (publishes), reject or cancel a post
+    /api/growth/social/posts/<id>   (PATCH)      change its publish time, have the AI write the text / picture again, or set the user's own caption / picture
+    /api/growth/social/posts/<id>/decision (POST)  approve (publishes, optionally at a new time), reject or cancel a post
     /api/growth/voice/calls        (GET, POST)  Outreach AI phone calls: one number per request, list, refresh
     /api/growth/voice/calls/<id>   (GET, DELETE) one call as Outreach holds it; hang up a live call
     /api/growth/voice/scripts, /voice/lookup    saved scripts; the phone number a buyer published on a notice
@@ -1363,7 +1365,8 @@ def growth_outreach_send(cid: int):
 
 # ── Outreach: social posts and phone calls ──────────────────────────────────────────────────────
 
-POST_COLUMNS = "id, outreach_id, prompt, channels, publish_at, mode, status, caption, preview_url, published_url, error, created_at, checked_at, decided_at"
+POST_COLUMNS = ("id, outreach_id, prompt, channels, publish_at, mode, status, caption, preview_url, published_url, error, created_at, "
+                "checked_at, decided_at, image_url, variants_json, profile_id, company_name")
 CALL_COLUMNS = "id, outreach_id, buyer_name, to_number, goal, mode, status, outcome, duration_seconds, meeting_booked, error, created_at, checked_at"
 MAX_REFRESH = 10  # Outreach allows 120 requests a minute; a refresh reads at most this many items
 
@@ -1371,6 +1374,11 @@ MAX_REFRESH = 10  # Outreach allows 120 requests a minute; a refresh reads at mo
 def _post_public(r) -> dict[str, Any]:
     d = dict(zip(POST_COLUMNS.split(", "), r))
     d["channels"] = [c for c in (d["channels"] or "").split(",") if c]
+    try:
+        variants = json.loads(d.pop("variants_json") or "[]")
+    except ValueError:
+        variants = []
+    d["variants"] = variants if isinstance(variants, list) else []
     for k in ("created_at", "checked_at", "decided_at"):
         d[k] = _iso(d[k])
     return d
@@ -1423,11 +1431,14 @@ def growth_social_posts():
                         continue
                     p.update(status=s["status"] or p["status"], caption=s["caption"] or p["caption"],
                              preview_url=s["preview_url"] or p["preview_url"], published_url=s["published_url"] or p["published_url"],
-                             error=s["reason"], checked_at=_iso(_now()))
+                             image_url=s["image_url"] or p["image_url"], variants=s["variants"] or p["variants"],
+                             publish_at=s["publish_at"] or p["publish_at"], error=s["reason"], checked_at=_iso(_now()))
                     cur.execute(
                         """UPDATE growth_social_posts SET status = %s, caption = %s, preview_url = %s, published_url = %s,
-                               error = %s, checked_at = NOW() WHERE id = %s AND username = %s""",
-                        (p["status"], p["caption"], p["preview_url"], p["published_url"], p["error"], p["id"], username),
+                               image_url = %s, variants_json = %s, publish_at = %s, error = %s, checked_at = NOW()
+                           WHERE id = %s AND username = %s""",
+                        (p["status"], p["caption"], p["preview_url"], p["published_url"], p["image_url"], json.dumps(p["variants"]),
+                         p["publish_at"], p["error"], p["id"], username),
                     )
         conn.commit()
         return jsonify({"posts": rows, "refreshed": client is not None, "stopped": stopped})
@@ -1447,7 +1458,19 @@ def growth_social_create():
     allowed = wallet["social_channels"]
     if not allowed and (wallet.get("connected") or {}).get("social_channels") == 0:
         raise _Http("No social channel is connected in Outreach. Connect one there first, then try again.", 409)
-    problems, channels, prompt = och.post_problems(body.get("prompt"), body.get("channels"), allowed)
+    # "write it myself": the user's own caption. It is the prompt, either to be polished by the AI (polish: true) or to be
+    # used as it is (the browser then sets it on the post by hand once Outreach has finished writing). The user's own
+    # picture is likewise set by hand afterwards (PATCH), so the AI is never asked to draw one.
+    own_caption = body.get("caption") not in (None, "")
+    polish = body.get("polish") is True
+    if own_caption:
+        bad_caption, caption = och.caption_problem(body.get("caption"), och.MAX_DRAFT_CAPTION)
+        problems, channels = och.channel_problems(body.get("channels"), allowed)
+        if bad_caption:
+            problems.insert(0, bad_caption)
+        prompt = caption
+    else:
+        problems, channels, prompt = och.post_problems(body.get("prompt"), body.get("channels"), allowed)
     publish_at, bad_time = och.parse_publish_at(body.get("publish_at"))
     if bad_time:
         problems.append(bad_time)
@@ -1457,13 +1480,23 @@ def growth_social_create():
     username = _username()
     conn = _connect()
     try:
+        # posting as one of the user's own companies: only a profile of theirs is used (a miss is a 404), and the AI is
+        # told only what the profile says (och.company_brief), so it never writes about a company it was not given
+        profile = _profile_for(conn, username, body.get("profile_id")) if body.get("profile_id") not in (None, "", 0, "0") else None
+        brief = och.company_brief(profile)
+        if own_caption and not polish:
+            sent_prompt = och.exact_prompt(prompt)  # the caption goes out as written, so no company facts are added to it
+        elif own_caption:
+            sent_prompt = och.compose_post_prompt(och.polish_prompt(prompt, channels), brief)
+        else:
+            sent_prompt = och.compose_post_prompt(prompt, brief)
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM growth_social_posts WHERE username = %s AND created_at > NOW() - INTERVAL '24 hours'", (username,))
             if cur.fetchone()[0] >= OUTREACH_DAILY_POST_CAP:
                 raise _Http(f"You have made {OUTREACH_DAILY_POST_CAP} posts in the last 24 hours. Try again later.", 429)
         try:
             made = oc.post_summary(client.create_social_post(
-                och.build_post_payload(prompt, channels, publish_at, picture), och.attempt_key(username, "post", attempt)))
+                och.build_post_payload(sent_prompt, channels, publish_at, picture), och.attempt_key(username, "post", attempt)))
         except oc.OutreachError as exc:
             raise _Http(exc.message, 502 if exc.status >= 500 or exc.code == "unreachable" else (exc.status if exc.status in (402, 403, 409, 422, 429) else 400))
         if not made["id"]:
@@ -1471,10 +1504,11 @@ def growth_social_create():
         with conn.cursor() as cur:
             cur.execute(
                 f"""INSERT INTO growth_social_posts (username, outreach_id, prompt, channels, publish_at, mode, status, caption,
-                        preview_url, published_url, error, checked_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, NOW()) RETURNING {POST_COLUMNS}""",
+                        preview_url, published_url, image_url, variants_json, profile_id, company_name, error, checked_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, NOW()) RETURNING {POST_COLUMNS}""",
                 (username, made["id"], prompt, ",".join(made["channels"] or channels), publish_at, client.mode,
-                 made["status"] or "writing", made["caption"], made["preview_url"], made["published_url"]),
+                 made["status"] or "writing", made["caption"], made["preview_url"], made["published_url"], made["image_url"],
+                 json.dumps(made["variants"]), profile["id"] if profile else None, brief["name"] if brief else None),
             )
             post = _post_public(cur.fetchone())
         conn.commit()
@@ -1493,6 +1527,11 @@ def growth_social_decide(pid: int):
         raise _Http("decision must be approve, reject or cancel")
     if decision == "approve" and body.get("confirm") is not True:
         raise _Http("Confirm that you have read the preview and want this published.")
+    new_time = None
+    if decision == "approve" and body.get("publish_at"):
+        new_time, bad_time = och.parse_publish_at(body.get("publish_at"))
+        if bad_time:
+            raise _Http(bad_time)
     attempt = _attempt(body)
     client = _outreach_client()
     username = _username()
@@ -1513,12 +1552,13 @@ def growth_social_decide(pid: int):
                 _store_post(conn, pid, username, live)
                 conn.commit()
                 raise _Http(why, 409)
-            done = oc.post_summary(client.decide_social_post(post["outreach_id"], decision, och.attempt_key(username, "post-decide", attempt)))
+            done = oc.post_summary(client.decide_social_post(post["outreach_id"], decision, och.attempt_key(username, "post-decide", attempt), new_time))
         except oc.OutreachError as exc:
             raise _Http(exc.message, 403 if exc.status == 403 else (502 if exc.status >= 500 or exc.code == "unreachable" else 400))
         final = done["status"] or {"approve": "approved", "reject": "rejected", "cancel": "cancelled"}[decision]
         merged = {**live, "status": final, "caption": done["caption"] or live["caption"],
-                  "published_url": done["published_url"] or live["published_url"], "reason": None}
+                  "published_url": done["published_url"] or live["published_url"], "reason": None,
+                  "publish_at": done["publish_at"] or new_time or live["publish_at"]}
         _store_post(conn, pid, username, merged, decided=True)
         conn.commit()
         with conn.cursor() as cur:
@@ -1533,10 +1573,91 @@ def _store_post(conn, pid: int, username: str, s: dict[str, Any], decided: bool 
         cur.execute(
             f"""UPDATE growth_social_posts SET status = COALESCE(%s, status), caption = COALESCE(%s, caption),
                     preview_url = COALESCE(%s, preview_url), published_url = COALESCE(%s, published_url),
-                    error = %s, checked_at = NOW(){", decided_at = NOW()" if decided else ""}
+                    image_url = COALESCE(%s, image_url), variants_json = COALESCE(%s, variants_json),
+                    publish_at = COALESCE(%s, publish_at), error = %s, checked_at = NOW(){", decided_at = NOW()" if decided else ""}
                 WHERE id = %s AND username = %s""",
-            (s["status"], s["caption"], s["preview_url"], s["published_url"], s.get("reason"), pid, username),
+            (s["status"], s["caption"], s["preview_url"], s["published_url"], s.get("image_url"),
+             json.dumps(s["variants"]) if s.get("variants") else None, s.get("publish_at"), s.get("reason"), pid, username),
         )
+
+
+@growth_bp.patch("/api/growth/social/posts/<int:pid>")
+def growth_social_change(pid: int):
+    """Change a post in Outreach: a new publish time, or ask the AI to write the text, the picture or both again (with an
+    optional note). Outreach sends a changed post back for approval, so this never publishes: the user reads the new
+    preview and approves again."""
+    body = _json_body()
+    attempt = _attempt(body)
+    problems, payload = och.change_payload(body.get("publish_at"), body.get("regenerate"), body.get("instruction"),
+                                           caption=body.get("caption"), picture=body.get("picture_data"))
+    hand = och.HAND_CAPTION_FIELD in payload or och.HAND_PICTURE_FIELD in payload
+    if problems:
+        raise _Http(" ".join(problems))
+    client = _outreach_client()
+    username = _username()
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT {POST_COLUMNS} FROM growth_social_posts WHERE id = %s AND username = %s", (pid, username))
+            row = cur.fetchone()
+        if not row:
+            raise _Http("Post not found", 404)
+        post = _post_public(row)
+        if not post["outreach_id"]:
+            raise _Http("This post was never created in Outreach.", 409)
+        try:
+            live = oc.post_summary(client.get_social_post(post["outreach_id"]))
+            why = och.can_decide(live["status"] or post["status"], "edit" if hand else "change")
+            if why:
+                _store_post(conn, pid, username, live)
+                conn.commit()
+                raise _Http(why, 409)
+            done = oc.post_summary(client.update_social_post(post["outreach_id"], payload, och.attempt_key(username, "post-edit", attempt)))
+        except oc.OutreachError as exc:
+            raise _Http(exc.message, 403 if exc.status == 403 else (502 if exc.status >= 500 or exc.code == "unreachable" else 400))
+        merged = {**live, **{k: v for k, v in done.items() if v}, "reason": None}
+        merged["status"] = done["status"] or ("writing" if "regenerate" in payload else live["status"])
+        if "publish_at" in payload and not done["publish_at"]:
+            merged["publish_at"] = payload["publish_at"]
+        if och.HAND_CAPTION_FIELD in payload:
+            merged["caption"] = payload[och.HAND_CAPTION_FIELD]  # the user's words, whatever Outreach echoes back
+        _store_post(conn, pid, username, merged)
+        conn.commit()
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT {POST_COLUMNS} FROM growth_social_posts WHERE id = %s AND username = %s", (pid, username))
+            return jsonify({"post": _post_public(cur.fetchone())})
+    finally:
+        conn.close()
+
+
+@growth_bp.get("/api/growth/social/company")
+def growth_social_company():
+    """The user's companies (their company profiles) and what a post would say about the chosen one. With no ?profile_id
+    the company is the one Growth Studio last used, else their default. The brief is exactly what the AI is told."""
+    username = _username()
+    wanted = _optional_id(request.args.get("profile_id"))
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, name, profile_text, meta_json, COALESCE(is_default, FALSE) FROM company_profiles
+                   WHERE username = %s ORDER BY is_default DESC, name ASC""",
+                (username,),
+            )
+            profiles = [_profile_dict(r) for r in cur.fetchall()]
+        if wanted and not any(p["id"] == wanted for p in profiles):
+            raise _Http("That company profile was not found", 404)
+        chosen_raw = str(wanted) if wanted else _get_pref(conn, username, PREF_PROFILE)
+        chosen = next((p for p in profiles if str(p["id"]) == chosen_raw), None) or (profiles[0] if profiles else None)
+    finally:
+        conn.close()
+    brief = och.company_brief(chosen)
+    return jsonify({
+        "profiles": [{"id": p["id"], "name": p["name"], "is_default": p["is_default"], "has_description": len(p["text"].strip()) >= 20} for p in profiles],
+        "profile_id": chosen["id"] if chosen else None,
+        "brief": brief,
+        "hints": och.brief_hints(profiles, brief),
+    })
 
 
 @growth_bp.get("/api/growth/voice/scripts")

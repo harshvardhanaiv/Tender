@@ -146,7 +146,7 @@ test("the builder shows the Send mail panel and the note says what sending does"
   assert.ok(!/TenderFlow itself sends nothing/.test(html), "the old claim is gone");
 });
 
-test("not connected: a Connect Outreach button opens Outreach in a new tab and says what to do there", () => {
+test("not connected: a Connect Outreach button opens Outreach in a small window and says what to do there", () => {
   const html = panel({ info: { ready: false, configured: false, problem: "Outreach is not connected.", connect_url: "https://outreach.aivhub.com/", manage_url: "https://outreach.aivhub.com/" } });
   const link = (html.match(/<a [^>]*data-outreach-link="connect"[^>]*>[^<]*<\/a>/) || [])[0] || "";
   assert.match(link, /href="https:\/\/outreach\.aivhub\.com\/"/);
@@ -154,6 +154,8 @@ test("not connected: a Connect Outreach button opens Outreach in a new tab and s
   assert.match(link, /rel="noopener noreferrer"/);
   assert.match(link, />Connect Outreach</);
   assert.match(html, /sign in or sign up there, choose a plan and connect your mailbox/i);
+  assert.match(html, /opens in a small window/i);
+  assert.match(html, /close the window and this panel checks again by itself/);
   assert.match(button(html, "outreach-check"), /data-action="outreach-check"/);
   assert.ok(!html.includes('data-action="outreach-send"'), "nothing can be sent until it is connected");
 });

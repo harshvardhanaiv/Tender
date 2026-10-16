@@ -9,10 +9,10 @@
   if (!V) return; // growth-view.js did not load: leave the rest of the app alone
 
   const byId = (id) => document.getElementById(id);
-  const TABS = { signals: "gsTabSignals", campaigns: "gsTabCampaigns", builder: "gsTabBuilder", performance: "gsTabPerformance", channels: "gsTabChannels", inbox: "gsTabInbox" };
+  const TABS = { signals: "gsTabSignals", campaigns: "gsTabCampaigns", builder: "gsTabBuilder", social: "gsTabSocial", calls: "gsTabCalls", inbox: "gsTabInbox", performance: "gsTabPerformance" };
   const TYPE_CHOICES = { renewal: "Contract renewals", development: "New developments", engagement: "Market engagements" };
   const STALE_MS = 5 * 60 * 1000;
-  const PANES = { signals: "gsPaneSignals", campaigns: "gsPaneCampaigns", builder: "gsPaneBuilder", performance: "gsPanePerformance", channels: "gsPaneChannels", inbox: "gsPaneInbox" };
+  const PANES = { signals: "gsPaneSignals", campaigns: "gsPaneCampaigns", builder: "gsPaneBuilder", performance: "gsPanePerformance", social: "gsPaneSocial", calls: "gsPaneCalls", inbox: "gsPaneInbox" };
 
   function freshBuilder() {
     return {
@@ -774,12 +774,15 @@
     if (tab === "signals" && !state.signals.data && V.hasCategory(state.filters)) loadSignals();
     if (tab === "campaigns") loadCampaigns();
     if (tab === "performance") loadPerformance();
-    // Social & calls and Inbox have their own modules (growth-channels.js, growth-inbox.js): each loads when its tab opens
-    [["channels", window.GrowthChannels], ["inbox", window.GrowthInbox]].forEach(([name, mod]) => {
-      if (!mod) return;
-      if (tab === name) mod.open();
-      else mod.close();
-    });
+    // Social, Calls and Inbox have their own modules (growth-channels.js, growth-inbox.js): each loads when its tab opens
+    if (window.GrowthChannels) {
+      if (tab === "social" || tab === "calls") window.GrowthChannels.open(tab);
+      else window.GrowthChannels.close();
+    }
+    if (window.GrowthInbox) {
+      if (tab === "inbox") window.GrowthInbox.open();
+      else window.GrowthInbox.close();
+    }
   }
 
   // ── events ────────────────────────────────────────────────────────────────────────────────────
