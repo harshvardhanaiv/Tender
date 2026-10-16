@@ -310,6 +310,9 @@ test("companyProfileHtml: sources fail soft, text is escaped, owners and filings
     "Jane &lt;Doe&gt;", "ownership of shares 25 to 50 percent", "1 former owner not shown", "Matched to Companies House by name");
   lacks(html, "<LTD>", "<Doe>", "Old Owner");
   has(BW.companyProfileHtml({ supplier: {}, google: { status: "not_connected" }, companies_house: { status: "error" } }), "Not connected: no API key", "Unavailable right now");
+  const why = BW.companyProfileHtml({ supplier: {}, google: { status: "error", detail: "Google refused the request (HTTP 403). Check <billing>." }, companies_house: { status: "not_connected" } });
+  has(why, "Unavailable right now", "Google refused the request (HTTP 403). Check &lt;billing&gt;.");
+  lacks(why, "<billing>");
 });
 
 test("not awarded tab: two groups, escaped, show-more only when there is more", () => {

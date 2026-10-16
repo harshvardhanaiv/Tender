@@ -13,6 +13,13 @@ What is used (from Outreach's own API reference):
     POST /v1/email/campaigns          draft an email campaign (scope email:write)
     POST /v1/email/campaigns/{id}/decision   approve it, which is what starts it sending (scope email:approve)
     GET  /v1/email/campaigns/{id}     its emails, how many went out, replies, approval state
+    POST /v1/social/posts             the AI writes a post (and picture); nothing goes live until it is approved
+    GET  /v1/social/posts/{id}        its status, caption and the result once published
+    POST /v1/social/posts/{id}/decision   approve / reject / cancel it (scope social:approve); approving publishes
+    POST /v1/voice/calls              the AI phones one number (scope voice:calls); the outcome is read by asking for the call
+    GET  /v1/voice/calls/{id}         status, outcome, answers, transcript, whether a meeting was booked
+    DELETE /v1/voice/calls/{id}       hang up a call that is ringing or in progress
+    GET  /v1/voice/scripts            the saved call scripts
 
 Authentication is `Authorization: Bearer sk_test_...` (pretends everything, charges nothing) or `sk_live_...`.
 Requests that create something carry an `Idempotency-Key`, so a retry returns the first answer instead of a
@@ -238,8 +245,12 @@ class OutreachClient:
         return self._call("POST", "/v1/email/send", payload, idempotency_key)
 
     def list_email_messages(self, *, campaign_id: str | None = None, status: str | None = None,
-                            q: str | None = None) -> dict[str, Any]:
+                            q: str | None = None, cursor: str | None = None) -> dict[str, Any]:
         params: dict[str, str] = {}
+        if cursor:
+            if not re.fullmatch(r"[A-Za-z0-9_\-=.:+/]{1,300}", cursor):
+                raise OutreachError("That is not a page cursor.", 400, "invalid_request")
+            params["cursor"] = cursor
         if campaign_id:
             if not _ID_RE.match(campaign_id):
                 raise OutreachError("That is not an Outreach campaign id.", 400, "invalid_request")
@@ -259,6 +270,50 @@ class OutreachClient:
         if not _ID_RE.match(campaign_id or ""):
             raise OutreachError("That is not an Outreach campaign id.", 400, "invalid_request")
         return self._call("GET", f"/v1/email/campaigns/{campaign_id}")
+
+    # ── social posts ─────────────────────────────────────────────────────────────────────────────
+
+    def create_social_post(self, payload: Mapping[str, Any], idempotency_key: str) -> dict[str, Any]:
+        """Ask the AI to write a post. Nothing is published: it waits for `decide_social_post(..., "approve")`."""
+        if not idempotency_key:
+            raise OutreachError("An idempotency key is required to create a post.", 400, "invalid_request")
+        return self._call("POST", "/v1/social/posts", payload, idempotency_key)
+
+    def get_social_post(self, post_id: str) -> dict[str, Any]:
+        if not _ID_RE.match(post_id or ""):
+            raise OutreachError("That is not an Outreach post id.", 400, "invalid_request")
+        return self._call("GET", f"/v1/social/posts/{post_id}")
+
+    def decide_social_post(self, post_id: str, decision: str, idempotency_key: str) -> dict[str, Any]:
+        """Approve ("approve", the only way a post goes live), reject or cancel it. Needs `social:approve`."""
+        if decision not in ("approve", "reject", "cancel"):
+            raise OutreachError("decision must be approve, reject or cancel.", 400, "invalid_request")
+        if not _ID_RE.match(post_id or ""):
+            raise OutreachError("That is not an Outreach post id.", 400, "invalid_request")
+        if not idempotency_key:
+            raise OutreachError("An idempotency key is required to decide a post.", 400, "invalid_request")
+        return self._call("POST", f"/v1/social/posts/{post_id}/decision", {"decision": decision}, idempotency_key)
+
+    # ── phone calls ──────────────────────────────────────────────────────────────────────────────
+
+    def make_call(self, payload: Mapping[str, Any], idempotency_key: str) -> dict[str, Any]:
+        """The AI phones one number. Answers at once (status "ringing"); the outcome is read with `get_call`."""
+        if not idempotency_key:
+            raise OutreachError("An idempotency key is required to make a call.", 400, "invalid_request")
+        return self._call("POST", "/v1/voice/calls", payload, idempotency_key)
+
+    def get_call(self, call_id: str) -> dict[str, Any]:
+        if not _ID_RE.match(call_id or ""):
+            raise OutreachError("That is not an Outreach call id.", 400, "invalid_request")
+        return self._call("GET", f"/v1/voice/calls/{call_id}")
+
+    def end_call(self, call_id: str) -> dict[str, Any]:
+        if not _ID_RE.match(call_id or ""):
+            raise OutreachError("That is not an Outreach call id.", 400, "invalid_request")
+        return self._call("DELETE", f"/v1/voice/calls/{call_id}")
+
+    def voice_scripts(self) -> dict[str, Any]:
+        return self._call("GET", "/v1/voice/scripts")
 
 
 # ── reading answers whose exact shape the reference does not spell out ──────────────────────────────
@@ -379,6 +434,8 @@ def wallet_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
         "credits": credits if isinstance(credits, (int, float)) and not isinstance(credits, bool) else None,
         "connected": _connected_counts(connected),
         "mailboxes": mailbox_list(raw, connected),
+        "social_channels": social_channel_names(raw),
+        "phone_numbers": phone_number_count(raw),
         "livemode": raw.get("livemode") if isinstance(raw.get("livemode"), bool) else None,
     }
 
@@ -416,3 +473,196 @@ def message_list(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
         if isinstance(items, list):
             return [message_summary(i) for i in items if isinstance(i, dict)]
     return []
+
+
+# ── social posts and calls: reading answers the reference only partly spells out ─────────────────────
+
+def _names(value: Any, limit: int = 12) -> list[str]:
+    """A list of short lowercase names from a list of strings or of objects with a platform / channel / name."""
+    out: list[str] = []
+    for item in (value if isinstance(value, list) else [])[:limit]:
+        if isinstance(item, dict):
+            item = _find(item, ("platform", "channel", "network", "name", "type"))
+        if isinstance(item, str) and re.fullmatch(r"[A-Za-z0-9_ .-]{1,30}", item.strip()):
+            name = item.strip().lower()
+            if name not in out:
+                out.append(name)
+    return out
+
+
+def social_channel_names(raw: Mapping[str, Any]) -> list[str]:
+    """The social channels /v1/wallets reports as connected (empty when it gives none or only a count)."""
+    connected = _find(raw, ("connected", "connections", "channels"))
+    for src in (connected, raw):
+        if isinstance(src, dict):
+            for name in ("social_channels", "social", "channels"):
+                if isinstance(src.get(name), list):
+                    return _names(src[name])
+    return []
+
+
+def phone_number_count(raw: Mapping[str, Any]) -> int | None:
+    """How many phone numbers /v1/wallets reports as connected, None when it does not say."""
+    connected = _find(raw, ("connected", "connections", "channels"))
+    for src in (connected, raw):
+        if isinstance(src, dict) and "phone_numbers" in src:
+            v = src["phone_numbers"]
+            if isinstance(v, list):
+                return len(v)
+            if isinstance(v, int) and not isinstance(v, bool):
+                return v
+    return None
+
+
+def post_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """A social post: id, status, caption, channels, preview link (https only) and the published link if there is one."""
+    channels = _find(raw, ("channels",))
+    result = _find(raw, ("result", "published", "publication"))
+    link = _find(result, ("url", "link", "permalink")) if isinstance(result, dict) else _find(raw, ("published_url", "post_url"))
+    return {
+        "id": _text(_find(raw, ("id", "post_id")), 64),
+        "status": (_text(_find(raw, ("status", "state"))) or "").lower() or None,
+        "caption": _text(_find(raw, ("caption", "text", "body")), 3000),
+        "channels": _names(channels),
+        "preview_url": _https_url(_text(_find(raw, ("preview_url", "preview")), 500)),
+        "published_url": _https_url(_text(link, 500)),
+        "publish_at": _text(_find(raw, ("publish_at", "scheduled_for")), 40),
+        "reason": _text(_find(raw, ("error", "reason", "failure_reason")), 300),
+    }
+
+
+def _answers(value: Any) -> list[dict[str, str]]:
+    """The answers to the call's questions as [{key, answer}] with short text; anything else is dropped."""
+    out: list[dict[str, str]] = []
+    if isinstance(value, dict):
+        for k, v in list(value.items())[:12]:
+            if isinstance(v, (str, int, float, bool)):
+                out.append({"key": str(k)[:40], "answer": str(v)[:300]})
+    return out
+
+
+def _transcript(value: Any) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for line in (value if isinstance(value, list) else [])[:200]:
+        if isinstance(line, dict) and isinstance(line.get("text"), str):
+            who = str(line.get("who") or line.get("speaker") or "")[:20]
+            out.append({"who": who, "text": line["text"][:600]})
+    return out
+
+
+def call_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """A call: id, status, outcome, length, the answers, whether a meeting was booked, the transcript, what can be done now."""
+    secs = _find(raw, ("duration_seconds", "duration"))
+    booked = _find(raw, ("meeting_booked",))
+    caps = raw.get("capabilities") if isinstance(raw.get("capabilities"), dict) else {}
+    return {
+        "id": _text(_find(raw, ("id", "call_id")), 64),
+        "status": (_text(_find(raw, ("status", "state"))) or "").lower() or None,
+        "outcome": (_text(_find(raw, ("outcome", "result")), 40) or "").lower() or None,
+        "to": _text(_find(raw, ("to", "number")), 30),
+        "duration_seconds": secs if isinstance(secs, (int, float)) and not isinstance(secs, bool) else None,
+        "meeting_booked": booked if isinstance(booked, bool) else None,
+        "answers": _answers(raw.get("answers")),
+        "transcript": _transcript(raw.get("transcript")),
+        "live_url": _https_url(_text(_find(raw, ("live_url",)), 500)),
+        "can_end": caps.get("end") is True,
+        "has_recording": bool(_find(raw, ("recording_url",))),
+        "reason": _text(_find(raw, ("error", "reason", "failure_reason")), 300),
+    }
+
+
+def script_list(raw: Mapping[str, Any]) -> list[dict[str, str]]:
+    """The saved call scripts as [{id, name}]."""
+    for name in ("scripts", "data", "items", "results"):
+        items = raw.get(name) if isinstance(raw, dict) else None
+        if isinstance(items, list):
+            out = []
+            for i in items[:50]:
+                if isinstance(i, dict):
+                    ident = _text(_find(i, ("id", "script_id")), 64)
+                    label = _text(_find(i, ("name", "title")), 80)
+                    if ident and _ID_RE.match(ident):
+                        out.append({"id": ident, "name": label or ident})
+            return out
+    return []
+
+
+# ── the inbox: sent emails and the replies to them ─────────────────────────────────────────────────
+
+_TAG_RE = re.compile(r"<[^>]*>")
+_BLANKS_RE = re.compile(r"\n{3,}")
+
+
+def plain_text(value: Any, limit: int) -> str | None:
+    """Readable text from an email body that may be HTML: tags dropped, entities decoded, blank runs squeezed.
+    Never returns markup, so whatever shows it can escape it and still read well."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    import html as _html
+
+    text = re.sub(r"(?is)<(script|style)\b.*?</\1\s*>", "", value)
+    text = re.sub(r"(?i)</p>", "\n\n", text)
+    text = re.sub(r"(?i)<br\s*/?>|</div>|</li>", "\n", text)
+    text = _html.unescape(_TAG_RE.sub("", text)).replace("\r\n", "\n").replace("\r", "\n")
+    text = _BLANKS_RE.sub("\n\n", "\n".join(line.rstrip() for line in text.split("\n"))).strip()
+    return text[:limit] or None
+
+
+def inbox_message(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """One row of the inbox list: who it went to, the subject, what became of it, when, and from which mailbox."""
+    mailbox = _find(raw, ("mailbox", "from", "from_email", "mailbox_email"))
+    return {
+        "id": _text(_find(raw, ("id", "message_id")), 64),
+        "to": (_text(_find(raw, ("to", "email", "recipient")), 254) or "").lower() or None,
+        "subject": _text(_find(raw, ("subject",)), 300),
+        "status": (_text(_find(raw, ("status", "state"))) or "").lower() or None,
+        "sent_at": _text(_find(raw, ("sent_at", "created_at")), 40),
+        "replied_at": _text(_find(raw, ("replied_at", "reply_at")), 40),
+        "mailbox": _text(mailbox, 254) if "@" in str(mailbox or "") else None,
+        "kind": _text(_find(raw, ("kind", "type")), 30),
+    }
+
+
+def message_page(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """A /v1/email/messages answer as {items: [inbox rows], next_cursor}."""
+    items: list[dict[str, Any]] = []
+    for name in ("data", "messages", "items", "results"):
+        found = raw.get(name) if isinstance(raw, dict) else None
+        if isinstance(found, list):
+            items = [inbox_message(i) for i in found if isinstance(i, dict)]
+            break
+    cur = raw.get("next_cursor") if isinstance(raw, dict) else None
+    return {"items": items, "next_cursor": cur if isinstance(cur, str) and re.fullmatch(r"[A-Za-z0-9_\-=.:+/]{1,300}", cur) else None}
+
+
+_REPLY_TEXT = ("text", "body", "snippet", "content", "message", "plain", "reply", "html")
+_REPLY_FROM = ("from", "from_email", "sender", "email", "address")
+_REPLY_AT = ("received_at", "replied_at", "at", "date", "created_at", "sent_at")
+
+
+def reply_detail(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """One sent email with its replies. The reference says only "the email as it went out, plus the reply or the
+    bounce reason", so a reply may be text, an object or a list of either, and is read from the likely names. Text is
+    reduced to plain text; nothing else the answer carries is passed on."""
+    head = inbox_message(raw)
+    src = _find(raw, ("replies", "reply", "response", "responses"))
+    entries = src if isinstance(src, list) else ([src] if src not in (None, "") else [])
+    replies: list[dict[str, Any]] = []
+    for e in entries[:5]:
+        if isinstance(e, str):
+            text, sender, at, subject = plain_text(e, 6000), None, None, None
+        elif isinstance(e, dict):
+            text = plain_text(_find(e, _REPLY_TEXT), 6000)
+            sender = _text(_find(e, _REPLY_FROM), 254)
+            at = _text(_find(e, _REPLY_AT), 40)
+            subject = _text(_find(e, ("subject",)), 300)
+        else:
+            continue
+        if text or sender:
+            replies.append({"text": text, "from": sender if sender and "@" in sender else None, "at": at, "subject": subject})
+    return {
+        **head,
+        "replies": replies,
+        "original": plain_text(_find(raw, ("body", "text", "html", "content", "message")), 4000),
+        "bounce_reason": _text(_find(raw, ("bounce_reason", "reason", "error")), 300),
+    }

@@ -19,6 +19,12 @@ own rows:
     /api/growth/campaigns/<id>/export           CSV, Mailchimp audience, Mailchimp message
     /api/growth/outreach/status                 is Outreach connected, test or live key, credits
     /api/growth/campaigns/<id>/outreach         (GET, POST) its Outreach campaigns; send through Outreach
+    /api/growth/social/posts       (GET, POST)  Outreach social posts: write one (the AI), list, refresh
+    /api/growth/social/posts/<id>/decision (POST)  approve (publishes), reject or cancel a post
+    /api/growth/voice/calls        (GET, POST)  Outreach AI phone calls: one number per request, list, refresh
+    /api/growth/voice/calls/<id>   (GET, DELETE) one call as Outreach holds it; hang up a live call
+    /api/growth/voice/scripts, /voice/lookup    saved scripts; the phone number a buyer published on a notice
+    /api/growth/inbox, /inbox/<message id>       the user's emails sent through Outreach and the replies to them
     /api/growth/performance                     tiles, funnel and campaign -> Pipeline outcomes
 
 Every campaign, target and state row belongs to the user who made it and is always looked up by
@@ -40,6 +46,7 @@ from flask import Blueprint, Response, jsonify, request, session
 from tender_app import growth_outreach as go
 from tender_app import growth_studio as gs
 from tender_app import market_radar as mr
+from tender_app import outreach_channels as och
 from tender_app import outreach_client as oc
 from tender_app import user_mailer as um
 from tender_app.config import (
@@ -50,6 +57,8 @@ from tender_app.config import (
     OUTREACH_API_KEY,
     OUTREACH_CAMPAIGN_MAILBOX_FIELD,
     OUTREACH_CONNECT_URL,
+    OUTREACH_DAILY_CALL_CAP,
+    OUTREACH_DAILY_POST_CAP,
     OUTREACH_MAILBOX_IDS,
     OUTREACH_MANAGE_URL,
     OUTREACH_SEND_MAILBOX_FIELD,
@@ -1090,7 +1099,7 @@ def growth_outreach_status():
     out: dict[str, Any] = {
         "configured": bool(key), "mode": mode, "live_allowed": bool(OUTREACH_ALLOW_LIVE),
         "key_hint": oc.mask_key(key) if mode else None, "ready": False, "wallet": None,
-        "problem": _outreach_problem(), "max_per_push": go.MAX_PER_PUSH,
+        "problem": _outreach_problem(), "max_per_push": go.MAX_PER_PUSH, "call_cap": OUTREACH_DAILY_CALL_CAP,
         **oc.web_links(OUTREACH_WEB_URL, OUTREACH_CONNECT_URL, OUTREACH_MANAGE_URL),
     }
     if out["problem"]:
@@ -1347,6 +1356,514 @@ def growth_outreach_send(cid: int):
             "route": "single" if single else "campaign",
             "mailbox": chosen["email"] if chosen else None, "warnings": warnings,
             "deferred": plan["deferred"] + (len(plan["items"]) - attempted), "drafts": drafts,
+        })
+    finally:
+        conn.close()
+
+
+# ── Outreach: social posts and phone calls ──────────────────────────────────────────────────────
+
+POST_COLUMNS = "id, outreach_id, prompt, channels, publish_at, mode, status, caption, preview_url, published_url, error, created_at, checked_at, decided_at"
+CALL_COLUMNS = "id, outreach_id, buyer_name, to_number, goal, mode, status, outcome, duration_seconds, meeting_booked, error, created_at, checked_at"
+MAX_REFRESH = 10  # Outreach allows 120 requests a minute; a refresh reads at most this many items
+
+
+def _post_public(r) -> dict[str, Any]:
+    d = dict(zip(POST_COLUMNS.split(", "), r))
+    d["channels"] = [c for c in (d["channels"] or "").split(",") if c]
+    for k in ("created_at", "checked_at", "decided_at"):
+        d[k] = _iso(d[k])
+    return d
+
+
+def _call_public(r) -> dict[str, Any]:
+    d = dict(zip(CALL_COLUMNS.split(", "), r))
+    d["number_masked"] = och.mask_number(d["to_number"])
+    d["can_end"] = och.call_is_live(d["status"])
+    for k in ("created_at", "checked_at"):
+        d[k] = _iso(d[k])
+    return d
+
+
+def _attempt(body: dict[str, Any]) -> str:
+    token = och.attempt_token(body.get("attempt"))
+    if not token:
+        raise _Http("The request needs an attempt token. Reload the page and try again.")
+    return token
+
+
+def _wallet_for_channels(client: "oc.OutreachClient") -> dict[str, Any]:
+    try:
+        return oc.wallet_summary(client.wallets())
+    except oc.OutreachError as exc:
+        raise _Http(exc.message, 502)
+
+
+@growth_bp.get("/api/growth/social/posts")
+def growth_social_posts():
+    """The user's social posts, newest first. With ?refresh=1 each unfinished one is read from Outreach first."""
+    username = _username()
+    client = _outreach_client() if _flag(request.args.get("refresh")) else None
+    conn = _connect()
+    try:
+        stopped = None
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT {POST_COLUMNS} FROM growth_social_posts WHERE username = %s ORDER BY id DESC LIMIT 50", (username,))
+            rows = [_post_public(r) for r in cur.fetchall()]
+            if client is not None:
+                todo = [p for p in rows if p["outreach_id"] and (p["status"] or "").lower() not in och.FINAL_POST_STATES][:MAX_REFRESH]
+                for p in todo:
+                    try:
+                        s = oc.post_summary(client.get_social_post(p["outreach_id"]))
+                    except oc.OutreachError as exc:
+                        p["error"] = exc.message[:300]
+                        if exc.fatal:
+                            stopped = exc.message
+                            break
+                        continue
+                    p.update(status=s["status"] or p["status"], caption=s["caption"] or p["caption"],
+                             preview_url=s["preview_url"] or p["preview_url"], published_url=s["published_url"] or p["published_url"],
+                             error=s["reason"], checked_at=_iso(_now()))
+                    cur.execute(
+                        """UPDATE growth_social_posts SET status = %s, caption = %s, preview_url = %s, published_url = %s,
+                               error = %s, checked_at = NOW() WHERE id = %s AND username = %s""",
+                        (p["status"], p["caption"], p["preview_url"], p["published_url"], p["error"], p["id"], username),
+                    )
+        conn.commit()
+        return jsonify({"posts": rows, "refreshed": client is not None, "stopped": stopped})
+    finally:
+        conn.close()
+
+
+@growth_bp.post("/api/growth/social/posts")
+@rate_limit(RATE_LIMIT_AI)
+def growth_social_create():
+    """Ask Outreach's AI to write a post. Nothing is published: the post waits for the user to read the preview
+    and approve it (POST .../decision)."""
+    body = _json_body()
+    attempt = _attempt(body)
+    client = _outreach_client()
+    wallet = _wallet_for_channels(client)
+    allowed = wallet["social_channels"]
+    if not allowed and (wallet.get("connected") or {}).get("social_channels") == 0:
+        raise _Http("No social channel is connected in Outreach. Connect one there first, then try again.", 409)
+    problems, channels, prompt = och.post_problems(body.get("prompt"), body.get("channels"), allowed)
+    publish_at, bad_time = och.parse_publish_at(body.get("publish_at"))
+    if bad_time:
+        problems.append(bad_time)
+    picture = body.get("picture") if isinstance(body.get("picture"), dict) else None
+    if problems:
+        raise _Http(" ".join(problems), 400)
+    username = _username()
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM growth_social_posts WHERE username = %s AND created_at > NOW() - INTERVAL '24 hours'", (username,))
+            if cur.fetchone()[0] >= OUTREACH_DAILY_POST_CAP:
+                raise _Http(f"You have made {OUTREACH_DAILY_POST_CAP} posts in the last 24 hours. Try again later.", 429)
+        try:
+            made = oc.post_summary(client.create_social_post(
+                och.build_post_payload(prompt, channels, publish_at, picture), och.attempt_key(username, "post", attempt)))
+        except oc.OutreachError as exc:
+            raise _Http(exc.message, 502 if exc.status >= 500 or exc.code == "unreachable" else (exc.status if exc.status in (402, 403, 409, 422, 429) else 400))
+        if not made["id"]:
+            raise _Http("Outreach did not return a post id.", 502)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""INSERT INTO growth_social_posts (username, outreach_id, prompt, channels, publish_at, mode, status, caption,
+                        preview_url, published_url, error, checked_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, NOW()) RETURNING {POST_COLUMNS}""",
+                (username, made["id"], prompt, ",".join(made["channels"] or channels), publish_at, client.mode,
+                 made["status"] or "writing", made["caption"], made["preview_url"], made["published_url"]),
+            )
+            post = _post_public(cur.fetchone())
+        conn.commit()
+        return jsonify({"post": post, "mode": client.mode})
+    finally:
+        conn.close()
+
+
+@growth_bp.post("/api/growth/social/posts/<int:pid>/decision")
+def growth_social_decide(pid: int):
+    """Approve (which publishes it, at its publish time), reject or cancel a post. Approving needs `confirm: true`
+    and is checked against Outreach's own state first, so a post still being written or already finished is never approved."""
+    body = _json_body()
+    decision = body.get("decision")
+    if decision not in ("approve", "reject", "cancel"):
+        raise _Http("decision must be approve, reject or cancel")
+    if decision == "approve" and body.get("confirm") is not True:
+        raise _Http("Confirm that you have read the preview and want this published.")
+    attempt = _attempt(body)
+    client = _outreach_client()
+    username = _username()
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT {POST_COLUMNS} FROM growth_social_posts WHERE id = %s AND username = %s", (pid, username))
+            row = cur.fetchone()
+        if not row:
+            raise _Http("Post not found", 404)
+        post = _post_public(row)
+        if not post["outreach_id"]:
+            raise _Http("This post was never created in Outreach.", 409)
+        try:
+            live = oc.post_summary(client.get_social_post(post["outreach_id"]))
+            why = och.can_decide(live["status"] or post["status"], decision)
+            if why:
+                _store_post(conn, pid, username, live)
+                conn.commit()
+                raise _Http(why, 409)
+            done = oc.post_summary(client.decide_social_post(post["outreach_id"], decision, och.attempt_key(username, "post-decide", attempt)))
+        except oc.OutreachError as exc:
+            raise _Http(exc.message, 403 if exc.status == 403 else (502 if exc.status >= 500 or exc.code == "unreachable" else 400))
+        final = done["status"] or {"approve": "approved", "reject": "rejected", "cancel": "cancelled"}[decision]
+        merged = {**live, "status": final, "caption": done["caption"] or live["caption"],
+                  "published_url": done["published_url"] or live["published_url"], "reason": None}
+        _store_post(conn, pid, username, merged, decided=True)
+        conn.commit()
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT {POST_COLUMNS} FROM growth_social_posts WHERE id = %s AND username = %s", (pid, username))
+            return jsonify({"post": _post_public(cur.fetchone())})
+    finally:
+        conn.close()
+
+
+def _store_post(conn, pid: int, username: str, s: dict[str, Any], decided: bool = False) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""UPDATE growth_social_posts SET status = COALESCE(%s, status), caption = COALESCE(%s, caption),
+                    preview_url = COALESCE(%s, preview_url), published_url = COALESCE(%s, published_url),
+                    error = %s, checked_at = NOW(){", decided_at = NOW()" if decided else ""}
+                WHERE id = %s AND username = %s""",
+            (s["status"], s["caption"], s["preview_url"], s["published_url"], s.get("reason"), pid, username),
+        )
+
+
+@growth_bp.get("/api/growth/voice/scripts")
+def growth_voice_scripts():
+    """The saved call scripts in the user's Outreach account, for the "saved script" choice."""
+    client = _outreach_client()
+    try:
+        return jsonify({"scripts": oc.script_list(client.voice_scripts())})
+    except oc.OutreachError as exc:
+        raise _Http(exc.message, 502)
+
+
+@growth_bp.get("/api/growth/voice/lookup")
+@rate_limit(RATE_LIMIT_SEARCH)
+def growth_voice_lookup():
+    """The phone number a buyer published on a notice we already hold (never invented), checked as a number we may call."""
+    name = " ".join((request.args.get("buyer") or "").split())[:200]
+    if len(name) < 3:
+        raise _Http("Type the buyer's name first.")
+    from tender_app.blueprints import buyers_bp as bb
+
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            info = bb._fetch_buyer_contact_info(cur, conn, name)
+    finally:
+        conn.close()
+    phone = info.get("phone")
+    if not phone or phone == "Not available":
+        return jsonify({"found": False, "phone": None, "number": None, "problem": None})
+    number, problem = och.normalize_uk_landline(phone)
+    return jsonify({"found": True, "phone": str(phone)[:40], "number": number, "problem": problem})
+
+
+@growth_bp.get("/api/growth/voice/calls")
+def growth_voice_calls():
+    """The user's calls, newest first. With ?refresh=1 each call that is not finished is read from Outreach first."""
+    username = _username()
+    client = _outreach_client() if _flag(request.args.get("refresh")) else None
+    conn = _connect()
+    try:
+        stopped = None
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT {CALL_COLUMNS} FROM growth_voice_calls WHERE username = %s ORDER BY id DESC LIMIT 50", (username,))
+            rows = [_call_public(r) for r in cur.fetchall()]
+            if client is not None:
+                todo = [c for c in rows if c["outreach_id"] and (c["status"] or "").lower() not in och.CALL_DONE][:MAX_REFRESH]
+                for c in todo:
+                    try:
+                        s = oc.call_summary(client.get_call(c["outreach_id"]))
+                    except oc.OutreachError as exc:
+                        c["error"] = exc.message[:300]
+                        if exc.fatal:
+                            stopped = exc.message
+                            break
+                        continue
+                    secs = int(s["duration_seconds"]) if s["duration_seconds"] is not None else c["duration_seconds"]
+                    c.update(status=s["status"] or c["status"], outcome=s["outcome"] or c["outcome"], duration_seconds=secs,
+                             meeting_booked=s["meeting_booked"] if s["meeting_booked"] is not None else c["meeting_booked"],
+                             error=s["reason"], checked_at=_iso(_now()))
+                    c["can_end"] = och.call_is_live(c["status"])
+                    cur.execute(
+                        """UPDATE growth_voice_calls SET status = %s, outcome = %s, duration_seconds = %s, meeting_booked = %s,
+                               error = %s, checked_at = NOW() WHERE id = %s AND username = %s""",
+                        (c["status"], c["outcome"], c["duration_seconds"], c["meeting_booked"], c["error"], c["id"], username),
+                    )
+        conn.commit()
+        return jsonify({"calls": rows, "refreshed": client is not None, "stopped": stopped})
+    finally:
+        conn.close()
+
+
+@growth_bp.get("/api/growth/voice/calls/<int:cid>")
+def growth_voice_call(cid: int):
+    """One call as Outreach holds it: what was said and the answers to the questions. Read live, not stored here."""
+    client = _outreach_client()
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT {CALL_COLUMNS} FROM growth_voice_calls WHERE id = %s AND username = %s", (cid, _username()))
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row or not row[1]:
+        raise _Http("Call not found", 404)
+    try:
+        s = oc.call_summary(client.get_call(row[1]))
+    except oc.OutreachError as exc:
+        raise _Http(exc.message, 502)
+    return jsonify({"call": s})
+
+
+@growth_bp.post("/api/growth/voice/calls")
+@rate_limit(RATE_LIMIT_AI)
+def growth_voice_call_make():
+    """Phone ONE number now, with Outreach's AI. Refused unless the user confirmed this call (an organisation's line,
+    checked against the TPS / CTPS), the number is a UK landline and the buyer is not on the do-not-contact list."""
+    body = _json_body()
+    attempt = _attempt(body)
+    username = _username()
+    conn = _connect()
+    try:
+        suppressed = mr.canonical_buyer_key(" ".join(str(body.get("buyer") or "").split())) in _opted_out(conn, username)
+        problems, fields = och.call_problems(
+            number=body.get("number"), buyer=body.get("buyer"), goal=body.get("goal"), script_id=body.get("script_id"),
+            instructions=body.get("instructions"), questions=body.get("questions"),
+            business_line=body.get("business_line"), tps_checked=body.get("tps_checked"), suppressed=suppressed)
+        if problems:
+            raise _Http(" ".join(problems), 400)
+        if body.get("confirm") is not True:
+            raise _Http("Confirm that you want the AI to phone this number now.")
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM growth_voice_calls WHERE username = %s AND created_at > NOW() - INTERVAL '24 hours'", (username,))
+            if cur.fetchone()[0] >= OUTREACH_DAILY_CALL_CAP:
+                raise _Http(f"You have made {OUTREACH_DAILY_CALL_CAP} calls in the last 24 hours. Try again later.", 429)
+            cur.execute(
+                """SELECT 1 FROM growth_voice_calls WHERE username = %s AND to_number = %s AND created_at > NOW() - INTERVAL '24 hours'
+                   AND COALESCE(status, '') NOT IN ('failed', 'no_answer', 'busy', 'voicemail') LIMIT 1""",
+                (username, fields["number"]))
+            if cur.fetchone():
+                raise _Http("This number was already called in the last 24 hours. Wait before calling it again.", 409)
+        client = _outreach_client()
+        wallet = _wallet_for_channels(client)
+        if wallet.get("phone_numbers") == 0:
+            raise _Http("No phone number is connected in Outreach, so the AI has no line to call from. Add one there first.", 409)
+        try:
+            made = oc.call_summary(client.make_call(och.build_call_payload(fields), och.attempt_key(username, "call", attempt)))
+        except oc.OutreachError as exc:
+            raise _Http(exc.message, 502 if exc.status >= 500 or exc.code == "unreachable" else (exc.status if exc.status in (402, 403, 409, 422, 429) else 400))
+        if not made["id"]:
+            raise _Http("Outreach did not return a call id.", 502)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""INSERT INTO growth_voice_calls (username, buyer_key, buyer_name, to_number, goal, outreach_id, mode, status, checked_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW()) RETURNING {CALL_COLUMNS}""",
+                (username, mr.canonical_buyer_key(fields["buyer"]), fields["buyer"], fields["number"], fields["goal"] or None,
+                 made["id"], client.mode, made["status"] or "ringing"),
+            )
+            call = _call_public(cur.fetchone())
+        conn.commit()
+        return jsonify({"call": call, "mode": client.mode, "live_url": made["live_url"]})
+    finally:
+        conn.close()
+
+
+@growth_bp.delete("/api/growth/voice/calls/<int:cid>")
+def growth_voice_call_end(cid: int):
+    """Hang up a call that is ringing or in progress."""
+    client = _outreach_client()
+    username = _username()
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT outreach_id, status FROM growth_voice_calls WHERE id = %s AND username = %s", (cid, username))
+            row = cur.fetchone()
+        if not row or not row[0]:
+            raise _Http("Call not found", 404)
+        if not och.call_is_live(row[1]):
+            raise _Http("That call is not in progress.", 409)
+        try:
+            client.end_call(row[0])
+        except oc.OutreachError as exc:
+            raise _Http(exc.message, 502 if exc.status >= 500 or exc.code == "unreachable" else 400)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE growth_voice_calls SET status = 'ended', checked_at = NOW() WHERE id = %s AND username = %s", (cid, username))
+            cur.execute(f"SELECT {CALL_COLUMNS} FROM growth_voice_calls WHERE id = %s AND username = %s", (cid, username))
+            call = _call_public(cur.fetchone())
+        conn.commit()
+        return jsonify({"call": call})
+    finally:
+        conn.close()
+
+
+# ── Outreach: the inbox (replies to the emails sent through Outreach) ──────────────────────────
+
+INBOX_PAGES = 5        # pages of Outreach's list read for one request (the key is shared, so most rows belong to others)
+INBOX_WANTED = 40      # stop reading pages once this many of the user's own emails are found
+_MESSAGE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{3,64}$")
+
+
+def _inbox_owner(conn, username: str) -> dict[str, Any]:
+    """What identifies this user's emails in Outreach's shared list: the ids of their one-to-one emails, the
+    addresses they have sent to (with the Growth Studio buyer for each), and the addresses that another TenderFlow
+    user has also emailed (so a campaign email to one of those cannot be told apart and is not shown)."""
+    message_ids: set[str] = set()
+    by_message: dict[str, dict[str, Any]] = {}
+    by_email: dict[str, dict[str, Any]] = {}
+    emails: set[str] = set()
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT d.outreach_id, d.approval, LOWER(t.contact_email), t.id, t.campaign_id, t.buyer_name, c.name, t.status
+               FROM growth_outreach_drafts d
+               JOIN growth_campaign_targets t ON t.id = d.target_id JOIN growth_campaigns c ON c.id = t.campaign_id
+               WHERE d.username = %s AND d.mode <> 'smtp' AND d.outreach_id IS NOT NULL ORDER BY d.id""",
+            (username,),
+        )
+        for oid, approval, email, tid, camp_id, buyer, camp_name, status in cur.fetchall():
+            info = {"target_id": tid, "campaign_id": camp_id, "campaign_name": camp_name, "buyer": buyer, "status": status}
+            if approval == go.SENT_NOW:
+                message_ids.add(oid)
+                by_message[oid] = info
+            if email:
+                emails.add(email)
+                by_email[email] = info
+        cur.execute("SELECT outreach_id, LOWER(recipient_email) FROM email_sends WHERE username = %s AND outreach_id IS NOT NULL", (username,))
+        for oid, email in cur.fetchall():
+            message_ids.add(oid)  # a one-to-one email's id; a campaign id here can never equal a message id
+            emails.add(email)
+    ambiguous: set[str] = set()
+    if emails:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT LOWER(t.contact_email) FROM growth_outreach_drafts d JOIN growth_campaign_targets t ON t.id = d.target_id
+                   WHERE d.username <> %s AND d.mode <> 'smtp' AND d.outreach_id IS NOT NULL AND LOWER(t.contact_email) = ANY(%s)
+                   UNION SELECT LOWER(recipient_email) FROM email_sends WHERE username <> %s AND LOWER(recipient_email) = ANY(%s)""",
+                (username, list(emails), username, list(emails)),
+            )
+            ambiguous = {r[0] for r in cur.fetchall()}
+    return {"message_ids": message_ids, "by_message": by_message, "by_email": by_email, "emails": emails, "ambiguous": ambiguous}
+
+
+def _target_info(owner: dict[str, Any], msg: dict[str, Any]) -> dict[str, Any] | None:
+    return owner["by_message"].get(msg.get("id")) or owner["by_email"].get((msg.get("to") or "").lower())
+
+
+def _mark_replied(conn, username: str, info: dict[str, Any] | None) -> str | None:
+    """A reply arrived for a buyer recorded as sent: record it as replied (which the Performance tab counts). A buyer
+    already replied, in a meeting or opted out is left alone. Returns the buyer's name when it changed."""
+    if not info or info.get("status") != "sent":
+        return None
+    campaign, targets = _load_campaign(conn, username, info["campaign_id"])
+    target = next((t for t in targets if t["id"] == info["target_id"]), None)
+    if target is None or target["status"] != "sent":
+        return None
+    with conn.cursor() as cur:
+        _apply_status(cur, username, campaign, target, "replied")
+        _touch(cur, campaign["id"])
+    conn.commit()
+    info["status"] = "replied"
+    return target["buyer_name"]
+
+
+@growth_bp.get("/api/growth/inbox")
+def growth_inbox():
+    """The user's emails sent through Outreach, newest first: ?filter=replies (default) | sent | bounced | all, ?q= for an
+    address or subject, ?cursor= for the next page. Outreach's key is shared, so only emails TenderFlow can show to
+    this user are returned. A reply to a buyer recorded as sent marks that buyer replied."""
+    which = request.args.get("filter") or "replies"
+    if which not in go.INBOX_FILTERS:
+        raise _Http("filter must be replies, sent, bounced or all")
+    q = " ".join((request.args.get("q") or "").split())[:100] or None
+    cursor = (request.args.get("cursor") or "").strip() or None
+    client = _outreach_client()
+    username = _username()
+    conn = _connect()
+    try:
+        owner = _inbox_owner(conn, username)
+        items: list[dict[str, Any]] = []
+        pages = 0
+        more = cursor
+        first = True
+        while pages < INBOX_PAGES and len(items) < INBOX_WANTED and (first or more):
+            first = False
+            try:
+                page = oc.message_page(client.list_email_messages(status=go.INBOX_FILTERS[which], q=q, cursor=more))
+            except oc.OutreachError as exc:
+                raise _Http(exc.message, 403 if exc.status == 403 else 502)
+            pages += 1
+            more = page["next_cursor"]
+            items += [m for m in page["items"] if m["id"] and go.owned_message(m, owner["message_ids"], owner["emails"], owner["ambiguous"])]
+            if not more:
+                break
+        seen: set[str] = set()
+        if items:
+            with conn.cursor() as cur:
+                cur.execute("SELECT message_id FROM growth_inbox_seen WHERE username = %s AND message_id = ANY(%s)", (username, [m["id"] for m in items]))
+                seen = {r[0] for r in cur.fetchall()}
+        marked: list[str] = []
+        for m in items:
+            info = _target_info(owner, m)
+            m["buyer"] = info["buyer"] if info else None
+            m["campaign_name"] = info["campaign_name"] if info else None
+            m["unread"] = m["status"] == "replied" and m["id"] not in seen
+            if m["status"] == "replied":
+                name = _mark_replied(conn, username, info)
+                if name:
+                    marked.append(name)
+        return jsonify({"items": items, "next_cursor": more, "filter": which, "marked": marked,
+                        "unread": sum(1 for m in items if m["unread"])})
+    finally:
+        conn.close()
+
+
+@growth_bp.get("/api/growth/inbox/<message_id>")
+def growth_inbox_message(message_id: str):
+    """One sent email with the reply (or the bounce reason), if it is the user's. Opening it marks it read."""
+    if not _MESSAGE_ID_RE.match(message_id):
+        raise _Http("That is not an Outreach message id.")
+    client = _outreach_client()
+    username = _username()
+    conn = _connect()
+    try:
+        try:
+            raw = client.get_email_message(message_id)
+        except oc.OutreachError as exc:
+            raise _Http(exc.message, 404 if exc.status == 404 else 403 if exc.status == 403 else 502)
+        detail = oc.reply_detail(raw)
+        detail["id"] = detail["id"] or message_id
+        owner = _inbox_owner(conn, username)
+        if not go.owned_message(detail, owner["message_ids"], owner["emails"], owner["ambiguous"]):
+            raise _Http("Message not found", 404)
+        info = _target_info(owner, detail)
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO growth_inbox_seen (username, message_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (username, detail["id"]))
+        conn.commit()
+        if detail["status"] == "replied":
+            _mark_replied(conn, username, info)
+        sender = next((r["from"] for r in detail["replies"] if r.get("from") and gs.valid_email(r["from"])), None)
+        reply_to = sender or (detail["to"] if detail["to"] and gs.valid_email(detail["to"]) else None)
+        return jsonify({
+            "message": detail,
+            "buyer": info["buyer"] if info else None,
+            "campaign": {"id": info["campaign_id"], "name": info["campaign_name"]} if info else None,
+            "target_id": info["target_id"] if info else None,
+            "target_status": info["status"] if info else None,
+            "reply_to": reply_to,
+            "opt_out_hint": any(go.looks_like_opt_out(r.get("text")) for r in detail["replies"]),
         })
     finally:
         conn.close()

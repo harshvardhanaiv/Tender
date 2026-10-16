@@ -112,6 +112,30 @@ def companies_house(name: str, company_number: str | None) -> dict[str, Any]:
 
 # ── Google ──────────────────────────────────────────────────────────────────────────────────
 
+def google_failure(exc: BaseException) -> tuple[str, str]:
+    """(server log text, short reason for the user) for a failed Google Places call. The reason says what to check
+    and never carries the key, the request or Google's own message (which can name the project)."""
+    if isinstance(exc, urllib.error.HTTPError):
+        code = exc.code
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", "replace")[:300]
+        except Exception:
+            pass
+        log = f"HTTP {code} {body}".strip()
+        if code in (401, 403):
+            return log, (f"Google refused the request (HTTP {code}). Check that Places API (New) is enabled for this key's "
+                         "project, that billing is on, and that the key's restrictions allow this server.")
+        if code == 400:
+            return log, "Google rejected the request (HTTP 400). The key may not be valid for Places API (New)."
+        if code == 429:
+            return log, "Google's quota for this key is used up (HTTP 429). Try again later or raise the quota."
+        return log, f"Google answered HTTP {code}."
+    if isinstance(exc, (TimeoutError, urllib.error.URLError)) or "timed out" in str(exc).lower():
+        return type(exc).__name__, f"Google did not answer within {config.COMPANY_PROFILE_TIMEOUT_SECONDS:g} seconds."
+    return type(exc).__name__, "Google's answer could not be read."
+
+
 def google(name: str, region: str | None) -> dict[str, Any]:
     if not config.GOOGLE_PLACES_API_KEY:
         return {"status": "not_connected"}
@@ -132,8 +156,10 @@ def google(name: str, region: str | None) -> dict[str, Any]:
                     return {"status": "ok", "name": title, "rating": pl["rating"], "count": pl.get("userRatingCount"),
                             "url": pl.get("googleMapsUri"), "address": pl.get("formattedAddress")}
             return {"status": "not_found"}
-        except Exception:
-            return {"status": "error"}
+        except Exception as exc:
+            log, reason = google_failure(exc)
+            print(f"[CompanyProfile] Google rating unavailable: {log}", flush=True)
+            return {"status": "error", "detail": reason}
 
     return _cached(("google", name.lower(), region or ""), build)
 

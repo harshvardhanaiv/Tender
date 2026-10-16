@@ -19,6 +19,7 @@ field that does not exist.
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any, Iterable, Mapping
 
 from tender_app import growth_studio as gs
@@ -192,3 +193,34 @@ def plan_push(
                         "payload": build_payload(campaign.get("name") or "Growth Studio", buyer, email, subj, text),
                     })
     return plan
+
+
+# ── the inbox: which of Outreach's emails are this user's ───────────────────────────────────────────
+
+INBOX_FILTERS = {"replies": "replied", "bounced": "bounced", "sent": "sent", "all": None}
+
+# A reply that is really a request to stop. The email TenderFlow sends tells the buyer to reply "stop".
+_OPT_OUT_RE = re.compile(
+    r"\b(stop|unsubscribe|opt[ -]?out|remove (me|us|my)|take (me|us) off|do not (contact|email)|don'?t (contact|email)|no (more|further) (emails?|contact))\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_opt_out(text: str | None) -> bool:
+    """True when the start of a reply reads as a request to stop. A hint for the user, who decides; quoted history
+    below the reply is not looked at."""
+    head = re.split(r"(?im)^\s*(>|on .{5,80} wrote:|from:|-{3,}\s*original)", text or "", maxsplit=1)[0]
+    return bool(_OPT_OUT_RE.search(head[:600]))
+
+
+def owned_message(msg: Mapping[str, Any], message_ids: set[str], emails: set[str], ambiguous: set[str]) -> bool:
+    """Whether an Outreach email is this user's. The Outreach key is shared, so its list holds everyone's emails.
+    An email is theirs when TenderFlow recorded its id (every one-to-one email is), or, for a campaign email, when it
+    went to an address this user sent to AND no other TenderFlow user has emailed that address (otherwise whose it
+    is cannot be told, and it is left out rather than shown to the wrong person)."""
+    if msg.get("id") and msg["id"] in message_ids:
+        return True
+    if (msg.get("kind") or "").lower() in ("one_to_one", "one-to-one"):
+        return False
+    to = (msg.get("to") or "").lower()
+    return bool(to) and to in emails and to not in ambiguous

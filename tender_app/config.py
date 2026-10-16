@@ -164,6 +164,11 @@ OUTREACH_DAILY_SEND_CAP = int(os.environ.get("OUTREACH_DAILY_SEND_CAP", "25"))
 OUTREACH_MAX_BATCH = int(os.environ.get("OUTREACH_MAX_BATCH", "200"))
 OUTREACH_CAMPAIGN_MERGE_FIELDS = os.environ.get("OUTREACH_CAMPAIGN_MERGE_FIELDS", "0") == "1"
 
+# Phone calls the AI may make for one user in a day (UTC), and posts waiting to be approved at once. A call costs
+# Outreach credits and is one person's time; both are caps against a runaway click, not a rule about consent.
+OUTREACH_DAILY_CALL_CAP = int(os.environ.get("OUTREACH_DAILY_CALL_CAP", "20"))
+OUTREACH_DAILY_POST_CAP = int(os.environ.get("OUTREACH_DAILY_POST_CAP", "20"))
+
 # Fernet key that encrypts users' own mailbox passwords (Growth Studio "Sender mailbox"). Generate one with:
 #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 # Without it, users cannot connect a mailbox and Growth Studio falls back to Outreach. Keep it secret and stable:

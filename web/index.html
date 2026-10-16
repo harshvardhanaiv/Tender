@@ -28,11 +28,11 @@
        instead of pins stacking invisibly on top of each other. -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-  <link rel="stylesheet" href="/styles.css?v=142" />
+  <link rel="stylesheet" href="/styles.css?v=143" />
   <link rel="stylesheet" href="/theme.css?v=32" />
   <link rel="stylesheet" href="/mobile.css?v=4" />
   <link rel="stylesheet" href="/responsive-fixes.css?v=8" />
-  <link rel="stylesheet" href="/growth-studio.css?v=3" />
+  <link rel="stylesheet" href="/growth-studio.css?v=5" />
   <script src="/translations.js?v=6"></script>
 </head>
 
@@ -54,7 +54,7 @@
           stroke-linejoin="round" />
       </svg>
       <div class="tf-brand__text">
-        <div class="tf-brand__name">Tender<span class="brand__title-flow">Flow</span><span id="headerPlanBadge" class="plan-badge plan-badge--pro">SOLO</span></div>
+        <div class="tf-brand__name">Tender<span class="brand__title-flow">Flow</span><span id="headerPlanBadge" class="plan-badge plan-badge--pending"></span></div>
         <div class="tf-brand__sub">Public tender search and bid workspace</div>
       </div>
     </div>
@@ -2710,14 +2710,18 @@
         <button type="button" role="tab" id="gsTabSignals" class="gs-tab is-active" data-action="tab" data-tab="signals" aria-selected="true" aria-controls="gsPaneSignals">Signals <span class="gs-tab__count" id="gsCountSignals"></span></button>
         <button type="button" role="tab" id="gsTabCampaigns" class="gs-tab" data-action="tab" data-tab="campaigns" aria-selected="false" tabindex="-1" aria-controls="gsPaneCampaigns">Campaigns <span class="gs-tab__count" id="gsCountCampaigns"></span></button>
         <button type="button" role="tab" id="gsTabBuilder" class="gs-tab" data-action="tab" data-tab="builder" aria-selected="false" tabindex="-1" aria-controls="gsPaneBuilder">Campaign builder</button>
+        <button type="button" role="tab" id="gsTabInbox" class="gs-tab" data-action="tab" data-tab="inbox" aria-selected="false" tabindex="-1" aria-controls="gsPaneInbox">Inbox <span class="gs-tab__count" id="gsCountInbox"></span></button>
         <button type="button" role="tab" id="gsTabPerformance" class="gs-tab" data-action="tab" data-tab="performance" aria-selected="false" tabindex="-1" aria-controls="gsPanePerformance">Performance</button>
+        <button type="button" role="tab" id="gsTabChannels" class="gs-tab" data-action="tab" data-tab="channels" aria-selected="false" tabindex="-1" aria-controls="gsPaneChannels">Social &amp; calls</button>
       </div>
 
       <div class="gs-panes">
         <div id="gsPaneSignals" class="gs-pane" role="tabpanel" aria-labelledby="gsTabSignals"></div>
         <div id="gsPaneCampaigns" class="gs-pane hidden" role="tabpanel" aria-labelledby="gsTabCampaigns"></div>
         <div id="gsPaneBuilder" class="gs-pane hidden" role="tabpanel" aria-labelledby="gsTabBuilder"></div>
+        <div id="gsPaneInbox" class="gs-pane hidden" role="tabpanel" aria-labelledby="gsTabInbox"></div>
         <div id="gsPanePerformance" class="gs-pane hidden" role="tabpanel" aria-labelledby="gsTabPerformance"></div>
+        <div id="gsPaneChannels" class="gs-pane hidden" role="tabpanel" aria-labelledby="gsTabChannels"></div>
       </div>
     </div>
   </div>
@@ -3245,7 +3249,9 @@
   <script src="/planning.js?v=17"></script>
   <script src="/responsive-fixes.js?v=1" defer></script>
   <script src="/growth-view.js?v=16"></script>
-  <script src="/growth-studio.js?v=12"></script>
+  <script src="/growth-channels.js?v=1"></script>
+  <script src="/growth-inbox.js?v=1"></script>
+  <script src="/growth-studio.js?v=14"></script>
   <script src="/email-outreach.js?v=3"></script>
   <script src="/shell.js?v=4"></script>
   <script src="/search-filters.js?v=10"></script>
