@@ -510,6 +510,7 @@ def _public_target(t: dict[str, Any], opted_out: set[str]) -> dict[str, Any]:
         "headline": snap.get("headline"), "detail": snap.get("detail"), "date": snap.get("date"), "fit": snap.get("fit"),
         "links": snap.get("links") or [], "included": t["included"], "contact_email": email,
         "personal_email": bool(email) and gs.looks_personal_email(email),
+        "contact_found": snap.get("contact_found"),
         "status": t["status"], "opted_out": t["status"] == "opted_out" or t["buyer_key"] in opted_out,
         "sent_at": _iso(t["sent_at"]), "replied_at": _iso(t["replied_at"]), "meeting_at": _iso(t["meeting_at"]), "note": t["note"],
     }
@@ -786,6 +787,90 @@ def growth_update_target(cid: int, tid: int):
             _touch(cur, cid)
         conn.commit()
         return jsonify(_detail(conn, username, cid))
+    finally:
+        conn.close()
+
+
+# ── find a buyer's contact inbox instead of sending the user to the notice ───────────────────────
+_CONTACT_FRESH_DAYS = {"found": 30, "not_found": 7}
+
+
+def _contact_search(query: str) -> list[dict]:
+    from tender_app.blueprints.profiles_bp import search_duckduckgo
+    return search_duckduckgo(query, max_results=6)
+
+
+def _cached_buyer_contact(cur, buyer_key: str) -> dict[str, Any] | None:
+    cur.execute("SELECT status, email, candidates, source, source_url, website, checked_at FROM buyer_contact_cache WHERE buyer_key = %s", (buyer_key,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    status, email, candidates, source, source_url, website, checked_at = row
+    try:
+        cands = json.loads(candidates) if candidates else []
+    except ValueError:
+        cands = []
+    from datetime import datetime, timedelta
+    fresh = bool(checked_at) and datetime.utcnow() - checked_at < timedelta(days=_CONTACT_FRESH_DAYS.get(status, 7))
+    return {"fresh": fresh, "status": status, "email": email, "candidates": cands, "source": source,
+            "source_url": source_url, "website": website}
+
+
+@growth_bp.post("/api/growth/campaigns/<int:cid>/targets/<int:tid>/find-contact")
+@rate_limit(30, 60)
+def growth_find_contact(cid: int, tid: int):
+    """Look the buyer's published procurement inbox up (the notice first, then the buyer's website) and put it in the
+    contact box if that is still empty. A named person's address is never filled in automatically."""
+    from tender_app import buyer_contacts as bcn
+    from tender_app.db_ext import create_buyer_contact_cache
+    username = _username()
+    conn = _connect()
+    try:
+        campaign, targets = _load_campaign(conn, username, cid)
+        target = next((t for t in targets if t["id"] == tid), None)
+        if target is None:
+            raise _Http("Target not found", 404)
+        opted = _opted_out(conn, username)
+        if target["status"] == "opted_out" or target["buyer_key"] in opted:
+            return jsonify(_detail(conn, username, cid, find_contact={"target_id": tid, "status": "skipped"}))
+        if target["contact_email"] and request.args.get("force") != "1":
+            return jsonify(_detail(conn, username, cid, find_contact={"target_id": tid, "status": "already"}))
+        with conn.cursor() as cur:
+            create_buyer_contact_cache(cur)
+            conn.commit()
+            result = _cached_buyer_contact(cur, target["buyer_key"])
+            if not result or not result["fresh"] or request.args.get("force") == "1":
+                urls = [l.get("url") for l in (target["snapshot"].get("links") or []) if isinstance(l, dict)]
+                found = bcn.find_buyer_contact(target["buyer_name"], urls, search=_contact_search)
+                cur.execute(
+                    """INSERT INTO buyer_contact_cache (buyer_key, status, email, candidates, source, source_url, website, checked_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, (NOW() AT TIME ZONE 'utc'))
+                       ON CONFLICT (buyer_key) DO UPDATE SET status = EXCLUDED.status, email = EXCLUDED.email,
+                           candidates = EXCLUDED.candidates, source = EXCLUDED.source, source_url = EXCLUDED.source_url,
+                           website = EXCLUDED.website, checked_at = EXCLUDED.checked_at""",
+                    (target["buyer_key"], found["status"], found.get("email"), json.dumps(found.get("candidates") or []),
+                     found.get("source"), found.get("source_url"), found.get("website")),
+                )
+                conn.commit()
+                result = {"status": found["status"], "email": found.get("email"), "candidates": found.get("candidates") or [],
+                          "source": found.get("source"), "source_url": found.get("source_url")}
+            best = (result["candidates"] or [None])[0]
+            status = "not_found"
+            if result["status"] == "found" and best:
+                if best.get("role") and gs.valid_email(best["email"]):
+                    snapshot = dict(target["snapshot"])
+                    snapshot["contact_found"] = {"source": best.get("source"), "url": best.get("source_url")}
+                    cur.execute(
+                        "UPDATE growth_campaign_targets SET contact_email = %s, snapshot_json = %s "
+                        "WHERE id = %s AND campaign_id = %s AND (contact_email IS NULL OR contact_email = '' OR %s)",
+                        (best["email"], json.dumps(snapshot), tid, cid, request.args.get("force") == "1"),
+                    )
+                    _touch(cur, cid)
+                    conn.commit()
+                    status = "found"
+                else:
+                    status = "personal_only"
+        return jsonify(_detail(conn, username, cid, find_contact={"target_id": tid, "status": status}))
     finally:
         conn.close()
 

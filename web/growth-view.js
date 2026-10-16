@@ -435,13 +435,28 @@
       .join("");
   }
 
-  // Where to look for the address: the buyer's own notice names a contact. TenderFlow has no buyer email data
-  // of its own (notices that were searched carry none), so the reader copies it from there.
+  // The server looks the buyer's published inbox up (the notice, then the buyer's website) and fills the box. This
+  // only says where that stands. The notice link stays as the manual fallback when nothing was published.
   function noticeLink(t) {
+    if (t._lookup === "looking") return `<div class="gs-hint">Looking for the buyer's contact…</div>`;
     const link = (t.links || []).map((l) => safeUrl(l && l.url)).find(Boolean);
+    const manual = link
+      ? ` <a class="gs-link" href="${esc(link)}" target="_blank" rel="noreferrer noopener">Check the notice ↗</a>`
+      : " Look on the buyer's website for a procurement inbox.";
+    if (t._lookup === "personal_only") return `<div class="gs-hint">Only a named person's address is published. Add a role inbox yourself.${manual}</div>`;
+    if (t._lookup === "not_found") return `<div class="gs-hint">No public inbox found.${manual}</div>`;
     return link
       ? `<div class="gs-hint">No address yet. <a class="gs-link" href="${esc(link)}" target="_blank" rel="noreferrer noopener">Find the contact on the notice ↗</a></div>`
       : `<div class="gs-hint">No address yet. Look on the buyer's website or the notice for a procurement inbox.</div>`;
+  }
+
+  // Where an address that the server filled in came from, so the user can check it.
+  function foundNote(t) {
+    const f = t.contact_found;
+    if (!f || !t.contact_email) return "";
+    const url = safeUrl(f.url);
+    const where = f.source === "notice" ? "the notice" : "the buyer's website";
+    return `<div class="gs-hint">Found on ${url ? `<a class="gs-link" href="${esc(url)}" target="_blank" rel="noreferrer noopener">${where} ↗</a>` : where}. Check it before you send.</div>`;
   }
 
   function targetRow(t) {
@@ -453,6 +468,7 @@
       `<div class="gs-target__sig">${badge(esc(t.signal_label), (TYPES[t.signal_type] || {}).tone)} <span>${esc(t.headline || "")}</span></div></td>` +
       `<td><input type="email" class="gs-input gs-input--sm" data-field="contact_email" data-id="${esc(t.id)}" value="${esc(t.contact_email || "")}" placeholder="procurement@…" autocomplete="off" aria-label="Contact email for ${esc(t.buyer_name)}">` +
       (t.personal_email ? `<div class="gs-hint gs-hint--warn">Looks like a named person's address. Use a role-based inbox such as procurement@ where you can.</div>` : "") +
+      foundNote(t) +
       (!t.contact_email && !t.opted_out ? noticeLink(t) : "") +
       `</td><td><select class="gs-select gs-select--sm" data-field="status" data-id="${esc(t.id)}" aria-label="Status for ${esc(t.buyer_name)}">${statusOptions(t.status)}</select></td>` +
       `<td><button type="button" class="gs-icon-btn" data-action="remove-target" data-id="${esc(t.id)}" aria-label="Remove ${esc(t.buyer_name)} from this campaign" title="Remove">×</button></td></tr>`

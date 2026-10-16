@@ -574,6 +574,25 @@ def create_supplier_contact_tables(cursor) -> None:
     )
 
 
+def create_buyer_contact_cache(cursor) -> None:
+    """Buyer inboxes found by tender_app/buyer_contacts.py, kept per buyer (growth_campaign_targets.buyer_key) so the
+    same buyer is looked up once, not once per campaign. candidates is JSON text."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS buyer_contact_cache (
+            buyer_key   TEXT PRIMARY KEY,
+            status      TEXT NOT NULL,
+            email       TEXT,
+            candidates  TEXT,
+            source      TEXT,
+            source_url  TEXT,
+            website     TEXT,
+            checked_at  TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+        )
+        """
+    )
+
+
 def create_email_send_tables(cursor) -> None:
     """Email sent through Outreach (tender_app/email_send.py, email_send_service.py, blueprints/email_bp.py).
 
@@ -670,6 +689,7 @@ def run_saas_migrations(conn: Any) -> None:
         create_growth_tables(cursor)
         create_email_send_tables(cursor)
         create_supplier_contact_tables(cursor)
+        create_buyer_contact_cache(cursor)
         conn.commit()
     except Exception:
         conn.rollback()

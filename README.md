@@ -194,3 +194,15 @@ contact/about pages and keeps business emails, UK phone numbers and the company'
 * `POST /api/suppliers/<id>/contacts/enrich` (rate limited; `?force=1` to look again); `GET /api/suppliers/<id>` returns
   `found_contacts`.
 * These are business contact details from a company's own site. Check PECR/GDPR rules before using them for marketing.
+
+### Buyer contact inbox in Growth Studio
+
+In the campaign builder, a buyer with no contact email is looked up automatically instead of sending the user to the
+notice. `tender_app/buyer_contacts.py` reads, in order, the notice itself (Find a Tender, Contracts Finder, Sell2Wales,
+Public Contracts Scotland; only those exact hosts are ever fetched) and the buyer's own website (procurement / contracts /
+contact pages). Only addresses that look like the public body's own are kept (an award notice also names the winning
+supplier, and every notice carries the portal's helpdesk), and role inboxes (procurement@, tenders@, contracts@, info@)
+are preferred. The inbox is saved in the empty contact box with where it was found, never over an address the user typed.
+A named person's address is not filled in automatically; the user is told and adds a role inbox themselves.
+`POST /api/growth/campaigns/<id>/targets/<tid>/find-contact`; answers are cached per buyer in `buyer_contact_cache`
+(30 days; 7 days for "nothing published"). Nothing is emailed by looking an address up.
