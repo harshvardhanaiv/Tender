@@ -9,10 +9,10 @@
   if (!V) return; // growth-view.js did not load: leave the rest of the app alone
 
   const byId = (id) => document.getElementById(id);
-  const TABS = { signals: "gsTabSignals", campaigns: "gsTabCampaigns", builder: "gsTabBuilder", performance: "gsTabPerformance" };
+  const TABS = { signals: "gsTabSignals", campaigns: "gsTabCampaigns", builder: "gsTabBuilder", performance: "gsTabPerformance", channels: "gsTabChannels", inbox: "gsTabInbox" };
   const TYPE_CHOICES = { renewal: "Contract renewals", development: "New developments", engagement: "Market engagements" };
   const STALE_MS = 5 * 60 * 1000;
-  const PANES = { signals: "gsPaneSignals", campaigns: "gsPaneCampaigns", builder: "gsPaneBuilder", performance: "gsPanePerformance" };
+  const PANES = { signals: "gsPaneSignals", campaigns: "gsPaneCampaigns", builder: "gsPaneBuilder", performance: "gsPanePerformance", channels: "gsPaneChannels", inbox: "gsPaneInbox" };
 
   function freshBuilder() {
     return {
@@ -722,6 +722,12 @@
     if (tab === "signals" && !state.signals.data && V.hasCategory(state.filters)) loadSignals();
     if (tab === "campaigns") loadCampaigns();
     if (tab === "performance") loadPerformance();
+    // Social & calls and Inbox have their own modules (growth-channels.js, growth-inbox.js): each loads when its tab opens
+    [["channels", window.GrowthChannels], ["inbox", window.GrowthInbox]].forEach(([name, mod]) => {
+      if (!mod) return;
+      if (tab === name) mod.open();
+      else mod.close();
+    });
   }
 
   // ── events ────────────────────────────────────────────────────────────────────────────────────
@@ -1097,6 +1103,8 @@
 
   function closeGrowthStudio() {
     byId("growthStudioModal")?.classList.add("hidden");
+    if (window.GrowthChannels) window.GrowthChannels.close(); // stop looking for call / post updates while it is closed
+    if (window.GrowthInbox) window.GrowthInbox.close();
   }
 
   window.openGrowthStudio = openGrowthStudio;

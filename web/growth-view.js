@@ -753,6 +753,7 @@
     esc, safeUrl, fmtDate, fmtMoney, fmtMoneyShort, plural, inDays, parseServerTime, timeAgo, fitBand, filenameFromDisposition, insertAt,
     hasCategory, defaultFilters, filtersBody, signalsQuery, campaignKeys,
     signalCard, signalsPane, selectionBar, campaignsPane, builderPane, previewHtml, warningsHtml, mailchimpBox, targetRow, mergeChips, performancePane,
+    badge, note, empty, loading, errorBox,
     outreachPanel, outreachConnectBox, outreachMailboxLine, outreachMailboxPicker, outreachSeenNote, outreachDraftRow, outreachResult,
     suppressionsBlock, fitParts, funnelBars, countsLine, TYPES, TARGET_STATUS, CAMPAIGN_STATUS,
   };

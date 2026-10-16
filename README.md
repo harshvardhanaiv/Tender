@@ -148,6 +148,38 @@ listed and can be sent later. A 422 only fails that recipient.
   stored; it never moves an email backwards. A bounced address is added to the suppression list. No webhook is
   needed (none is implemented).
 
+### Inbox (Growth Studio, "Inbox" tab)
+
+Shows the emails sent through Outreach and the replies to them (`GET /v1/email/messages?status=replied`, then the message
+for the reply text; needs `email:write`). The Outreach key is shared by every TenderFlow user, so its list holds everyone's
+emails: an email is shown to a user only when TenderFlow recorded its id (every one-to-one email), or, for a campaign
+email, when it went to an address that user emailed and no other TenderFlow user has. A reply marks that buyer *replied*
+in the campaign (counted on the Performance tab); a buyer already in a meeting or opted out is left alone. Opening a reply
+marks it read. A reply that reads like "stop" is flagged, with a button to add the buyer to the do-not-contact list.
+**Reply by email** opens the user's own mail program: nothing is sent from the inbox.
+
+### Social posts and phone calls (Growth Studio, "Social & calls" tab)
+
+Uses the same key. Give it `social:write` and `social:approve` for posts, and `voice:calls` for calls, in Outreach's Keys tab.
+
+- **Social post.** The user describes the post; Outreach's AI writes the caption and picture (`POST /v1/social/posts`).
+  Creating a post never publishes it: it waits as *Ready to approve*, and only the **Approve and publish** button
+  (after a confirmation) sends the approval (`.../decision`). TenderFlow reads Outreach's own state before approving,
+  so a post still being written or already finished is refused. Channels come from `/v1/wallets`.
+- **Phone call.** One number per request, placed only by the **Call now** button after a confirmation
+  (`POST /v1/voice/calls`). UK PECR: a marketing call may go to an organisation, not an individual, and never to a
+  number on the TPS / CTPS, so the call is refused unless the user ticked both confirmations for that call, the number is
+  a UK landline (01, 02 or 03; mobiles, 08/09 and foreign numbers are refused), and the buyer is not on the
+  do-not-contact list. The same number is not called twice in 24 hours unless nobody answered. The buyer's number can be
+  looked up from the notices already held (never invented). Results (outcome, answers, transcript) are read back on
+  demand; transcripts are not stored here.
+- Both are idempotent per attempt (a double click is one request) and capped per user per 24 hours.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OUTREACH_DAILY_CALL_CAP` | `20` | Calls one user may place in 24 hours |
+| `OUTREACH_DAILY_POST_CAP` | `20` | Posts one user may create in 24 hours |
+
 ### Testing
 
 ```

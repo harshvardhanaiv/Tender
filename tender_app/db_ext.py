@@ -530,6 +530,63 @@ def create_growth_tables(cursor) -> None:
     )
     # body_hash: which message text this draft was made from, so an edited message is never sent under an old draft
     cursor.execute("ALTER TABLE growth_outreach_drafts ADD COLUMN IF NOT EXISTS body_hash VARCHAR(16)")
+    # Social posts and phone calls made through Outreach (tender_app/outreach_channels.py). A post waits here as
+    # needs_approval until the user approves it; a call is one row per number the user chose to call.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS growth_social_posts (
+            id            SERIAL PRIMARY KEY,
+            username      VARCHAR(255) NOT NULL,
+            outreach_id   TEXT,
+            prompt        TEXT NOT NULL,
+            channels      TEXT NOT NULL DEFAULT '',
+            publish_at    VARCHAR(40),
+            mode          VARCHAR(8) NOT NULL DEFAULT 'test',
+            status        VARCHAR(40),
+            caption       TEXT,
+            preview_url   TEXT,
+            published_url TEXT,
+            error         TEXT,
+            created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            checked_at    TIMESTAMP,
+            decided_at    TIMESTAMP
+        )
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_growth_social_posts_user ON growth_social_posts (username, created_at DESC)")
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS growth_voice_calls (
+            id               SERIAL PRIMARY KEY,
+            username         VARCHAR(255) NOT NULL,
+            buyer_key        TEXT,
+            buyer_name       TEXT NOT NULL,
+            to_number        VARCHAR(20) NOT NULL,
+            goal             TEXT,
+            outreach_id      TEXT,
+            mode             VARCHAR(8) NOT NULL DEFAULT 'test',
+            status           VARCHAR(40),
+            outcome          VARCHAR(40),
+            duration_seconds INTEGER,
+            meeting_booked   BOOLEAN,
+            error            TEXT,
+            created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            checked_at       TIMESTAMP
+        )
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_growth_voice_calls_user ON growth_voice_calls (username, created_at DESC)")
+    # Inbox: which Outreach replies the user has opened (so the unread ones can be marked).
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS growth_inbox_seen (
+            username   VARCHAR(255) NOT NULL,
+            message_id VARCHAR(64) NOT NULL,
+            seen_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (username, message_id)
+        )
+        """
+    )
     # The user's own sending mailbox (tender_app/user_mailer.py). password_enc is Fernet ciphertext, never returned.
     # A send through it is recorded in growth_outreach_drafts with mode 'smtp' and outreach_id = the Message-ID.
     cursor.execute(

@@ -178,7 +178,8 @@ def test_campaign_summary_is_tolerant():
 
 def test_wallet_summary():
     w = oc.wallet_summary({"credits": 42, "connected": {"mailboxes": 1}, "livemode": False})
-    assert w == {"credits": 42, "connected": {"mailboxes": 1}, "mailboxes": [], "livemode": False}
+    assert w == {"credits": 42, "connected": {"mailboxes": 1}, "mailboxes": [], "social_channels": [], "phone_numbers": None,
+                 "livemode": False}
     # whatever else the answer carries is not passed on to the browser, only counts and flags
     w = oc.wallet_summary({"credits": 1, "connected": {"mailboxes": [{"email": "a@x.test", "token": "sk-secret"}],
                            "social": {"linkedin": {"access_token": "tok-secret"}}, "phone": True, "note": "tok-secret"}})
@@ -320,6 +321,126 @@ def test_web_links_use_only_plain_https_and_fall_back_to_the_site():
         assert out == {"connect_url": root, "manage_url": root}, (bad, out)
     # a bad site root falls back to the product's own host
     assert oc.web_links("http://nope", None, None)["connect_url"] == "https://outreach.aivhub.com"
+
+
+def test_social_post_requests_and_answers():
+    f = Fake(200, {"id": "v2_5d1e0c9a7b21", "status": "writing", "channels": ["linkedin", "facebook"],
+                   "preview_url": "https://outreach.aivhub.com/api/p/abc"})
+    made = client(f).create_social_post({"prompt": "Announce it", "channels": ["linkedin"]}, "tf-post-1")
+    c = f.calls[0]
+    assert c["method"] == "POST" and c["url"] == "https://api.example.test/v1/social/posts"
+    assert c["headers"]["Idempotency-Key"] == "tf-post-1" and json.loads(c["data"])["channels"] == ["linkedin"]
+    s = oc.post_summary(made)
+    assert s["id"] == "v2_5d1e0c9a7b21" and s["status"] == "writing" and s["channels"] == ["linkedin", "facebook"]
+    assert s["preview_url"] == "https://outreach.aivhub.com/api/p/abc" and s["published_url"] is None
+    raises(lambda: client(Fake()).create_social_post({}, ""), 400, "invalid_request")
+    f = Fake(200, {"id": "v2_1", "status": "published", "caption": "Hello", "result": {"url": "https://www.linkedin.com/feed/update/1"}})
+    got = oc.post_summary(client(f).get_social_post("v2_1"))
+    assert f.calls[0]["method"] == "GET" and f.calls[0]["url"].endswith("/v1/social/posts/v2_1")
+    assert got["caption"] == "Hello" and got["published_url"] == "https://www.linkedin.com/feed/update/1"
+    raises(lambda: client(Fake()).get_social_post("../x"), 400, "invalid_request")
+
+
+def test_a_post_decision_is_one_of_three_and_needs_a_key():
+    f = Fake(200, {"id": "v2_1", "status": "approved"})
+    client(f).decide_social_post("v2_1", "approve", "tf-d-1")
+    c = f.calls[0]
+    assert c["url"].endswith("/v1/social/posts/v2_1/decision") and json.loads(c["data"]) == {"decision": "approve"}
+    assert c["headers"]["Idempotency-Key"] == "tf-d-1"
+    for bad in ("publish", "", None):
+        raises(lambda b=bad: client(Fake()).decide_social_post("v2_1", b, "k"), 400, "invalid_request")
+    raises(lambda: client(Fake()).decide_social_post("v2_1", "cancel", ""), 400, "invalid_request")
+    raises(lambda: client(Fake()).decide_social_post("a b", "cancel", "k"), 400, "invalid_request")
+
+
+def test_post_summary_drops_links_that_are_not_plain_https():
+    s = oc.post_summary({"id": "v2_1", "preview_url": "javascript:alert(1)", "result": {"url": "http://insecure.example/x"},
+                         "channels": [{"platform": "LinkedIn"}, "facebook", {"x": 1}, "bad;chan"]})
+    assert s["preview_url"] is None and s["published_url"] is None and s["channels"] == ["linkedin", "facebook"]
+
+
+def test_voice_call_requests_and_answers():
+    f = Fake(200, {"id": "call_8f2a91c4", "status": "ringing", "to": "+442079460000",
+                   "live_url": "https://outreach.aivhub.com/api/p/x", "capabilities": {"end": True, "guide": False}})
+    made = client(f).make_call({"to": "+442079460000", "goal": "Ask"}, "tf-call-1")
+    c = f.calls[0]
+    assert c["method"] == "POST" and c["url"] == "https://api.example.test/v1/voice/calls"
+    assert c["headers"]["Idempotency-Key"] == "tf-call-1" and json.loads(c["data"])["to"] == "+442079460000"
+    s = oc.call_summary(made)
+    assert s["id"] == "call_8f2a91c4" and s["status"] == "ringing" and s["can_end"] is True and s["live_url"].startswith("https://")
+    raises(lambda: client(Fake()).make_call({"to": "+44"}, ""), 400, "invalid_request")
+    done = {"id": "call_1", "status": "Completed", "outcome": "meeting_booked", "duration_seconds": 192, "meeting_booked": True,
+            "answers": {"current_system": "Acuity", "nested": {"a": 1}}, "recording_url": "https://api.example/x",
+            "transcript": [{"who": "ai", "text": "Hello Jo"}, {"who": "them", "text": 5}, "junk"]}
+    f = Fake(200, done)
+    got = oc.call_summary(client(f).get_call("call_1"))
+    assert f.calls[0]["method"] == "GET" and f.calls[0]["url"].endswith("/v1/voice/calls/call_1")
+    assert got["status"] == "completed" and got["outcome"] == "meeting_booked" and got["duration_seconds"] == 192
+    assert got["meeting_booked"] is True and got["has_recording"] is True and got["can_end"] is False
+    assert got["answers"] == [{"key": "current_system", "answer": "Acuity"}]
+    assert got["transcript"] == [{"who": "ai", "text": "Hello Jo"}]
+    f = Fake(200, {"id": "call_1", "status": "completed"})
+    client(f).end_call("call_1")
+    assert f.calls[0]["method"] == "DELETE" and f.calls[0]["url"].endswith("/v1/voice/calls/call_1")
+    raises(lambda: client(Fake()).get_call("a/b"), 400, "invalid_request")
+    raises(lambda: client(Fake()).end_call(""), 400, "invalid_request")
+
+
+def test_saved_scripts_are_read_as_id_and_name():
+    f = Fake(200, {"scripts": [{"id": "script_1", "name": "Intro"}, {"id": "bad id"}, {"script_id": "script_2"}, "junk"]})
+    out = oc.script_list(client(f).voice_scripts())
+    assert f.calls[0]["url"].endswith("/v1/voice/scripts")
+    assert out == [{"id": "script_1", "name": "Intro"}, {"id": "script_2", "name": "script_2"}]
+    assert oc.script_list({}) == []
+
+
+def test_the_wallet_reports_which_social_channels_and_phone_numbers_are_connected():
+    w = oc.wallet_summary({"credits": 9, "connected": {"mailboxes": [], "social_channels": [{"platform": "linkedin"}, "Facebook"],
+                                                      "phone_numbers": [{"number": "+442000000000", "token": "secret"}]}})
+    assert w["social_channels"] == ["linkedin", "facebook"] and w["phone_numbers"] == 1
+    assert "secret" not in str(w) and w["connected"] == {"mailboxes": 0, "social_channels": 2, "phone_numbers": 1}
+    w = oc.wallet_summary({"connected": {"social_channels": [], "phone_numbers": 0}})
+    assert w["social_channels"] == [] and w["phone_numbers"] == 0
+    w = oc.wallet_summary({"credits": 3})
+    assert w["social_channels"] == [] and w["phone_numbers"] is None
+
+
+def test_the_inbox_list_is_read_with_its_cursor_and_filters():
+    f = Fake(200, {"data": [{"id": "m1", "to": "Jo@Bloggs.example", "subject": "Your tender", "status": "Replied", "sent_at": "2026-11-03T10:30:00Z",
+                             "mailbox": "sales@x.example", "kind": "one_to_one", "secret": "no"}, "junk"], "next_cursor": "abc_123=="})
+    page = oc.message_page(client(f).list_email_messages(status="replied", q="bloggs", cursor="tok_1"))
+    url = f.calls[0]["url"]
+    assert "status=replied" in url and "q=bloggs" in url and "cursor=tok_1" in url
+    assert page["next_cursor"] == "abc_123==" and len(page["items"]) == 1
+    m = page["items"][0]
+    assert m == {"id": "m1", "to": "jo@bloggs.example", "subject": "Your tender", "status": "replied", "sent_at": "2026-11-03T10:30:00Z",
+                 "replied_at": None, "mailbox": "sales@x.example", "kind": "one_to_one"}
+    raises(lambda: client(Fake()).list_email_messages(cursor="bad cursor!"), 400, "invalid_request")
+    assert oc.message_page({"data": [], "next_cursor": "bad cursor!"})["next_cursor"] is None
+    assert oc.message_page({}) == {"items": [], "next_cursor": None}
+
+
+def test_a_reply_is_read_whether_it_is_text_an_object_or_a_list_and_is_always_plain_text():
+    base = {"id": "m1", "to": "jo@bloggs.example", "subject": "S", "status": "replied", "body": "<p>Hi Jo</p><p>Bye</p>"}
+    one = oc.reply_detail({**base, "reply": "Thanks, call me."})
+    assert one["replies"] == [{"text": "Thanks, call me.", "from": None, "at": None, "subject": None}]
+    assert one["original"] == "Hi Jo\n\nBye"
+    two = oc.reply_detail({**base, "reply": {"from": "Jo@Bloggs.example", "received_at": "2026-11-04T09:00:00Z", "body": "<div>Yes please</div><br>Jo &amp; team<script>x</script>"}})
+    r = two["replies"][0]
+    assert r["from"] == "Jo@Bloggs.example" and r["at"] == "2026-11-04T09:00:00Z" and r["text"] == "Yes please\n\nJo & team"
+    assert "<" not in r["text"]
+    many = oc.reply_detail({**base, "replies": [{"text": "one"}, {"snippet": "two", "sender": "not an address"}, 5, {}]})
+    assert [x["text"] for x in many["replies"]] == ["one", "two"] and many["replies"][1]["from"] is None
+    nested = oc.reply_detail({"data": {"id": "m2", "reply": {"text": "inside"}}})
+    assert nested["id"] == "m2" and nested["replies"][0]["text"] == "inside"
+    none = oc.reply_detail({**base, "status": "bounced", "bounce_reason": "Mailbox full"})
+    assert none["replies"] == [] and none["bounce_reason"] == "Mailbox full"
+
+
+def test_a_reply_passes_on_nothing_it_was_not_asked_for():
+    out = oc.reply_detail({"id": "m1", "reply": {"text": "hi", "token": "sk-secret", "headers": {"x": "y"}}, "api_key": "sk-secret"})
+    assert "secret" not in str(out)
+    assert oc.plain_text("   ", 10) is None and oc.plain_text(5, 10) is None and oc.plain_text("x" * 50, 10) == "x" * 10
 
 
 if __name__ == "__main__":

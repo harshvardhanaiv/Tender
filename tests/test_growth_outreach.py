@@ -160,6 +160,33 @@ def test_long_names_are_trimmed():
     assert len(pay["name"]) <= 120 and len(pay["audience"]) <= 120 and len(pay["leads"][0]["company"]) <= 120
 
 
+def test_a_message_is_the_users_when_its_id_was_recorded_or_it_went_to_their_address_alone():
+    mine = {"m1"}
+    emails = {"jo@alpha.example", "kim@beta.example"}
+    ambiguous = {"kim@beta.example"}
+    assert go.owned_message({"id": "m1", "to": "x@y.z", "kind": "one_to_one"}, mine, emails, ambiguous)
+    assert go.owned_message({"id": "m2", "to": "JO@alpha.example", "kind": None}, mine, emails, ambiguous)
+    assert go.owned_message({"id": "m2", "to": "jo@alpha.example", "kind": "campaign"}, mine, emails, ambiguous)
+    assert not go.owned_message({"id": "m2", "to": "kim@beta.example", "kind": "campaign"}, mine, emails, ambiguous), "another user also emailed it"
+    assert not go.owned_message({"id": "m2", "to": "jo@alpha.example", "kind": "one_to_one"}, mine, emails, ambiguous), "a one-to-one email needs its id"
+    assert not go.owned_message({"id": "m2", "to": "other@else.example", "kind": None}, mine, emails, ambiguous)
+    assert not go.owned_message({"id": None, "to": None}, mine, emails, ambiguous)
+
+
+def test_a_reply_that_asks_to_stop_is_noticed_but_quoted_history_is_not_read():
+    for text in ("Please stop emailing us.", "Unsubscribe me", "remove me from your list", "We opt out", "Do not contact us again", "No more emails please"):
+        assert go.looks_like_opt_out(text), text
+    for text in ("Thanks, send the details.", "We are interested; call on Monday.", "", None):
+        assert not go.looks_like_opt_out(text), text
+    quoted = "Sounds good, let us talk.\n\nOn Mon, 3 Nov 2026, Sam wrote:\n> reply stop if you would rather not hear from us"
+    assert not go.looks_like_opt_out(quoted)
+    assert not go.looks_like_opt_out("Great.\n> reply stop to opt out")
+
+
+def test_the_inbox_filters():
+    assert go.INBOX_FILTERS["replies"] == "replied" and go.INBOX_FILTERS["all"] is None and "bogus" not in go.INBOX_FILTERS
+
+
 if __name__ == "__main__":
     failures = 0
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
