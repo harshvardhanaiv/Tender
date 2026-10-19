@@ -358,3 +358,16 @@ body.tf-shell #growthFilterBar select.tf-chip--select { flex: none; width: auto;
 .gs-btn--danger { color: var(--gs-neg, #b42318); }
 .gs-btn--danger:hover { background: var(--gs-neg-soft, #fdecea); border-color: var(--gs-neg, #b42318); }
 @media (max-width: 720px) { .gs-in-line { align-items: flex-start; } .gs-in-del { margin-top: 10px; } }
+
+/* Inbox: email accounts */
+.gs-in-accounts { margin: 0 0 14px; }
+.gs-in-accounts__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
+.gs-in-accounts__head .gs-card__title { margin: 0; }
+.gs-in-acc { list-style: none; margin: 10px 0 4px; padding: 0; }
+.gs-in-acc__row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.gs-in-acc__row:first-child { border-top: 0; }
+.gs-in-acc__email { font-weight: 600; }
+
+.gs-in-mailform .gs-ch-row { align-items: flex-start; gap: 0 14px; }
+.gs-in-mailform .gs-ch-row > div { flex: 1 1 200px; min-width: 0; }
+.gs-in-mailform .gs-input, .gs-in-mailform .gs-select { width: 100%; box-sizing: border-box; }

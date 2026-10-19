@@ -108,8 +108,6 @@ text (the panel shows `sk_test_…`, the first 8 characters). Growth Studio's "S
 | `OUTREACH_API_KEY` | none | Bearer key, `sk_test_...` or `sk_live_...` |
 | `OUTREACH_API_BASE` | `https://outreach.aivhub.com` | `api.outreach.aivhub.com` currently fails its TLS handshake; `/v1/*` works on the main host |
 | `OUTREACH_SEND_MAILBOX_FIELD` / `OUTREACH_CAMPAIGN_MAILBOX_FIELD` | `mailbox_id` / `mailbox_ids` | Field names sent when a mailbox is chosen in Growth Studio's "Send from" dropdown (shown when Outreach reports two or more mailboxes). Outreach has not documented them yet, so the answer's `from` is checked and a mismatch is flagged |
-| `OUTREACH_WEB_URL` | `https://outreach.aivhub.com` | Outreach's web app: where "Connect Outreach" and "Manage in Outreach" open in a small centred window (a normal new tab if the browser blocks it; the panel re-checks when the window closes) so the user signs in or up, chooses a plan and connects a mailbox. https only |
-| `OUTREACH_CONNECT_URL` / `OUTREACH_MANAGE_URL` | blank | Optional deeper links (its sign-up or plans page, its Mailboxes page). Blank uses `OUTREACH_WEB_URL` |
 | `OUTREACH_ALLOW_LIVE` | `0` | While `0` a `sk_live_` key is refused with a clear message. Set `1` only when real sending is intended |
 | `OUTREACH_TIMEOUT_SECONDS` | `15` | Per request |
 | `OUTREACH_DAILY_SEND_CAP` | `25` | Single sends a day per company (Outreach's limit) |
@@ -148,6 +146,64 @@ listed and can be sent later. A 422 only fails that recipient.
   stored; it never moves an email backwards. A bounced address is added to the suppression list. No webhook is
   needed (none is implemented).
 
+### Connections (top bar and Account menu)
+
+**Connections** (top bar) and **Connected apps** (left menu, under Account) open a small window with two cards: Outreach and
+the user's own Email account. Nothing opens in another window: the user connects and disconnects in place. Every Growth Studio
+panel (Send mail, Inbox, Social, Calls) and the Email (Outreach) settings panel use the same window: their "Connect Outreach",
+"Add an email account" and "Connections" buttons carry `data-open-connections` (`outreach` or `mail`, which card to scroll to),
+and nothing in the app links out to Outreach's website any more. When the window is closed after something was connected or
+disconnected it fires a `connections:changed` event and each panel that is showing looks again by itself.
+
+- **Connected** (from `GET /api/growth/outreach/status`, which now also says `source`: `own`, `shared`, `disconnected` or
+  `none`) shows the key mode, credits, email accounts, social channels and phone numbers, with **Refresh** and **Disconnect**.
+- **Connect** takes the user's own Outreach key (`POST /api/growth/outreach/connect {"api_key": "sk_test_..."}`): the format is
+  checked, Outreach is asked (`/v1/wallets`) whether it works, and only then is it kept, Fernet-encrypted with `MAIL_CRED_KEY`
+  in `user_outreach_connections`. It is never returned, logged or put back on the page. `{"use_shared": true}` goes back to the
+  organisation's key (`OUTREACH_API_KEY`).
+- **Disconnect** (`DELETE /api/growth/outreach/connect`) forgets the user's key and, when the server has a key, switches
+  Outreach off for that user (a `disabled` row), so the shared key is not quietly used for them. Every Outreach route
+  (Growth Studio, Social, Calls, Inbox, the one-to-one email routes) follows the user's choice; other users are untouched.
+  Anything already sent or posted is not affected.
+- **Sign in / Create account (Outreach partner programme).** With `OUTREACH_CLIENT_ID` set (from Outreach's Developer API ->
+  Partner programme tab) the Connect form offers **Sign in** (`POST /api/growth/outreach/signin`) and, with
+  `OUTREACH_CONSENT_VERSION` too, **Create account** (`/signup`: company, name, email, password and a consent tick). The server
+  calls Outreach's `POST /v1/run` `{"plugin": "auth", "action": "login" | "signup" ...}` with the client id, an `Origin` header
+  (`OUTREACH_ORIGIN`, else this app's address) and, for signup, a `return_url` (`OUTREACH_RETURN_URL`, else
+  `<address>/outreach/connected`); both must be registered in that tab. The answer's `api_key` is stored encrypted (`via =
+  'partner'`) and never returned. The password goes only to Outreach: it is not stored, logged, echoed in an error or drawn
+  back onto the page. If Outreach wants the email confirmed (`verify_email`), nothing is stored; the user confirms, Outreach
+  sends them to `/outreach/connected` (which opens this window on Sign in), and they sign in. **Forgot password** and **Send
+  the confirmation email again** call `forgot_password` / `resend_verification`. Disconnecting a partner sign-in also calls
+  `auth` `disconnect` with the user's own key so it stops working in Outreach too (best effort; the user is disconnected here
+  either way). Outreach's error codes (`bad_credentials`, `email_not_verified`, `account_exists`, `consent_required`,
+  `origin_not_allowed`, `return_url_not_allowed`, `partner_suspended`, `invalid_client`) become plain messages.
+- Outreach's public API has no call to add a mailbox, social channel or phone number, so those still belong to the user's
+  Outreach account and show in the card once they exist there. Without `MAIL_CRED_KEY` a user cannot save their own key
+  (the card says so and offers the organisation's connection if there is one).
+
+**Email account card.** Because Outreach cannot add a mailbox, a user can set up their own sending account here: a provider
+preset (Gmail, Outlook, Zoho or custom), the address, login, password (an app password where the provider asks for one), server,
+port, security and a daily limit (default 100, at most 500). Routes: `GET /api/growth/email-account` (the account without its
+password, whether the server can keep one, the presets), `PUT` (the login is tried against the mail server first, then kept;
+a blank password keeps the saved one only while the login and server are unchanged), `POST .../test` (a short email from the
+account to its own address) and `DELETE`. The password is Fernet-encrypted with `MAIL_CRED_KEY` in `user_mail_accounts`, never
+returned, logged or drawn back onto the page; private and loopback mail servers are refused. Storage is
+`tender_app/mail_account.py`, the SMTP work is `tender_app/user_mailer.py`.
+
+**Sending from it.** The Send mail panel offers *Send from*: the own account and/or Outreach's mailboxes. With an account set up
+and nothing else picked, the own account is the default, and it works with Outreach not connected at all. `POST
+/api/growth/campaigns/<id>/outreach {"mailbox": "smtp"}` sends one email per buyer over SMTP (a `List-Unsubscribe` mailto header
+and the opt-out line the message must already carry); each result is recorded as soon as the mail server answers
+(`growth_outreach_drafts.mode = 'smtp'`, `outreach_id` = the Message-ID, approval `sent_now`), so a stopped batch never sends a
+buyer twice and a retry sends only what is left. A refused address does not stop the others; a login that stops working stops
+the batch and records nothing as sent. The limit counts emails sent from the account in the last 24 hours. Replies arrive in the
+user's own mailbox (the Inbox tab reads Outreach only), which the panel says. Emails sent this way are never asked about in
+Outreach (Refresh status skips them).
+
+Files: `web/connections.js`, `web/connections.css`, `tender_app/outreach_connection.py`, `tender_app/mail_account.py`,
+`tests/connections_test.js`, `tests/test_outreach_connection_api.py`, `tests/test_growth_email_account_api.py`.
+
 ### Inbox (Growth Studio, "Inbox" tab)
 
 Shows the emails sent through Outreach and the replies to them (`GET /v1/email/messages?status=replied`, then the message
@@ -157,6 +213,12 @@ email, when it went to an address that user emailed and no other TenderFlow user
 in the campaign (counted on the Performance tab); a buyer already in a meeting or opted out is left alone. Opening a reply
 marks it read. A reply that reads like "stop" is flagged, with a button to add the buyer to the do-not-contact list.
 **Reply by email** opens the user's own mail program: nothing is sent from the inbox.
+
+**Email accounts.** The top of the Inbox lists the accounts emails can go out from: the user's own email account (see
+*Connections*) and the mailboxes Outreach reports as connected (from `/v1/wallets`; address, whether it can send, its status).
+**Add an email account** opens the Connections window on the page, where the user sets up their own account; closing the window
+re-checks, so the account appears here and in the *Send from* list of Growth Studio. Outreach's API cannot add a mailbox to an
+Outreach account, so Outreach mailboxes are only listed. With no account the card says nothing can be sent.
 
 **Delete** (on every row and on an opened email, with a confirmation and an **Undo** for nine seconds) removes a sent email
 or a reply from the user's list: `DELETE /api/growth/inbox/<id>` writes a row in `growth_inbox_hidden`, `POST .../restore`

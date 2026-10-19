@@ -139,14 +139,14 @@
     return (
       `<p class="gs-hint gs-hint--block">${mode} Connected${credits}.` +
       (which === "social" && chans.length ? ` Social channels: <strong>${esc(chans.map(chLabel).join(", "))}</strong>.` : "") +
-      live + `</p>` + V.outreachConnectBox(info)
+      live + `</p>` + V.outreachConnectBox(info, { mail: false })
     );
   }
 
   function gate(m, which) {
     if (!m || m.status === "idle" || (m.status === "loading" && !m.info)) return V.loading("Checking Outreach…");
     const info = m.info || {};
-    if (!info.ready) return V.note(esc(info.problem || m.error || "Outreach is not available."), "bad") + V.outreachConnectBox(info);
+    if (!info.ready) return V.note(esc(info.problem || m.error || "Outreach is not available."), "bad") + V.outreachConnectBox(info, { mail: false });
     return null;
   }
 
@@ -456,7 +456,7 @@
     return (
       `<div class="gs-card" id="gsChCalls"><div class="gs-card__title">New call</div>` +
       `<p class="gs-hint gs-hint--block">Outreach's AI phones <strong>one</strong> number when you press Call. In the UK a marketing call may go to an organisation, not to an individual (most mobiles and sole traders), and never to a number on the TPS or CTPS. Only landlines starting 01, 02 or 03 are accepted here.</p>` +
-      (phones === 0 ? `<p class="gs-hint gs-hint--warn">No phone number is connected in Outreach yet, so the AI has no line to call from. Add one in Outreach first.</p>` : "") +
+      (phones === 0 ? `<p class="gs-hint gs-hint--warn">Your Outreach account has no phone number yet, so the AI has no line to call from. Phone numbers belong to the Outreach account: once it has one, open Connections and press Refresh.</p>` : "") +
       `<label class="gs-label" for="gsChBuyer">Buyer</label>` +
       `<div class="gs-ch-row"><input id="gsChBuyer" class="gs-input gs-input--sm" data-field="ch-buyer" maxlength="120" autocomplete="off" value="${esc(f.buyer || "")}" placeholder="e.g. Leeds City Council">` +
       `<button type="button" class="gs-btn gs-btn--sm" data-action="ch-lookup"${f.lookupBusy || String(f.buyer || "").trim().length < 3 ? " disabled" : ""}>${f.lookupBusy ? "Looking…" : "Find the number on its notices"}</button></div>` +
@@ -1056,6 +1056,11 @@
       else loadCalls(false);
     }
   };
+  // The Connections window was closed after a change: ask again now if social or calls is showing, else the next time it is shown
+  document.addEventListener("connections:changed", () => {
+    if (!model.opened) return;
+    if (model.open.social || model.open.calls) loadStatus(); else model.opened = false;
+  });
   api.close = function () {
     model.open.social = false;
     model.open.calls = false;

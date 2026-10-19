@@ -592,7 +592,12 @@ def create_growth_tables(cursor) -> None:
         """
     )
     create_growth_inbox_hidden(cursor)
-    # The user's own sending mailbox (tender_app/user_mailer.py). password_enc is Fernet ciphertext, never returned.
+    create_user_mail_accounts(cursor)
+
+
+def create_user_mail_accounts(cursor) -> None:
+    """The user's own sending mailbox (tender_app/mail_account.py, sending in tender_app/user_mailer.py). password_enc is
+    Fernet ciphertext, never returned."""
     # A send through it is recorded in growth_outreach_drafts with mode 'smtp' and outreach_id = the Message-ID.
     cursor.execute(
         """

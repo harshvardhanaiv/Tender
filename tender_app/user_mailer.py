@@ -49,6 +49,13 @@ PRESETS: dict[str, dict[str, Any]] = {
         "security": "ssl",
         "help": "Use an application-specific password from your Zoho security settings.",
     },
+    "onecom": {
+        "label": "one.com",
+        "host": "send.one.com",
+        "port": 465,
+        "security": "ssl",
+        "help": "Use your full email address as the login and your mailbox password.",
+    },
     "custom": {
         "label": "Other (custom SMTP)",
         "host": "",
@@ -172,8 +179,8 @@ def clean(data: Mapping[str, Any]) -> dict[str, Any]:
         raise MailError("Enter a valid From email address.", "bad_from")
 
     login = str(data.get("login") or "").strip()
-    if not login or len(login) > 254:
-        raise MailError("Enter the mailbox login.", "bad_login")
+    if not login or len(login) > 254 or any(c.isspace() for c in login):
+        raise MailError("Enter the mailbox login (usually your email address, with no spaces).", "bad_login")
 
     reply_to = str(data.get("reply_to") or "").strip()
     if reply_to and not _EMAIL_RE.match(reply_to):

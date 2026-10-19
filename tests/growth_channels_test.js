@@ -473,8 +473,8 @@ test("the call request is one number with the confirmations and a confirm flag",
 });
 
 test("the call form says when Outreach has no phone number and offers saved scripts only when there are some", () => {
-  assert.match(C.callForm(model({ info: Object.assign({}, ready, { wallet: { phone_numbers: 0 } }) })), /No phone number is connected in Outreach/);
-  assert.ok(!C.callForm(model()).includes("No phone number is connected"));
+  assert.match(C.callForm(model({ info: Object.assign({}, ready, { wallet: { phone_numbers: 0 } }) })), /Your Outreach account has no phone number/);
+  assert.ok(!C.callForm(model()).includes("has no phone number"));
   assert.ok(!C.callForm(model()).includes("saved script"));
   const withScripts = C.callForm(model({ calls: { status: "ok", list: [], form: callForm({ scriptId: "script_1" }), scripts: [{ id: "script_1", name: "Intro <b>" }], details: {} } }));
   assert.match(withScripts, /<option value="script_1" selected>Intro &lt;b&gt;<\/option>/);

@@ -196,20 +196,10 @@ def test_status_not_connected():
     assert "OUTREACH_API_KEY" in body["problem"] and FAKE.calls == []
 
 
-def test_status_carries_the_links_to_connect_and_manage_in_outreach():
-    from tender_app.blueprints import growth_bp
+def test_status_sends_the_page_nowhere_else_connecting_happens_in_the_connections_window():
     install(key="")
-    code, body, _ = call(client(USER_A), "get", "/api/growth/outreach/status")
-    assert code == 200 and body["connect_url"].startswith("https://") and body["manage_url"].startswith("https://")
-    saved = (growth_bp.OUTREACH_CONNECT_URL, growth_bp.OUTREACH_MANAGE_URL)
-    try:
-        growth_bp.OUTREACH_CONNECT_URL = "https://outreach.example.test/signup"
-        growth_bp.OUTREACH_MANAGE_URL = "javascript:alert(1)"
-        code, body, raw = call(client(USER_A), "get", "/api/growth/outreach/status")
-        assert body["connect_url"] == "https://outreach.example.test/signup"
-        assert body["manage_url"].startswith("https://") and "javascript" not in raw
-    finally:
-        growth_bp.OUTREACH_CONNECT_URL, growth_bp.OUTREACH_MANAGE_URL = saved
+    code, body, raw = call(client(USER_A), "get", "/api/growth/outreach/status")
+    assert code == 200 and "connect_url" not in body and "manage_url" not in body and "https://" not in raw
     assert FAKE.calls == []
 
 

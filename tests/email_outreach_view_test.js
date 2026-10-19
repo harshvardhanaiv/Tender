@@ -109,6 +109,17 @@ test("the page file never holds a key and the panel only reads a masked hint", (
   assert.match(html, /src="\/email-outreach\.js\?v=\d+"/);
 });
 
+test("connecting Outreach opens the Connections window on the page: a button, never a link out", () => {
+  const off = E.statusHtml({ can_send: true, ready: false, configured: false, problem: "Outreach is not connected.", connect_url: "https://outreach.aivhub.com/", manage_url: "https://outreach.aivhub.com/" });
+  assert.match(off, /<button type="button" class="eo-link" data-open-connections="outreach">Connect Outreach<\/button>/);
+  assert.match(off, /in a window on this page/);
+  const on = E.statusHtml({ can_send: true, ready: true, configured: true, mode: "test", key_hint: "sk_test_…", connect_url: "https://outreach.aivhub.com/", manage_url: "https://outreach.aivhub.com/" });
+  assert.match(on, /data-open-connections="mail">Connections<\/button>/);
+  for (const html of [off, on]) assert.ok(!/<a |href=|target="_blank"|data-outreach-link|Manage in Outreach|outreach\.aivhub\.com/.test(html));
+  const src = fs.readFileSync(path.join(__dirname, "..", "web", "email-outreach.js"), "utf8");
+  assert.match(src, /document\.addEventListener\("connections:changed", \(\) => loadStatus\(\)\)/, "looks again when Connections is closed after a change");
+});
+
 let failures = 0;
 for (const [name, fn] of tests) {
   try { fn(); console.log(`ok    ${name}`); } catch (err) { failures++; console.log(`FAIL  ${name}\n${err.stack}`); }

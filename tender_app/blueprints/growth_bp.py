@@ -18,6 +18,9 @@ own rows:
     /api/growth/campaigns/<id>/draft     (POST) a first draft: template (free) or AI (credits)
     /api/growth/campaigns/<id>/export           CSV, Mailchimp audience, Mailchimp message
     /api/growth/outreach/status                 is Outreach connected, test or live key, credits
+    /api/growth/outreach/connect   (POST, DELETE) connect the user's own Outreach key (or go back to the organisation's), or disconnect
+    /api/growth/outreach/signin, /signup, /resend, /forgot   partner programme: sign in to or create the user's own Outreach account here
+    /outreach/connected                         where Outreach sends a user after they confirm their email
     /api/growth/campaigns/<id>/outreach         (GET, POST) its Outreach campaigns; send through Outreach
     /api/growth/social/company                  the user's companies and what a post would say about the chosen one
     /api/growth/social/posts       (GET, POST)  Outreach social posts: write one (the AI), list, refresh
@@ -44,13 +47,15 @@ from collections import Counter
 from datetime import date, datetime, timezone
 from typing import Any
 
-from flask import Blueprint, Response, jsonify, request, session
+from flask import Blueprint, Response, g, jsonify, request, session
 
 from tender_app import growth_outreach as go
 from tender_app import growth_studio as gs
+from tender_app import mail_account as ma
 from tender_app import market_radar as mr
 from tender_app import outreach_channels as och
 from tender_app import outreach_client as oc
+from tender_app import outreach_connection as occ
 from tender_app import user_mailer as um
 from tender_app.config import (
     CREDIT_COST_GROWTH_DRAFT,
@@ -59,14 +64,15 @@ from tender_app.config import (
     OUTREACH_API_BASE,
     OUTREACH_API_KEY,
     OUTREACH_CAMPAIGN_MAILBOX_FIELD,
-    OUTREACH_CONNECT_URL,
+    OUTREACH_CLIENT_ID,
+    OUTREACH_CONSENT_VERSION,
     OUTREACH_DAILY_CALL_CAP,
     OUTREACH_DAILY_POST_CAP,
     OUTREACH_MAILBOX_IDS,
-    OUTREACH_MANAGE_URL,
+    OUTREACH_ORIGIN,
+    OUTREACH_RETURN_URL,
     OUTREACH_SEND_MAILBOX_FIELD,
     OUTREACH_TIMEOUT_SECONDS,
-    OUTREACH_WEB_URL,
     RATE_LIMIT_AI,
     RATE_LIMIT_SEARCH,
 )
@@ -76,6 +82,8 @@ from tender_app.security import rate_limit
 growth_bp = Blueprint("growth", __name__)
 
 _get_db = None
+_SMTP_FACTORY = None  # tests put a fake SMTP connection here; None means a real one
+_SMTP_PAUSE = um.SEND_PAUSE_SECONDS  # between the emails of one batch
 
 PREF_PROFILE = "growth_profile"
 PREF_TARGETING = "growth_targeting_"  # + the company profile id (0 when the user has none)
@@ -101,19 +109,20 @@ def _connect():
 class _Http(Exception):
     """An early exit with a message and a status."""
 
-    def __init__(self, message: str, status: int = 400):
+    def __init__(self, message: str, status: int = 400, code: str | None = None):
         super().__init__(message)
         self.message = message
         self.status = status
+        self.code = code
 
 
-def _error(message: str, status: int = 400):
-    return jsonify({"error": message}), status
+def _error(message: str, status: int = 400, code: str | None = None):
+    return jsonify({"error": message, **({"code": code} if code else {})}), status
 
 
 @growth_bp.errorhandler(_Http)
 def _http_error(exc: _Http):
-    return _error(exc.message, exc.status)
+    return _error(exc.message, exc.status, exc.code)
 
 
 @growth_bp.errorhandler(gs.ValidationError)
@@ -1079,11 +1088,32 @@ def growth_export(cid: int):
 
 # ── Outreach: email drafts only ─────────────────────────────────────────────────────────────────
 
+def _outreach_connection() -> dict[str, Any]:
+    """Which Outreach key this user works with (their own, the organisation's, or none because they disconnected), worked
+    out once per request. See tender_app/outreach_connection.py."""
+    username = _username()
+    cached = getattr(g, "_outreach_conn", None)
+    if cached is not None and cached[0] == username and cached[1] == (OUTREACH_API_KEY or ""):
+        return cached[2]
+    conn = _connect()
+    try:
+        got = occ.resolve(conn, username, OUTREACH_API_KEY, MAIL_CRED_KEY)
+    finally:
+        conn.close()
+    g._outreach_conn = (username, OUTREACH_API_KEY or "", got)
+    return got
+
+
 def _outreach_problem() -> str | None:
-    """Why Outreach cannot be used right now, in the user's words; None when the configured key is usable."""
-    key = (OUTREACH_API_KEY or "").strip()
+    """Why Outreach cannot be used right now, in the user's words; None when the user's key is usable."""
+    link = _outreach_connection()
+    if link["error"]:
+        return link["error"]
+    if link["source"] == occ.DISCONNECTED:
+        return "Outreach is disconnected. Connect it again from Connections in the top bar."
+    key = (link["key"] or "").strip()
     if not key:
-        return "Outreach is not connected. Ask your administrator to set OUTREACH_API_KEY on the server."
+        return "Outreach is not connected. Connect it from Connections in the top bar, or ask your administrator to set OUTREACH_API_KEY on the server."
     mode = oc.key_mode(key)
     if mode is None:
         return "The configured Outreach key is not an sk_test_ or sk_live_ key."
@@ -1096,22 +1126,27 @@ def _outreach_client() -> "oc.OutreachClient":
     problem = _outreach_problem()
     if problem:
         raise _Http(problem, 409)
-    return oc.OutreachClient(OUTREACH_API_KEY, OUTREACH_API_BASE, timeout=OUTREACH_TIMEOUT_SECONDS)
+    return oc.OutreachClient(_outreach_connection()["key"], OUTREACH_API_BASE, timeout=OUTREACH_TIMEOUT_SECONDS)
 
 
-@growth_bp.get("/api/growth/outreach/status")
-def growth_outreach_status():
-    """Whether Growth Studio can hand drafts to Outreach. Never returns the key, only its first characters."""
-    key = (OUTREACH_API_KEY or "").strip()
+def _outreach_status_payload() -> dict[str, Any]:
+    link = _outreach_connection()
+    key = (link["key"] or "").strip()
     mode = oc.key_mode(key)
     out: dict[str, Any] = {
         "configured": bool(key), "mode": mode, "live_allowed": bool(OUTREACH_ALLOW_LIVE),
-        "key_hint": oc.mask_key(key) if mode else None, "ready": False, "wallet": None,
+        "key_hint": oc.mask_key(key) if mode else link.get("hint"), "ready": False, "wallet": None,
         "problem": _outreach_problem(), "max_per_push": go.MAX_PER_PUSH, "call_cap": OUTREACH_DAILY_CALL_CAP,
-        **oc.web_links(OUTREACH_WEB_URL, OUTREACH_CONNECT_URL, OUTREACH_MANAGE_URL),
+        # how this user is connected, and what they can do about it from the Connections window
+        "source": link["source"], "shared_available": bool((OUTREACH_API_KEY or "").strip()),
+        "can_store_key": bool((MAIL_CRED_KEY or "").strip()), "via": link.get("via"),
+        "partner_enabled": bool(OUTREACH_CLIENT_ID), "partner_signup": bool(OUTREACH_CLIENT_ID and OUTREACH_CONSENT_VERSION),
+        "partner_consent_version": bool(OUTREACH_CONSENT_VERSION),  # Outreach wants it with every sign-in and sign-up
+        # the user's own email account (set up in Connections), the other way to send from Growth Studio
+        "mail_available": _mail_available(), "mail_account": _mail_summary(),
     }
     if out["problem"]:
-        return jsonify(out)
+        return out
     try:
         out["wallet"] = oc.wallet_summary(_outreach_client().wallets())
         oc.apply_mailbox_ids(out["wallet"]["mailboxes"], oc.parse_mailbox_ids(OUTREACH_MAILBOX_IDS))
@@ -1120,7 +1155,358 @@ def growth_outreach_status():
         out["ready"] = True
     except oc.OutreachError as exc:
         out["problem"] = exc.message
-    return jsonify(out)
+    return out
+
+
+@growth_bp.get("/api/growth/outreach/status")
+def growth_outreach_status():
+    """Whether Growth Studio can hand drafts to Outreach. Never returns the key, only its first characters."""
+    return jsonify(_outreach_status_payload())
+
+
+@growth_bp.post("/api/growth/outreach/connect")
+@rate_limit(10, 60)
+def growth_outreach_connect():
+    """Connect Outreach for this user. Body {"api_key": "sk_test_..."}: their own key, checked with Outreach before it is
+    kept (encrypted) and never returned; or {"use_shared": true}: the organisation's connection from the server settings.
+    Answers with the new status."""
+    body = _json_body()
+    username = _username()
+    if body.get("use_shared") is True:
+        if not (OUTREACH_API_KEY or "").strip():
+            raise _Http("The server has no Outreach connection of its own. Paste your own key.", 409)
+        conn = _connect()
+        try:
+            occ.use_shared(conn, username)
+        finally:
+            conn.close()
+        g._outreach_conn = None
+        return jsonify(_outreach_status_payload())
+    key = str(body.get("api_key") or "").strip()
+    bad = occ.key_problem(key, bool(OUTREACH_ALLOW_LIVE))
+    if bad:
+        raise _Http(bad, 400)
+    if not (MAIL_CRED_KEY or "").strip():
+        raise _Http("Saving your own key is not enabled on this server. Ask your administrator to set MAIL_CRED_KEY, "
+                    "or use the organisation's connection.", 409)
+    try:
+        oc.wallet_summary(oc.OutreachClient(key, OUTREACH_API_BASE, timeout=OUTREACH_TIMEOUT_SECONDS).wallets())
+    except oc.OutreachError as exc:
+        raise _Http(exc.message if exc.status != 401 else "Outreach did not accept that key. Check you copied all of it.",
+                    502 if exc.status >= 500 or exc.code == "unreachable" else 400)
+    conn = _connect()
+    try:
+        occ.store_own(conn, username, key, MAIL_CRED_KEY)
+    except um.MailError as exc:
+        raise _Http(exc.message, 409)
+    finally:
+        conn.close()
+    g._outreach_conn = None
+    return jsonify(_outreach_status_payload())
+
+
+_PARTNER_TRANSPORT = None  # tests put a fake transport here; None means the real network
+
+
+def _partner_origin() -> str:
+    """The web address Outreach has on its list for this app (sent as Origin): OUTREACH_ORIGIN, else this app's own."""
+    return OUTREACH_ORIGIN or request.host_url.rstrip("/")
+
+
+def _partner_return_url() -> str:
+    return OUTREACH_RETURN_URL or _partner_origin() + "/outreach/connected"
+
+
+_PARTNER_MESSAGES = {
+    "bad_credentials": "That email and password do not match an Outreach account.",
+    "email_not_verified": "Confirm your email first: Outreach sent you a link. Check your inbox and spam folder, then sign in.",
+    "account_exists": "An Outreach account with that email already exists. Sign in instead.",
+    "consent_required": "Tick the box to agree, then try again.",
+    "partner_suspended": "Outreach has paused sign-in from TenderFlow. Ask your administrator.",
+    "invalid_client": "TenderFlow's Outreach client ID is not valid. Ask your administrator to check OUTREACH_CLIENT_ID.",
+}
+
+
+def _partner_call(action: str, data: dict[str, Any]) -> dict[str, Any]:
+    """Call one of Outreach's partner sign-in actions and turn a refusal into a message for the user. The password in `data`
+    is only ever sent to Outreach; it is not stored, logged or put in an error."""
+    if not OUTREACH_CLIENT_ID:
+        raise _Http("Signing in to Outreach from here is not switched on for this server. Paste your Outreach key instead, "
+                    "or ask your administrator to set OUTREACH_CLIENT_ID.", 409, "partner_disabled")
+    try:
+        return oc.partner_auth(action, {"client_id": OUTREACH_CLIENT_ID, **data}, base_url=OUTREACH_API_BASE, origin=_partner_origin(),
+                               timeout=OUTREACH_TIMEOUT_SECONDS, transport=_PARTNER_TRANSPORT)
+    except oc.OutreachError as exc:
+        code = exc.code or ""
+        if code in ("origin_not_allowed", "return_url_not_allowed"):
+            what = "web address" if code == "origin_not_allowed" else "return address"
+            value = _partner_origin() if code == "origin_not_allowed" else _partner_return_url()
+            raise _Http(f"Outreach has not been told this TenderFlow {what} ({value}). Ask your administrator to add it in Outreach, "
+                        "under Developer API, Partner programme.", 409, code)
+        if code in _PARTNER_MESSAGES:
+            raise _Http(_PARTNER_MESSAGES[code], 409 if code in ("partner_suspended", "invalid_client") else 400, code)
+        raise _Http(exc.message, 502 if exc.status >= 500 or code == "unreachable" else (exc.status if exc.status in (400, 403, 409, 422, 429) else 400), code or None)
+
+
+def _clean_field(value: Any, label: str, limit: int, required: bool = True) -> str:
+    text = " ".join(str(value or "").split())[:limit]
+    if required and not text:
+        raise _Http(f"Enter {label}.")
+    return text
+
+
+def _credentials(body: dict[str, Any]) -> tuple[str, str]:
+    email = _clean_field(body.get("email"), "your Outreach email", 254).lower()
+    if not gs.valid_email(email):
+        raise _Http("That does not look like an email address.")
+    password = body.get("password")
+    if not isinstance(password, str) or not password or len(password) > 200:
+        raise _Http("Enter your password.")
+    return email, password
+
+
+def _keep_partner_key(username: str, answer: dict[str, Any]) -> dict[str, Any]:
+    """Store the key a signup / login answered with (encrypted) and return the new status. The key never leaves this function."""
+    key = oc.partner_key(answer)
+    if not key:
+        raise _Http("Outreach did not give a key for this account. Try again, or paste your key instead.", 502)
+    bad = occ.key_problem(key, bool(OUTREACH_ALLOW_LIVE))
+    if bad:
+        raise _Http(bad, 409)
+    if not (MAIL_CRED_KEY or "").strip():
+        raise _Http("Saving your key is not enabled on this server. Ask your administrator to set MAIL_CRED_KEY.", 409)
+    conn = _connect()
+    try:
+        occ.store_own(conn, username, key, MAIL_CRED_KEY, via="partner")
+    except um.MailError as exc:
+        raise _Http(exc.message, 409)
+    finally:
+        conn.close()
+    g._outreach_conn = None
+    return _outreach_status_payload()
+
+
+@growth_bp.post("/api/growth/outreach/signin")
+@rate_limit(10, 60)
+def growth_outreach_signin():
+    """Sign in to the user's existing Outreach account (partner programme) and keep the key it answers with. Linking an
+    existing account to TenderFlow is a permission the user gives, so the sign-in carries their consent (Outreach asks for it
+    with consent_required)."""
+    body = _json_body()
+    email, password = _credentials(body)
+    if body.get("consent") is not True:
+        raise _Http(_PARTNER_MESSAGES["consent_required"], 400, "consent_required")
+    if OUTREACH_CLIENT_ID and not OUTREACH_CONSENT_VERSION:
+        raise _Http("Outreach needs the version of the consent text with every sign-in. Ask your administrator to set "
+                    "OUTREACH_CONSENT_VERSION (shown in the example call on Outreach's Partner programme tab).", 409, "consent_version_missing")
+    answer = _partner_call("login", {"email": email, "password": password, "consent": True, "consent_version": OUTREACH_CONSENT_VERSION})
+    return jsonify(_keep_partner_key(_username(), answer))
+
+
+@growth_bp.post("/api/growth/outreach/signup")
+@rate_limit(5, 60)
+def growth_outreach_signup():
+    """Create an Outreach account for the user (partner programme). With email confirmation on, Outreach answers
+    `verify_email` and no key: the user confirms, then signs in."""
+    body = _json_body()
+    if not (OUTREACH_CLIENT_ID and OUTREACH_CONSENT_VERSION):
+        raise _Http("Creating an Outreach account from here is not switched on for this server. Ask your administrator to set "
+                    "OUTREACH_CLIENT_ID and OUTREACH_CONSENT_VERSION.", 409, "partner_disabled")
+    if body.get("consent") is not True:
+        raise _Http(_PARTNER_MESSAGES["consent_required"], 400, "consent_required")
+    company = _clean_field(body.get("company"), "your company name", 120)
+    name = _clean_field(body.get("name"), "your name", 120)
+    email, password = _credentials(body)
+    if len(password) < 8:
+        raise _Http("Choose a password of at least 8 characters.")
+    answer = _partner_call("signup", {"company": company, "name": name, "email": email, "password": password, "consent": True,
+                                      "consent_version": OUTREACH_CONSENT_VERSION, "return_url": _partner_return_url()})
+    if oc.partner_needs_verification(answer) and not oc.partner_key(answer):
+        return jsonify({**_outreach_status_payload(), "verify_email": True, "email": email})
+    return jsonify(_keep_partner_key(_username(), answer))
+
+
+@growth_bp.post("/api/growth/outreach/resend")
+@rate_limit(5, 60)
+def growth_outreach_resend():
+    """Ask Outreach to send the confirmation email again (it decides whether there is one to send)."""
+    email = _clean_field(_json_body().get("email"), "your Outreach email", 254).lower()
+    if not gs.valid_email(email):
+        raise _Http("That does not look like an email address.")
+    # return_url: the link in the email sends the user back here once they confirm. Outreach answers ok whether or not it sent
+    # anything (so nobody can learn who has an account); it only sends for an account made through TenderFlow's sign-up that is
+    # not confirmed yet, at most 5 an hour per address.
+    _partner_call("resend_verification", {"email": email, "return_url": _partner_return_url()})
+    return jsonify({"sent": True, "email": email})
+
+
+@growth_bp.post("/api/growth/outreach/forgot")
+@rate_limit(5, 60)
+def growth_outreach_forgot():
+    """Ask Outreach to email a password reset link."""
+    email = _clean_field(_json_body().get("email"), "your Outreach email", 254).lower()
+    if not gs.valid_email(email):
+        raise _Http("That does not look like an email address.")
+    _partner_call("forgot_password", {"email": email})
+    return jsonify({"sent": True, "email": email})
+
+
+@growth_bp.get("/outreach/connected")
+def growth_outreach_connected():
+    """Where Outreach sends a user once they have confirmed their email: back into TenderFlow with the Connections window open."""
+    from flask import redirect
+    return redirect("/?outreach=connected", code=302)
+
+
+@growth_bp.delete("/api/growth/outreach/connect")
+def growth_outreach_disconnect():
+    """Disconnect Outreach for this user: their own key is forgotten, and the organisation's key is not used for them
+    until they connect again. A key that came from signing in through the partner programme is also revoked in Outreach
+    (best effort: the user is disconnected here whatever Outreach answers). Nothing already sent or posted is affected."""
+    username = _username()
+    link = _outreach_connection()
+    revoked = False
+    if link["source"] == occ.OWN and link.get("via") == "partner" and link["key"]:
+        try:
+            oc.OutreachClient(link["key"], OUTREACH_API_BASE, timeout=OUTREACH_TIMEOUT_SECONDS).disconnect_partner()
+            revoked = True
+        except oc.OutreachError:
+            revoked = False  # already revoked in Outreach, or unreachable: either way the user is disconnected here
+    conn = _connect()
+    try:
+        occ.disconnect(conn, username, OUTREACH_API_KEY)
+    finally:
+        conn.close()
+    g._outreach_conn = None
+    return jsonify({**_outreach_status_payload(), "revoked": revoked})
+
+
+# ── Email account: the user's own mailbox (SMTP) ────────────────────────────────────────────────
+# Outreach's API cannot add a mailbox to an Outreach account, so a user can set up their own here (Gmail, Outlook, Zoho or any
+# SMTP login) and Growth Studio sends from it. The login is checked before it is kept; the password is kept encrypted and is
+# never returned. See tender_app/mail_account.py and user_mailer.py.
+
+SMTP_REF = "smtp"  # the "Send from" choice that means the user's own email account
+
+
+def _mail_available() -> bool:
+    return bool((MAIL_CRED_KEY or "").strip())
+
+
+def _mail_error(exc: "um.MailError", status: int = 400) -> _Http:
+    return _Http(exc.message, status, exc.code)
+
+
+def _mail_summary() -> dict[str, Any] | None:
+    """The user's email account as the page may see it (None when there is none). Never fails the page that asks."""
+    conn = _connect()
+    try:
+        row = ma.get(conn, _username())
+        return ma.public(row, ma.sent_last_day(conn, _username())) if row else None
+    except Exception:  # noqa: BLE001 - a status check must still answer
+        return None
+    finally:
+        conn.close()
+
+
+def _mail_state(conn, username: str) -> dict[str, Any]:
+    row = ma.get(conn, username)
+    return {
+        "available": _mail_available(),
+        "account": ma.public(row, ma.sent_last_day(conn, username)) if row else None,
+        "presets": [{"id": k, "label": v["label"], "host": v["host"], "port": v["port"], "security": v["security"], "help": v["help"]}
+                    for k, v in um.PRESETS.items()],
+    }
+
+
+@growth_bp.get("/api/growth/email-account")
+def growth_email_account():
+    """The user's own email account (no password), whether the server can keep one, and the provider presets."""
+    conn = _connect()
+    try:
+        return jsonify(_mail_state(conn, _username()))
+    finally:
+        conn.close()
+
+
+@growth_bp.put("/api/growth/email-account")
+@rate_limit(10, 60)
+def growth_email_account_save():
+    """Set up or change the account. The login is tried before anything is kept. A blank password keeps the saved one, but
+    only while the login and server are unchanged."""
+    if not _mail_available():
+        raise _Http("Connecting an email account is not switched on for this server. Ask your administrator to set MAIL_CRED_KEY.", 409, "no_key")
+    body = _json_body()
+    for name in ("provider", "host", "security", "username", "from_email", "from_name", "reply_to", "password"):
+        if body.get(name) is not None and not isinstance(body[name], str):
+            raise _Http(f"{name} must be text")
+    for name in ("port", "daily_cap"):
+        if isinstance(body.get(name), bool):
+            raise _Http(f"{name} must be a whole number")
+    try:
+        cleaned = um.clean({**body, "login": body.get("username")})
+    except um.MailError as exc:
+        raise _mail_error(exc)
+    if len(cleaned["password"]) > 200:
+        raise _Http("That password is too long.", 400, "bad_password")
+    username = _username()
+    conn = _connect()
+    try:
+        password = cleaned["password"]
+        if not password:
+            old = ma.get(conn, username)
+            if not (old and old["login"] == cleaned["login"] and old["host"] == cleaned["host"]):
+                raise _Http("Enter the mailbox password (an app password, where your provider asks for one).", 400, "password_required")
+            try:
+                password = ma.password_for(old, MAIL_CRED_KEY)
+            except um.MailError as exc:
+                raise _mail_error(exc, 409)
+        try:
+            um.test_connection(cleaned, password, _SMTP_FACTORY)
+        except um.MailError as exc:
+            raise _mail_error(exc)
+        ma.save(conn, username, cleaned, password, MAIL_CRED_KEY)
+        return jsonify(_mail_state(conn, username))
+    finally:
+        conn.close()
+
+
+@growth_bp.post("/api/growth/email-account/test")
+@rate_limit(5, 60)
+def growth_email_account_test():
+    """Send a short test email from the account to its own address, so the user sees that it lands."""
+    username = _username()
+    conn = _connect()
+    try:
+        row = ma.get(conn, username)
+        if not row:
+            raise _Http("Set up your email account first.", 409, "no_mail_account")
+        try:
+            password = ma.password_for(row, MAIL_CRED_KEY)
+        except um.MailError as exc:
+            raise _mail_error(exc, 409)
+        item = {"key": 0, "to": row["from_email"], "subject": "TenderFlow test email",
+                "body": "This is a test from Growth Studio. Your email account is set up and TenderFlow can send from it."}
+        res = um.send_batch(ma.smtp_settings(row), password, [item], factory=_SMTP_FACTORY, pause=0)[0]
+        if not res["ok"]:
+            ma.note_error(conn, username, res["error"])
+            raise _Http(res["error"], 400)
+        ma.note_error(conn, username, None)
+        return jsonify({"sent_to": row["from_email"]})
+    finally:
+        conn.close()
+
+
+@growth_bp.delete("/api/growth/email-account")
+def growth_email_account_delete():
+    """Forget the account. Emails already sent are not affected."""
+    username = _username()
+    conn = _connect()
+    try:
+        ma.delete(conn, username)
+        return jsonify(_mail_state(conn, username))
+    finally:
+        conn.close()
 
 
 def _draft_rows(conn, username: str, cid: int) -> list[dict[str, Any]]:
@@ -1220,6 +1606,8 @@ def growth_outreach_send(cid: int):
     mailbox_ref = body.get("mailbox")
     if mailbox_ref is not None and (not isinstance(mailbox_ref, str) or len(mailbox_ref) > 254):
         raise _Http("mailbox must be text")
+    if (mailbox_ref or "").strip().lower() == SMTP_REF:
+        return _send_from_own_mailbox(cid, ids, allow_personal)  # the user's own email account, not Outreach
     client = _outreach_client()
     chosen = None
     if (mailbox_ref or "").strip():
@@ -1364,6 +1752,88 @@ def growth_outreach_send(cid: int):
             "route": "single" if single else "campaign",
             "mailbox": chosen["email"] if chosen else None, "warnings": warnings,
             "deferred": plan["deferred"] + (len(plan["items"]) - attempted), "drafts": drafts,
+        })
+    finally:
+        conn.close()
+
+
+def _send_from_own_mailbox(cid: int, ids: list[int] | None, allow_personal: bool):
+    """Send the campaign's message from the user's own email account (SMTP), one email per buyer that can be contacted. Each
+    result is recorded as soon as it is known, so a stopped batch never sends the same buyer twice. The daily limit counts the
+    emails sent from the account in the last 24 hours."""
+    username = _username()
+    conn = _connect()
+    try:
+        row = ma.get(conn, username)
+        if not row or not row["verified_at"]:
+            raise _Http("Set up your email account in Connections first, then send again.", 409, "no_mail_account")
+        try:
+            password = ma.password_for(row, MAIL_CRED_KEY)
+        except um.MailError as exc:
+            raise _mail_error(exc, 409)
+        room = int(row["daily_cap"]) - ma.sent_last_day(conn, username)
+        if room <= 0:
+            raise _Http(f"Your limit of {row['daily_cap']} emails a day from {row['from_email']} is used up. Try again tomorrow, "
+                        "or raise the limit in Connections.", 400, "daily_limit")
+        campaign, targets = _load_campaign(conn, username, cid)
+        sender = _sender_for(conn, username, campaign)
+        opted = _opted_out(conn, username)
+        records = {d["target_id"]: d for d in _draft_rows(conn, username, cid)}
+        already_sent = {tid for tid, d in records.items() if _is_sent_through_outreach(d)}
+        plan = go.plan_push(campaign, targets, opted, sender, already_sent, only_ids=ids, allow_personal=allow_personal)
+        if plan["blockers"]:
+            raise _Http(" ".join(plan["blockers"]), 400)
+        if not plan["items"]:
+            reasons = sorted({s["reason"] for s in plan["skipped"]})
+            raise _Http("There is nobody to send: " + (" ".join(reasons) or "no buyers are in this campaign."), 400)
+        items = plan["items"][:room]
+        warnings: list[str] = []
+        if len(items) < len(plan["items"]):
+            warnings.append(f"Only {len(items)} could be sent today: your limit is {row['daily_cap']} a day from {row['from_email']}. "
+                            "Send again tomorrow for the rest.")
+        by_id = {t["id"]: t for t in targets}
+        sent: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        stopped = None
+        not_attempted = 0
+        cur = conn.cursor()
+
+        def record(entry: dict[str, Any], res: dict[str, Any]) -> None:
+            nonlocal stopped, not_attempted
+            item = entry["item"]
+            tid = item["target_id"]
+            if res["ok"]:
+                _save_draft(cur, username, cid, tid, outreach_id=res["message_id"], mode=SMTP_REF, status="sent",
+                            approval=go.SENT_NOW, error=None, body_hash=item["hash"])
+                _apply_status(cur, username, campaign, by_id[tid], "sent")
+                _touch(cur, cid)
+                sent.append({"target_id": tid, "buyer": item["buyer"], "outreach_id": res["message_id"], "status": "sent",
+                             "immediate": True, "from": row["from_email"]})
+            elif res["error"] == "not attempted":
+                not_attempted += 1  # an earlier failure stopped the batch: nothing is recorded, so a retry sends it
+                return
+            else:
+                _save_draft(cur, username, cid, tid, outreach_id=None, mode=SMTP_REF, status="failed", approval=None,
+                            error=res["error"][:300], body_hash=item["hash"])
+                failed.append({"target_id": tid, "buyer": item["buyer"], "step": "send", "reason": res["error"]})
+                if res.get("fatal") and not stopped:
+                    stopped = res["error"]
+            conn.commit()
+
+        batch = [{"key": it["target_id"], "to": it["email"], "subject": it["subject"], "body": it["text"], "item": it} for it in items]
+        um.send_batch(ma.smtp_settings(row), password, batch, on_result=record, factory=_SMTP_FACTORY, pause=_SMTP_PAUSE)
+        conn.commit()
+        if stopped:
+            ma.note_error(conn, username, stopped)
+        elif sent:
+            ma.note_error(conn, username, None)
+        drafts = _draft_rows(conn, username, cid)
+        for d in drafts:
+            d.pop("body_hash", None)
+        return jsonify({
+            "sent": sent, "failed": failed, "skipped": plan["skipped"], "stopped": stopped, "mode": SMTP_REF, "route": SMTP_REF,
+            "mailbox": row["from_email"], "warnings": warnings,
+            "deferred": plan["deferred"] + (len(plan["items"]) - len(items)) + not_attempted, "drafts": drafts,
         })
     finally:
         conn.close()

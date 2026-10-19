@@ -1,8 +1,9 @@
 "use strict";
 /* Run: node tests/outreach_panel_test.js
-   The "Send to Outreach" panel in the Growth Studio campaign builder (web/growth-view.js): what it says while it
-   checks, when Outreach is not connected, when it is, what the buttons need, and that data from the server
-   (buyer names, error text) is escaped. Nothing here talks to a server. */
+   The "Send to buyers" panel in the Growth Studio campaign builder (web/growth-view.js): what it says while it
+   checks, when Outreach is not connected, when it is, how the user's own email account is offered beside it, what the
+   buttons need, and that data from the server (buyer names, error text) is escaped. Nothing in it opens another tab or
+   window: Connect Outreach and Add an email account open the Connections window on the page. Nothing here talks to a server. */
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const V = require(path.join(__dirname, "..", "web", "growth-view.js"));
@@ -19,9 +20,9 @@ const test = (n, f) => tests.push([n, f]);
 
 test("while the status loads it says so and has no buttons", () => {
   const html = V.outreachPanel({ status: "loading", info: null }, 2, false);
-  assert.match(html, /Checking Outreach/);
+  assert.match(html, /Checking how you can send/);
   assert.ok(!html.includes("data-action"));
-  assert.match(V.outreachPanel(undefined, 2, false), /Checking Outreach/);
+  assert.match(V.outreachPanel(undefined, 2, false), /Checking how you can send/);
 });
 
 test("when Outreach is not connected the reason is shown and nothing can be sent", () => {
@@ -140,38 +141,33 @@ test("the builder shows the Send mail panel and the note says what sending does"
     sender: { company_name: "Me" }, warnings: [], eligible: 1,
   };
   const html = V.builderPane({ status: "ok", detail, draft: { subject: "S", body: "B" }, dirty: false, outreach: base, options: { channels: [], merge_fields: [] } });
-  assert.match(html, /Send to Outreach/);
+  assert.match(html, /Send to buyers/);
   assert.match(html, /data-action="outreach-send"/);
   assert.match(html, /use Send mail to send through Outreach/);
   assert.ok(!/TenderFlow itself sends nothing/.test(html), "the old claim is gone");
 });
 
-test("not connected: a Connect Outreach button opens Outreach in a small window and says what to do there", () => {
-  const html = panel({ info: { ready: false, configured: false, problem: "Outreach is not connected.", connect_url: "https://outreach.aivhub.com/", manage_url: "https://outreach.aivhub.com/" } });
-  const link = (html.match(/<a [^>]*data-outreach-link="connect"[^>]*>[^<]*<\/a>/) || [])[0] || "";
-  assert.match(link, /href="https:\/\/outreach\.aivhub\.com\/"/);
-  assert.match(link, /target="_blank"/);
-  assert.match(link, /rel="noopener noreferrer"/);
-  assert.match(link, />Connect Outreach</);
-  assert.match(html, /sign in or sign up there, choose a plan and connect your mailbox/i);
-  assert.match(html, /opens in a small window/i);
-  assert.match(html, /close the window and this panel checks again by itself/);
+test("not connected: Connect Outreach and Add an email account open Connections on this page, and no link leaves it", () => {
+  const html = panel({ info: { ready: false, configured: false, problem: "Outreach is not connected." } });
+  assert.match(html, /<button type="button" class="gs-btn gs-btn--sm gs-btn--primary" data-open-connections="outreach"[^>]*>Connect Outreach<\/button>/);
+  assert.match(html, /<button type="button" class="gs-btn gs-btn--sm" data-open-connections="mail"[^>]*>Add an email account<\/button>/);
+  assert.match(html, /in the Connections window\. It opens on this page; nothing opens in another tab/);
   assert.match(button(html, "outreach-check"), /data-action="outreach-check"/);
+  assert.ok(!/<a |href=|target="_blank"|data-outreach-link|Manage in Outreach/.test(html), "no link out to Outreach");
   assert.ok(!html.includes('data-action="outreach-send"'), "nothing can be sent until it is connected");
 });
 
-test("connected: the same place is offered as Manage in Outreach, next to the Send mail button", () => {
-  const html = panel({ info: Object.assign({}, ready, { configured: true, connect_url: "https://outreach.aivhub.com/", manage_url: "https://outreach.aivhub.com/mailboxes" }) });
-  assert.match(html, /<a [^>]*data-outreach-link="manage"[^>]*href="https:\/\/outreach\.aivhub\.com\/mailboxes"|<a [^>]*href="https:\/\/outreach\.aivhub\.com\/mailboxes"[^>]*data-outreach-link="manage"/);
-  assert.match(html, />Manage in Outreach</);
+test("connected: the panel offers Connections (not Manage in Outreach), next to the Send mail button", () => {
+  const html = panel({ info: Object.assign({}, ready, { configured: true }) });
+  assert.match(html, /<button type="button" class="gs-btn gs-btn--sm" data-open-connections="outreach"[^>]*>Connections<\/button>/);
+  assert.ok(!/Manage in Outreach|Connect Outreach/.test(html));
   assert.match(html, /data-action="outreach-send"/);
 });
 
-test("a link that is not https, or is missing, is never rendered", () => {
-  for (const bad of ["javascript:alert(1)", "http://outreach.aivhub.com", "//evil.example", "", null, undefined]) {
+test("whatever links the server sends, none is rendered", () => {
+  for (const bad of ["javascript:alert(1)", "http://outreach.aivhub.com", "//evil.example", "https://outreach.aivhub.com/", "", null, undefined]) {
     const html = panel({ info: { ready: false, configured: false, problem: "x", connect_url: bad, manage_url: bad } });
-    assert.ok(!html.includes("data-outreach-link"), `rendered a link for ${String(bad)}`);
-    assert.ok(!/javascript:|evil\.example/.test(html));
+    assert.ok(!/<a |href=|data-outreach-link|javascript:|evil\.example|outreach\.aivhub\.com/.test(html), `rendered a link for ${String(bad)}`);
   }
 });
 
@@ -249,8 +245,69 @@ test("a warning that Outreach used another mailbox is shown with the result", ()
   assert.match(html, /You chose a@x\.test, but Outreach sent to Alpha from b@x\.test\./);
 });
 
-test("a link from the server is escaped", () => {
-  const html = panel({ info: { ready: false, configured: false, problem: "x", connect_url: 'https://outreach.aivhub.com/?a="><img src=x>' } });
+test("a message from the server is escaped", () => {
+  const html = panel({ info: { ready: false, configured: false, problem: '"><img src=x>' } });
+  assert.ok(!html.includes("<img"), html);
+});
+
+// ── the user's own email account ─────────────────────────────────────────────────────────────────
+const mine = { from_email: "sam@acme.example", verified: true, sent_today: 3, daily_cap: 100, reply_to: "" };
+
+test("the sender is the own email account when there is one and nothing else was picked, else what was picked", () => {
+  const info = Object.assign({}, ready, { mail_account: mine });
+  assert.equal(V.senderChoice(info, undefined), "smtp");
+  assert.equal(V.senderChoice(info, null), "smtp");
+  assert.equal(V.senderChoice(info, "smtp"), "smtp");
+  assert.equal(V.senderChoice(info, ""), "", "Let Outreach choose is a choice");
+  assert.equal(V.senderChoice(info, "mb_1"), "mb_1");
+  assert.equal(V.senderChoice(ready, "smtp"), "", "an account that is not there cannot be chosen");
+  assert.equal(V.senderChoice(ready, undefined), "");
+  assert.equal(V.senderChoice(Object.assign({}, info, { ready: false }), "mb_1"), "smtp", "without Outreach only the account can send");
+  assert.equal(V.senderChoice({ ready: false }, undefined), "");
+  assert.equal(V.ownAccount(Object.assign({}, ready, { mail_account: Object.assign({}, mine, { verified: false }) })), null, "a login that was never checked is not used");
+});
+
+test("sending from the own account says so, shows today's count and where replies go, and needs no Outreach", () => {
+  const html = panel({ info: Object.assign({}, ready, { ready: false, problem: "Outreach is not connected.", mail_account: Object.assign({}, mine, { reply_to: "bids@acme.example" }) }) });
+  assert.match(html, /Your email account<\/span> Sending from <strong>sam@acme\.example<\/strong>\. 3 of 100 sent in the last 24 hours\. Replies go to bids@acme\.example/);
+  assert.match(html, /sent from sam@acme\.example \(up to 25 at a time, within your daily limit\)/);
+  assert.ok(!/Test mode|Live key|credits in Outreach/.test(html), "nothing about Outreach's mode when it is not the sender");
+  assert.ok(!/disabled/.test(button(html, "outreach-send")));
+  assert.match(html, /data-open-connections="outreach"[^>]*>Connect Outreach</, "Outreach can still be connected, for social posts and calls");
+  assert.ok(/disabled/.test(button(html, "outreach-refresh")), "nothing sent through Outreach to refresh");
+});
+
+test("with the own account and Outreach both there, Send from offers both and the own account is the default", () => {
+  const info = Object.assign({}, ready, { mail_account: mine, wallet: { credits: 3, mailboxes: [{ id: "mb_1", email: "hello@aivhub.com", can_send: true }] } });
+  const html = panel({ info });
+  const select = (html.match(/<select data-field="outreach-mailbox"[^>]*>[\s\S]*?<\/select>/) || [])[0] || "";
+  assert.match(select, /<option value="smtp" selected>sam@acme\.example \(your email account\)<\/option>/);
+  assert.match(select, /<option value="">hello@aivhub\.com \(through Outreach\)<\/option>/);
+  assert.match(html, /Your email account/);
+  const out = panel({ info, mailbox: "" });
+  assert.match(out, /<option value="" selected>hello@aivhub\.com \(through Outreach\)<\/option>/);
+  assert.match(out, /Test mode/, "picking Outreach shows Outreach's state");
+  assert.match(out, /Sending from <strong>hello@aivhub\.com<\/strong>/);
+  const two = Object.assign({}, info, { wallet: { mailboxes: [{ id: "mb_1", email: "a@x.test", can_send: true }, { id: "mb_2", email: "b@x.test", can_send: true }] } });
+  const many = (panel({ info: two }).match(/<select data-field="outreach-mailbox"[^>]*>[\s\S]*?<\/select>/) || [])[0];
+  assert.match(many, /value="smtp" selected[\s\S]*Let Outreach choose[\s\S]*value="mb_1"[\s\S]*value="mb_2"/);
+  assert.ok(!/outreach-mailbox/.test(panel({ info: Object.assign({}, ready, { mail_account: mine, ready: false }) })), "one thing to choose: no dropdown");
+});
+
+test("an Outreach with no mailbox is pointed at the email account, and the result and the table speak of the own account", () => {
+  const html = panel({ info: Object.assign({}, ready, { wallet: { credits: 3, mailboxes: [] } }) });
+  assert.match(html, /no email account yet, so Outreach has nothing to send from\. Add your own email account in Connections/);
+  const res = V.outreachResult({ sent: [{ buyer: "A" }, { buyer: "B" }], failed: [], skipped: [], mode: "smtp", route: "smtp", mailbox: "sam@acme.example" });
+  assert.match(res, /2 emails sent from <strong>sam@acme\.example<\/strong>\. Replies come back to that mailbox/);
+  assert.ok(!/Outreach/.test(res), "no mention of Outreach");
+  const row = V.outreachDraftRow({ buyer: "Alpha", outreach_id: "<abc@acme.example>", mode: "smtp", status: "sent", approval: "sent_now" });
+  assert.match(row, /<td>Your email account<\/td>/);
+  assert.ok(!row.includes("abc@acme"), "the Message-ID is not shown");
+  assert.match(V.outreachDraftRow({ buyer: "Alpha", outreach_id: "cp_1", mode: "test", status: "sending", approval: "approved" }), /<code>cp_1<\/code>/);
+});
+
+test("the own account's address is escaped", () => {
+  const html = panel({ info: Object.assign({}, ready, { ready: false, mail_account: Object.assign({}, mine, { from_email: '"><img src=x>' }) }) });
   assert.ok(!html.includes("<img"), html);
 });
 

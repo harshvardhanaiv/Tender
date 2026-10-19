@@ -16,6 +16,8 @@
     btnProfileDropdown: "Your account: profile, colours, billing and sign out.",
     btnThemeToggle: "Switch between the light and the dark look.",
     btnTakeTour: "Replay the short guided tour of TenderFlow.",
+    btnConnections: "Sign in to the apps TenderFlow works with, such as Outreach, without leaving this page.",
+    btnConnectionsNav: "Sign in to the apps TenderFlow works with, such as Outreach, without leaving this page.",
     btnLogout: "Sign out of TenderFlow on this device.",
     btnSelectAllCountyFilter: "Tick every county in the list.",
     btnClearCountyFilter: "Untick every county.",
@@ -135,11 +137,6 @@
     "focus-email": "Jump to the address box for this buyer.",
     "goto-signals": "Go to the Signals tab to pick buyers.",
     "insert-field": "Put this merge field in the message. It becomes each buyer's own detail when sent.",
-    "mail-cancel": "Close without changing your mailbox.",
-    "mail-disconnect": "Stop sending from your own mailbox.",
-    "mail-edit": "Change the mailbox emails are sent from.",
-    "mail-save": "Save these mailbox settings.",
-    "mail-test": "Send a test message to yourself to check the mailbox works.",
     "mark-sent": "Record that these buyers have been emailed. This sends nothing.",
     "open-campaign": "Open this campaign.",
     "outreach-check": "Check the Outreach connection again.",
@@ -323,7 +320,7 @@
     "i have connected check again": "Check the Outreach connection again.", "add addresses": "Go to the address boxes to add the missing ones.",
     "refresh status": "Ask Outreach what became of the emails.", refresh: "Look again for the latest.", "send mail": "Send the message to every ticked buyer that has an address.",
     preview: "Show what would be sent. Nothing is sent.", send: "Send the message.",
-    "manage in outreach": "Open Outreach in a small window to manage your account and mailbox.", "connect outreach": "Open Outreach in a small window to sign in and connect a mailbox.",
+    "connect outreach": "Sign in to Outreach, or create an account, in the Connections window on this page.", "add an email account": "Set up your own email account in the Connections window on this page.", "email account settings": "Change your email account, send a test email or disconnect it.", "connect email account": "Check the login with your mail server and keep this email account.", "send test email": "Send a short test email from your email account to itself, to check that it lands.",
   };
 
   const CLOSE_SYMBOLS = /^[×✕✖xX]$|^&times;$/;

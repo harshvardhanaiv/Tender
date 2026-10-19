@@ -1,0 +1,658 @@
+/* "Connections": one small window, opened from the top bar, the Account menu or any Growth Studio panel (a button marked
+   data-open-connections), that shows what TenderFlow sends through and lets the user connect and disconnect it without leaving
+   the page. Two cards: Outreach (email, social posts and calls) and the user's own Email account.
+   Outreach: sign in to (or create) the user's own Outreach account right here (Outreach's partner programme; the password goes
+   straight to Outreach and is not kept), or paste an Outreach key, or use the organisation's connection; Disconnect forgets the
+   key (and tells Outreach) and switches Outreach off for that user.
+   Email account: the user's own SMTP login (Gmail, Outlook, Zoho or any provider), checked before it is kept, so Growth Studio can
+   send from it when Outreach has no mailbox.
+   Nothing opens in another window. When the window is closed after a change, a "connections:changed" event tells the panels to
+   check again. Pure view first (tests/connections_test.js runs it in Node), then a small controller. Everything from the server
+   goes through esc(). */
+(function (root) {
+  "use strict";
+
+  const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
+  const CHANNEL = { linkedin: "LinkedIn", facebook: "Facebook", instagram: "Instagram", x: "X", twitter: "X" };
+  const channelName = (c) => CHANNEL[String(c || "").toLowerCase()] || String(c || "").replace(/^./, (m) => m.toUpperCase());
+
+  // What state the Outreach card is in, from the answer of /api/growth/outreach/status.
+  //   loading   not asked yet / asking
+  //   error     the page could not reach TenderFlow's server
+  //   none      no Outreach key anywhere: not connected
+  //   off       the user disconnected
+  //   attention a key is there but Outreach did not accept it, or could not be reached
+  //   ok        connected
+  function outreachState(m) {
+    if (!m || m.status === "idle" || (m.status === "loading" && !m.info)) return "loading";
+    if (m.status === "error" && !m.info) return "error";
+    const info = m.info || {};
+    if (info.ready) return "ok";
+    if (info.source === "disconnected") return "off";
+    return info.configured || info.source === "own" ? "attention" : "none";
+  }
+
+  const PILL = { ok: ["Connected", "good"], none: ["Not connected", "muted"], off: ["Disconnected", "muted"], attention: ["Needs attention", "warn"], loading: ["Checking…", "muted"], error: ["Could not check", "warn"] };
+
+  function via(info) {
+    if (info.source === "own" && info.via === "partner") return `Connected to your Outreach account${info.key_hint ? ` (<code>${esc(info.key_hint)}</code>)` : ""}.`;
+    if (info.source === "own") return `Connected with your own Outreach key${info.key_hint ? ` (<code>${esc(info.key_hint)}</code>)` : ""}.`;
+    if (info.source === "shared") return "Connected through your organisation's Outreach key.";
+    return "";
+  }
+
+  function detailsHtml(info) {
+    const w = info.wallet || {};
+    const boxes = (Array.isArray(w.mailboxes) ? w.mailboxes : []).filter((b) => b && b.email);
+    const social = (Array.isArray(w.social_channels) ? w.social_channels : []).filter(Boolean);
+    const phones = Number.isFinite(w.phone_numbers) ? w.phone_numbers : null;
+    const mode = info.mode === "live"
+      ? `<span class="cx-pill cx-pill--warn">Live key</span> <span class="cx-sub">Approving a post or sending an email is real.</span>`
+      : `<span class="cx-pill cx-pill--good">Test key</span> <span class="cx-sub">Outreach pretends everything: nothing is sent, posted or charged.</span>`;
+    const rows = boxes.map((b) => `<li><span class="cx-mail">${esc(b.email)}</span> ` +
+      (b.can_send === false ? `<span class="cx-pill cx-pill--warn">Cannot send yet</span>` : `<span class="cx-pill cx-pill--good">Can send</span>`) +
+      (b.status && !/^(ok|active|connected)$/i.test(String(b.status)) ? ` <span class="cx-sub">(${esc(String(b.status).replace(/_/g, " "))})</span>` : "") + `</li>`).join("");
+    return (
+      `<p class="cx-line">${via(info)}</p>` +
+      `<p class="cx-line">${mode}</p>` +
+      (w.credits != null ? `<p class="cx-line"><strong>${esc(w.credits)}</strong> <span class="cx-sub">credits left in Outreach</span></p>` : "") +
+      `<div class="cx-label">Email</div>` +
+      (boxes.length
+        ? `<ul class="cx-list">${rows}</ul>`
+        : `<p class="cx-warn">No email account is connected in your Outreach account yet, so nothing can be sent.</p>`) +
+      `<div class="cx-label">Social posts</div>` +
+      `<p class="cx-line">${social.length ? esc(social.map(channelName).join(", ")) : `<span class="cx-sub">No social channel connected.</span>`}</p>` +
+      `<div class="cx-label">Calls</div>` +
+      `<p class="cx-line">${phones == null ? `<span class="cx-sub">Outreach did not say.</span>` : phones > 0 ? esc(plural(phones, "phone number")) : `<span class="cx-sub">No phone number connected.</span>`}</p>`
+    );
+  }
+
+  // The forms that connect Outreach: sign in to the user's own account, create one, paste a key, or use the organisation's
+  // connection. Which of them are offered depends on what the server is set up for.
+  const MODE_LABEL = { signin: "Sign in", signup: "Create account", key: "Use a key" };
+
+  function modesFor(info) {
+    const out = [];
+    if (info.partner_enabled) out.push("signin");
+    if (info.partner_signup) out.push("signup");
+    if (info.can_store_key !== false) out.push("key");
+    return out;
+  }
+
+  const field = (id, label, input) => `<label class="cx-label cx-label--field" for="${id}">${esc(label)}</label>${input}`;
+
+  function connectForm(info, form) {
+    const f = form || {};
+    const modes = modesFor(info);
+    const mode = modes.includes(f.mode) ? f.mode : modes[0] || "key";
+    const busy = !!f.busy;
+    const err = f.error ? `<p class="cx-warn" role="alert">${esc(f.error)}</p>` : "";
+    const note = f.notice ? `<p class="cx-note" role="status">${esc(f.notice)}</p>` : "";
+    const shared = info.shared_available
+      ? `<button type="button" class="cx-btn" data-cx="use-shared"${busy ? " disabled" : ""} data-tip="Use the Outreach connection your organisation set up, instead of an account or key of your own.">Use my organisation's connection</button>`
+      : "";
+    if (!modes.length) {
+      return `<form class="cx-form" data-cx="connect-form" autocomplete="off"><p class="cx-warn">Connecting your own Outreach account is not switched on for this server. Ask your administrator to set OUTREACH_CLIENT_ID (sign in) or MAIL_CRED_KEY (paste a key)${info.shared_available ? ", or use your organisation's connection" : ""}.</p>` +
+        (shared ? `<div class="cx-actions cx-actions--flush">${shared}</div>` : "") + `</form>`;
+    }
+    const tabs = modes.length > 1
+      ? `<div class="cx-modes" role="tablist" aria-label="How to connect">` + modes.map((k) =>
+        `<button type="button" role="tab" class="cx-mode${k === mode ? " is-active" : ""}" data-cx="mode" data-mode="${k}" aria-selected="${k === mode}">${MODE_LABEL[k]}</button>`).join("") + `</div>`
+      : "";
+    const emailInput = (cur) => `<input id="cxEmail" class="cx-input" type="email" name="outreach_email" data-cx="email" autocomplete="${cur ? "username" : "email"}" maxlength="254" value="${esc(f.email || "")}">`;
+    const passInput = (cur) => `<input id="cxPass" class="cx-input" type="password" name="outreach_password" data-cx="password" autocomplete="${cur ? "current-password" : "new-password"}" maxlength="200" value="">`;
+    const needVersion = info.partner_consent_version === false && (mode === "signin" || mode === "signup");
+    let fields;
+    let submit;
+    if (mode === "signin") {
+      fields = field("cxEmail", "Outreach email", emailInput(true)) + field("cxPass", "Password", passInput(true)) +
+        `<p class="cx-sub">Your password goes straight to Outreach over a secure connection. TenderFlow does not keep it.</p>` +
+        `<label class="cx-check"><input type="checkbox" data-cx="consent"${f.consent ? " checked" : ""}> I agree to connect my Outreach account to TenderFlow, so it can send email, post and make calls for me. I can disconnect at any time.</label>` +
+        `<p class="cx-sub cx-google">Signed up to Outreach with Google? Signing in from another app asks for an email and password, not a Google button. Choose "Forgot your password?" once to set a password for the same email, then sign in.</p>` +
+        `<p class="cx-sub"><button type="button" class="cx-link" data-cx="forgot"${busy ? " disabled" : ""}>Forgot your password?</button> · ` +
+        `<button type="button" class="cx-link" data-cx="resend"${busy ? " disabled" : ""}>Send the confirmation email again</button></p>`;
+      submit = busy ? "Signing in…" : "Sign in";
+    } else if (mode === "signup") {
+      fields = field("cxCompany", "Company", `<input id="cxCompany" class="cx-input" data-cx="company" autocomplete="organization" maxlength="120" value="${esc(f.company || "")}">`) +
+        field("cxName", "Your name", `<input id="cxName" class="cx-input" data-cx="name" autocomplete="name" maxlength="120" value="${esc(f.name || "")}">`) +
+        field("cxEmail", "Email", emailInput(false)) + field("cxPass", "Choose a password (8 or more characters)", passInput(false)) +
+        `<label class="cx-check"><input type="checkbox" data-cx="consent"${f.consent ? " checked" : ""}> I agree that an Outreach account is created for my company, and that Outreach's terms and privacy notice apply to it.</label>` +
+        `<p class="cx-sub">Your password goes straight to Outreach over a secure connection. TenderFlow does not keep it. Outreach may email you to confirm your address.</p>`;
+      submit = busy ? "Creating…" : "Create account";
+    } else {
+      fields = `<label class="cx-label" for="cxKey">Your Outreach API key</label>` +
+        `<input id="cxKey" class="cx-input" type="password" name="outreach_key" data-cx="key" autocomplete="off" spellcheck="false" maxlength="200" placeholder="sk_test_…" value="${esc(f.key || "")}">` +
+        `<p class="cx-sub">Copy it from the Keys page of your Outreach account. TenderFlow checks it with Outreach, keeps it encrypted and never shows it again.</p>`;
+      submit = busy ? "Connecting…" : "Connect";
+    }
+    return (
+      `<form class="cx-form" data-cx="connect-form" data-mode="${mode}" autocomplete="off">` + tabs + note + fields + err +
+      (needVersion ? `<p class="cx-warn" role="alert">Outreach needs the version of the consent text with every sign-in. Ask your administrator to set OUTREACH_CONSENT_VERSION (shown in the example call on Outreach's Partner programme tab).</p>` : "") +
+      `<div class="cx-actions cx-actions--flush"><button type="submit" class="cx-btn cx-btn--primary" data-cx="connect"${busy || needVersion ? " disabled" : ""}>${submit}</button>${shared}</div></form>`
+    );
+  }
+
+  function outreachCard(m) {
+    const state = outreachState(m);
+    const info = (m && m.info) || {};
+    const [pillText, tone] = PILL[state];
+    const busy = !!(m && m.busy);
+    let body;
+    let actions = "";
+    const disconnect = `<button type="button" class="cx-btn cx-btn--danger" data-cx="disconnect"${busy ? " disabled" : ""} data-tip="Forget your Outreach connection in TenderFlow. Nothing already sent or posted is affected, and you can connect again any time.">${busy ? "Disconnecting…" : "Disconnect"}</button>`;
+    if (state === "loading") body = `<p class="cx-sub" role="status">Asking Outreach…</p>`;
+    else if (state === "error") {
+      body = `<p class="cx-warn" role="alert">${esc((m && m.error) || "Could not reach the server.")}</p>`;
+      actions = `<button type="button" class="cx-btn" data-action="outreach-check">Try again</button>`;
+    } else if (state === "none") {
+      body = `<p class="cx-sub">Connect Outreach to send email, post to social media and make calls from Growth Studio.</p>` + connectForm(info, m && m.form);
+    } else if (state === "off") {
+      body = `<p class="cx-sub">You disconnected Outreach. Growth Studio will not send, post or call until you connect it again.</p>` + connectForm(info, m && m.form);
+    } else if (state === "attention") {
+      body = `<p class="cx-warn" role="alert">${esc(info.problem || "Outreach did not accept the connection.")}</p>` + connectForm(info, m && m.form);
+      actions = `<button type="button" class="cx-btn" data-action="outreach-check">Check again</button>` + disconnect;
+    } else {
+      body = detailsHtml(info) + `<p class="cx-sub cx-hint">Mailboxes, social channels and phone numbers in your Outreach account show here. To send email without an Outreach mailbox, set up your own email account below.</p>`;
+      actions = `<button type="button" class="cx-btn" data-action="outreach-check"${m.status === "loading" ? " disabled" : ""}>${m.status === "loading" ? "Checking…" : "Refresh"}</button>` + disconnect;
+    }
+    return (
+      `<section class="cx-card cx-card--${state}" aria-label="Outreach">` +
+      `<div class="cx-card__head"><span class="cx-ico" aria-hidden="true"><i class="ti ti-send"></i></span>` +
+      `<div class="cx-card__title"><span class="cx-name">Outreach</span> <span class="cx-pill cx-pill--${tone}">${esc(pillText)}</span>` +
+      `<div class="cx-sub">Send email, post to social media and make calls from Growth Studio.</div></div></div>` +
+      `<div class="cx-card__body">${body}</div>` +
+      (actions ? `<div class="cx-actions">${actions}</div>` : "") +
+      `</section>`
+    );
+  }
+
+  // ── the user's own email account (Gmail, Outlook, Zoho or any SMTP login) ─────────────────────────────────────────────────
+  // Outreach cannot add a mailbox from outside its own account, so an email account is set up here and Growth Studio sends from it.
+  // The password goes to TenderFlow's server, is checked against the mail server, is kept encrypted and is never shown again.
+  //   loading / error / unavailable (the server cannot keep one) / none / ok
+  function mailState(m) {
+    if (!m || m.status === "idle" || (m.status === "loading" && !m.info)) return "loading";
+    if (m.status === "error" && !m.info) return "error";
+    const info = m.info || {};
+    if (info.account) return "ok";
+    return info.available === false ? "unavailable" : "none";
+  }
+
+  const MAIL_PILL = { loading: ["Checking…", "muted"], error: ["Could not check", "warn"], unavailable: ["Not available", "muted"], none: ["Not set up", "muted"], ok: ["Connected", "good"] };
+
+  const ports = [465, 587, 25, 2525];
+
+  function mailForm(info, f, editing) {
+    const presets = info.presets || [];
+    const preset = presets.find((p) => p.id === f.provider) || {};
+    const busy = !!f.busy;
+    const input = (id, key, label, attrs) => field(id, label, `<input id="${id}" class="cx-input" data-cxm="${key}" ${attrs || ""} value="${esc(f[key] == null ? "" : f[key])}">`);
+    const cell = (html) => `<div class="cx-cell">${html}</div>`; // a label and its box stay together in the grid
+    const select = (id, key, label, options) => field(id, label,
+      `<select id="${id}" class="cx-input" data-cxm="${key}">` + options.map(([v, t]) => `<option value="${esc(v)}"${String(f[key]) === String(v) ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`);
+    return (
+      `<form class="cx-form" data-cx="mail-form" autocomplete="off">` +
+      (f.notice ? `<p class="cx-note" role="status">${esc(f.notice)}</p>` : "") +
+      select("cxmProvider", "provider", "Email provider", presets.map((p) => [p.id, p.label])) +
+      (preset.help ? `<p class="cx-sub">${esc(preset.help)}</p>` : "") +
+      input("cxmName", "from_name", "Your name (shown to the buyer)", 'autocomplete="name" maxlength="120"') +
+      input("cxmFrom", "from_email", "Send from this email address", 'type="email" autocomplete="email" maxlength="254"') +
+      input("cxmUser", "username", "Login (usually the same address)", 'name="mail_login" autocomplete="section-smtp username" autocapitalize="off" spellcheck="false" maxlength="254"') +
+      field("cxmPass", editing ? "Password (leave blank to keep the saved one)" : "Password or app password",
+        `<input id="cxmPass" class="cx-input" type="password" name="mail_password" data-cxm="password" autocomplete="new-password" maxlength="200" value="">`) +
+      input("cxmHost", "host", "Mail server", 'autocomplete="off" maxlength="253" placeholder="smtp.yourcompany.com"') +
+      `<div class="cx-row">` +
+      cell(select("cxmPort", "port", "Port", ports.map((p) => [p, String(p)]))) +
+      cell(select("cxmSecurity", "security", "Security", [["ssl", "SSL/TLS"], ["starttls", "STARTTLS"]])) +
+      cell(input("cxmCap", "daily_cap", "Most emails a day", 'type="number" min="1" max="500" inputmode="numeric"')) +
+      `</div>` +
+      input("cxmReply", "reply_to", "Replies go to (optional, if different)", 'type="email" autocomplete="off" maxlength="254"') +
+      `<p class="cx-sub">TenderFlow checks the login with your mail server before it keeps anything.</p>` +
+      (f.error ? `<p class="cx-warn" role="alert">${esc(f.error)}</p>` : "") +
+      `<div class="cx-actions cx-actions--flush"><button type="submit" class="cx-btn cx-btn--primary" data-cx="mail-save"${busy ? " disabled" : ""}>${busy ? "Checking the login…" : editing ? "Save changes" : "Connect email account"}</button>` +
+      (editing ? `<button type="button" class="cx-btn" data-cx="mail-cancel"${busy ? " disabled" : ""}>Cancel</button>` : "") + `</div></form>`
+    );
+  }
+
+  function mailCard(m) {
+    const mm = m || {};
+    const state = mailState(m);
+    const info = mm.info || {};
+    const a = info.account || null;
+    const [pillText, tone0] = MAIL_PILL[state];
+    const tone = state === "ok" && a.last_error ? "warn" : tone0;
+    const text = state === "ok" && a.last_error ? "Needs attention" : pillText;
+    const busy = mm.busy || null;
+    let body;
+    let actions = "";
+    if (state === "loading") body = `<p class="cx-sub" role="status">Checking…</p>`;
+    else if (state === "error") {
+      body = `<p class="cx-warn" role="alert">${esc(mm.error || "Could not reach the server.")}</p>`;
+      actions = `<button type="button" class="cx-btn" data-cx="mail-reload">Try again</button>`;
+    } else if (state === "unavailable") {
+      body = `<p class="cx-sub">Connecting an email account is not switched on for this server. Ask your administrator to set MAIL_CRED_KEY.</p>`;
+    } else if (state === "none") {
+      body = `<p class="cx-sub">Send Growth Studio email from your own address. Outreach does not need to have a mailbox for this.</p>` + mailForm(info, mm.form || {}, false);
+    } else if (mm.form) {
+      body = mailForm(info, mm.form, true);
+    } else {
+      const who = a.from_name ? `${a.from_name} <${a.from_email}>` : a.from_email;
+      body =
+        (mm.notice ? `<p class="cx-note" role="status">${esc(mm.notice)}</p>` : "") +
+        (mm.error ? `<p class="cx-warn" role="alert">${esc(mm.error)}</p>` : "") +
+        `<p class="cx-line"><span class="cx-mail">${esc(who)}</span> ${a.verified ? `<span class="cx-pill cx-pill--good">Login checked</span>` : `<span class="cx-pill cx-pill--warn">Not checked</span>`}</p>` +
+        `<p class="cx-line cx-sub">Sends through ${esc(a.host)} (port ${esc(a.port)}) · ${esc(a.sent_today || 0)} of ${esc(a.daily_cap)} sent in the last 24 hours.</p>` +
+        (a.last_error ? `<p class="cx-warn" role="alert">The last send failed: ${esc(a.last_error)}</p>` : "") +
+        `<p class="cx-sub cx-hint">Choose this address under Send from when you send mail in Growth Studio. Replies arrive in this mailbox${a.reply_to ? ` (replies are asked to go to ${esc(a.reply_to)})` : ""}.</p>`;
+      actions =
+        `<button type="button" class="cx-btn" data-cx="mail-test"${busy ? " disabled" : ""} data-tip="Send a short test email from this account to itself, to check that it lands.">${busy === "test" ? "Sending…" : "Send test email"}</button>` +
+        `<button type="button" class="cx-btn" data-cx="mail-edit"${busy ? " disabled" : ""} data-tip="Change the server, the address, the daily limit or the password.">Edit</button>` +
+        `<button type="button" class="cx-btn cx-btn--danger" data-cx="mail-delete"${busy ? " disabled" : ""} data-tip="Forget this email account in TenderFlow. Emails already sent are not affected.">${busy === "delete" ? "Disconnecting…" : "Disconnect"}</button>`;
+    }
+    return (
+      `<section class="cx-card cx-card--${state === "ok" && !a.last_error ? "ok" : state === "ok" ? "attention" : state}" data-card="mail" aria-label="Email account">` +
+      `<div class="cx-card__head"><span class="cx-ico" aria-hidden="true"><i class="ti ti-mail"></i></span>` +
+      `<div class="cx-card__title"><span class="cx-name">Email account</span> <span class="cx-pill cx-pill--${tone}">${esc(text)}</span>` +
+      `<div class="cx-sub">Send Growth Studio email from your own address (Gmail, Outlook or any provider).</div></div></div>` +
+      `<div class="cx-card__body">${body}</div>` +
+      (actions ? `<div class="cx-actions">${actions}</div>` : "") +
+      `</section>`
+    );
+  }
+
+  function connectionsHtml(m) {
+    return (
+      `<div class="cx-head"><div><h2 id="connectionsTitle" class="cx-title" tabindex="-1">Connections</h2>` +
+      `<p class="cx-sub">Connect or disconnect the apps TenderFlow works with, without leaving this page.</p></div>` +
+      `<button type="button" class="cx-x" data-cx="close" aria-label="Close connections">×</button></div>` +
+      `<section data-card="outreach">` + outreachCard(m) + `</section>` + mailCard(m && m.mail) +
+      `<p class="cx-foot"><i class="ti ti-lock" aria-hidden="true"></i> Your key and your password are kept encrypted and are never shown again, not even to you.</p>`
+    );
+  }
+
+  const api = { esc, outreachState, outreachCard, connectionsHtml, detailsHtml, connectForm, modesFor, PILL, mailState, mailCard, mailForm };
+  root.TFConnections = api;
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  if (typeof document === "undefined") return;
+
+  // ── controller (browser only) ─────────────────────────────────────────────────────────────────
+  const freshForm = () => ({ mode: null, key: "", email: "", password: "", company: "", name: "", consent: false, busy: false, error: null, notice: null });
+  // The email account's form: filled from the saved account when there is one, else from the Gmail preset.
+  const freshMailForm = (info) => {
+    const a = info && info.account;
+    const gmail = ((info && info.presets) || []).find((x) => x.id === "gmail") || {};
+    const base = { password: "", busy: false, error: null, notice: null };
+    return a
+      ? Object.assign(base, { provider: a.provider, from_name: a.from_name || "", from_email: a.from_email, username: a.username, host: a.host, port: a.port,
+          security: a.security, reply_to: a.reply_to || "", daily_cap: a.daily_cap, userTouched: true })
+      : Object.assign(base, { provider: "gmail", from_name: "", from_email: "", username: "", host: gmail.host || "", port: gmail.port || 465,
+          security: gmail.security || "ssl", reply_to: "", daily_cap: 100, userTouched: false });
+  };
+  const model = {
+    open: false, status: "idle", info: null, error: null, busy: false, form: freshForm(), changed: false,
+    mail: { status: "idle", info: null, form: null, busy: null, notice: null, error: null },
+  };
+  let overlay = null;
+  let opener = null;
+
+  async function call(method, url, body) {
+    const headers = body !== undefined ? { "Content-Type": "application/json" } : {}; // app.js adds the CSRF token to every fetch
+    let res;
+    try {
+      res = await fetch(url, { method, credentials: "same-origin", headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+    } catch (e) {
+      throw new Error("Could not reach the server. Check your connection and try again.");
+    }
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((data && data.error) || (res.status === 429 ? "You are going too fast. Wait a moment and try again." : `Something went wrong (${res.status}).`));
+    return data;
+  }
+
+  function ensure() {
+    if (overlay) return overlay;
+    overlay = document.createElement("div");
+    overlay.id = "connectionsModal";
+    overlay.className = "cx-overlay hidden";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-labelledby", "connectionsTitle");
+    overlay.innerHTML = `<div class="cx-panel" id="connectionsPanel"></div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", (e) => {
+      const t = e.target;
+      const hit = (sel) => t.closest && t.closest(sel);
+      if (t === overlay || hit('[data-cx="close"]')) close();
+      else if (hit('[data-action="outreach-check"]')) load();
+      else if (hit('[data-cx="disconnect"]')) disconnect();
+      else if (hit('[data-cx="use-shared"]')) connect({ use_shared: true });
+      else if (hit('[data-cx="mode"]')) { model.form.mode = hit('[data-cx="mode"]').getAttribute("data-mode"); model.form.error = null; model.form.notice = null; render(); }
+      else if (hit('[data-cx="forgot"]')) mailAction("forgot");
+      else if (hit('[data-cx="resend"]')) mailAction("resend");
+      else if (hit('[data-cx="mail-reload"]')) loadMail();
+      else if (hit('[data-cx="mail-edit"]')) { model.mail.form = freshMailForm(model.mail.info); model.mail.notice = model.mail.error = null; render(); }
+      else if (hit('[data-cx="mail-cancel"]')) { model.mail.form = null; render(); }
+      else if (hit('[data-cx="mail-test"]')) testMail();
+      else if (hit('[data-cx="mail-delete"]')) deleteMail();
+    });
+    const FIELDS = { key: "key", email: "email", password: "password", company: "company", name: "name" };
+    const onMailField = (e, k) => {
+      const f = model.mail.form;
+      if (!f) return;
+      f.error = null;
+      if (k === "provider") {
+        if (e.type !== "change") return;
+        const preset = ((model.mail.info && model.mail.info.presets) || []).find((x) => x.id === e.target.value);
+        f.provider = e.target.value;
+        f.password = ""; // the box is blank after the re-render, so the held value must be too
+        if (preset && preset.id !== "custom") Object.assign(f, { host: preset.host, port: preset.port, security: preset.security });
+        render();
+        return;
+      }
+      f[k] = e.target.value;
+      if (k === "username") f.userTouched = true;
+      if (k === "from_email" && !f.userTouched) { // the login is nearly always the address itself
+        f.username = e.target.value;
+        const u = overlay.querySelector('[data-cxm="username"]');
+        if (u) u.value = e.target.value;
+      }
+    };
+    const onField = (e) => {
+      const m = e.target.getAttribute && e.target.getAttribute("data-cxm");
+      if (m) return onMailField(e, m);
+      const k = e.target.getAttribute && e.target.getAttribute("data-cx");
+      if (k === "consent") { model.form.consent = !!e.target.checked; model.form.error = null; }
+      else if (k && FIELDS[k]) { model.form[FIELDS[k]] = e.target.value; model.form.error = null; }
+    };
+    overlay.addEventListener("input", onField);
+    overlay.addEventListener("change", onField);
+    overlay.addEventListener("submit", (e) => {
+      e.preventDefault();
+      if (e.target.getAttribute && e.target.getAttribute("data-cx") === "mail-form") submitMail();
+      else submitForm();
+    });
+    return overlay;
+  }
+
+  function render() {
+    const panel = document.getElementById("connectionsPanel");
+    if (!panel) return;
+    const active = document.activeElement;
+    const keep = panel.contains(active) ? active.getAttribute("data-cx") || active.getAttribute("data-action") : null;
+    panel.innerHTML = connectionsHtml(model);
+    // a password typed before this redraw (a status answer arriving) is put back into the box; it is never written into the markup
+    const held = [['[data-cxm="password"]', model.mail.form && model.mail.form.password], ['[data-cx="password"]', model.form.password]];
+    for (const [sel, value] of held) {
+      const box = value && panel.querySelector(sel);
+      if (box) box.value = value;
+    }
+    if (keep) {
+      const again = panel.querySelector(`[data-cx="${keep}"], [data-action="${keep}"]`);
+      if (again && !again.disabled) again.focus();
+    }
+  }
+
+  async function load() {
+    if (model.status === "loading") return;
+    model.status = "loading";
+    model.error = null;
+    render();
+    try {
+      model.info = await call("GET", "/api/growth/outreach/status");
+      model.status = "ok";
+    } catch (e) {
+      model.status = "error";
+      model.error = e.message;
+      model.info = null;
+    }
+    render();
+  }
+
+  async function loadMail() {
+    const mm = model.mail;
+    if (mm.status === "loading") return;
+    mm.status = "loading";
+    mm.error = null;
+    render();
+    try {
+      mm.info = await call("GET", "/api/growth/email-account");
+      mm.status = "ok";
+      if (!mm.info.account && !mm.form) mm.form = freshMailForm(mm.info);
+    } catch (e) {
+      mm.status = "error";
+      mm.error = e.message;
+      mm.info = null;
+    }
+    render();
+  }
+
+  const ask = async (text) => (typeof root.showConfirm === "function" ? root.showConfirm(text) : root.confirm(text));
+
+  async function submitMail() {
+    const mm = model.mail;
+    const f = mm.form;
+    if (!f || f.busy) return;
+    const editing = !!(mm.info && mm.info.account);
+    if (!String(f.from_email).trim() || !String(f.username).trim()) { f.error = "Enter the address to send from, and the login."; render(); return; }
+    if (!String(f.host).trim()) { f.error = "Enter the mail server."; render(); return; }
+    if (!editing && !f.password) { f.error = "Enter the password (an app password, where your provider asks for one)."; render(); return; }
+    const body = {
+      provider: f.provider, from_name: String(f.from_name).trim(), from_email: String(f.from_email).trim(), username: String(f.username).trim(),
+      password: f.password, host: String(f.host).trim(), port: Number(f.port), security: f.security, reply_to: String(f.reply_to).trim(), daily_cap: Number(f.daily_cap),
+    };
+    f.busy = true;
+    f.error = null;
+    f.password = ""; // gone from the page the moment it is sent, whatever the answer
+    render();
+    try {
+      mm.info = await call("PUT", "/api/growth/email-account", body);
+      mm.status = "ok";
+      mm.form = null;
+      mm.error = null;
+      mm.notice = "Email account connected. Send a test email to check that it lands.";
+      model.changed = true;
+    } catch (e) {
+      f.busy = false;
+      f.error = e.message;
+    }
+    render();
+  }
+
+  async function testMail() {
+    const mm = model.mail;
+    if (mm.busy) return;
+    mm.busy = "test";
+    mm.error = mm.notice = null;
+    render();
+    try {
+      const res = await call("POST", "/api/growth/email-account/test", {});
+      mm.notice = `Test email sent to ${res.sent_to}. Check that inbox (and your spam folder).`;
+    } catch (e) {
+      mm.error = e.message;
+    }
+    try { mm.info = await call("GET", "/api/growth/email-account"); } catch (e) { /* what is shown stays */ }
+    mm.busy = null;
+    render();
+  }
+
+  async function deleteMail() {
+    const mm = model.mail;
+    if (mm.busy) return;
+    if (!(await ask("Disconnect this email account? Growth Studio will not send from it until you set it up again. Emails already sent are not affected."))) return;
+    mm.busy = "delete";
+    mm.error = mm.notice = null;
+    render();
+    try {
+      mm.info = await call("DELETE", "/api/growth/email-account");
+      mm.form = freshMailForm(mm.info);
+      model.changed = true;
+    } catch (e) {
+      mm.error = e.message;
+    }
+    mm.busy = null;
+    render();
+  }
+
+  // What the form sends, by mode. A password is cleared from the page the moment it has been sent, whatever the answer.
+  async function submitForm() {
+    const f = model.form;
+    const mode = (document.querySelector('[data-cx="connect-form"]') || {}).getAttribute ? document.querySelector('[data-cx="connect-form"]').getAttribute("data-mode") : f.mode;
+    if (f.busy) return;
+    if (mode === "signin") {
+      if (!f.email.trim() || !f.password) { f.error = "Enter your Outreach email and password."; render(); return; }
+      if (!f.consent) { f.error = "Tick the box to agree to connect your account."; render(); return; }
+      await send("/api/growth/outreach/signin", { email: f.email.trim(), password: f.password, consent: true }, "email");
+    } else if (mode === "signup") {
+      if (!f.company.trim() || !f.name.trim() || !f.email.trim() || !f.password) { f.error = "Fill in every box."; render(); return; }
+      if (!f.consent) { f.error = "Tick the box to agree before creating the account."; render(); return; }
+      await send("/api/growth/outreach/signup", { company: f.company.trim(), name: f.name.trim(), email: f.email.trim(), password: f.password, consent: true }, "signup");
+    } else {
+      if (!f.key.trim()) { f.error = "Paste your Outreach API key."; render(); return; }
+      await connect({ api_key: f.key.trim() });
+    }
+  }
+
+  async function send(url, body, kind) {
+    const f = model.form;
+    f.busy = true;
+    f.error = null;
+    f.notice = null;
+    f.password = "";
+    render();
+    try {
+      const res = await call("POST", url, body);
+      if (res.verify_email) {
+        f.mode = "signin";
+        f.notice = `We sent a confirmation email to ${res.email || body.email}. Confirm it, then come back here and sign in.`;
+      } else {
+        model.info = res;
+        model.status = "ok";
+        model.changed = true;
+        f.email = f.company = f.name = "";
+        f.consent = false;
+      }
+    } catch (e) {
+      f.error = e.message;
+      if (kind === "email") f.mode = "signin";
+    }
+    f.busy = false;
+    render();
+  }
+
+  // "Forgot your password?" and "Send the confirmation email again": Outreach emails the user; nothing changes here.
+  async function mailAction(which) {
+    const f = model.form;
+    if (f.busy) return;
+    if (!f.email.trim()) { f.error = "Enter your Outreach email first."; render(); return; }
+    f.busy = true;
+    f.error = null;
+    f.notice = null;
+    render();
+    try {
+      await call("POST", which === "forgot" ? "/api/growth/outreach/forgot" : "/api/growth/outreach/resend", { email: f.email.trim() });
+      f.notice = which === "forgot"
+        ? `If ${f.email.trim()} has an Outreach account, Outreach has emailed it a link to choose a new password. The link opens an Outreach page; when you have set it, come back here and sign in.`
+        : `Asked Outreach to send the confirmation email again. It only sends one for an account created through TenderFlow that is not confirmed yet, and at most 5 times an hour, so if nothing arrives check your spam, or sign in if you have already confirmed.`;
+    } catch (e) {
+      f.error = e.message;
+    }
+    f.busy = false;
+    render();
+  }
+
+  // Connect with the user's own key, or go back to the organisation's connection. The key is cleared from the page once used.
+  async function connect(body) {
+    const f = model.form;
+    if (f.busy) return;
+    f.busy = true;
+    f.error = null;
+    f.notice = null;
+    render();
+    try {
+      model.info = await call("POST", "/api/growth/outreach/connect", body);
+      model.status = "ok";
+      model.changed = true;
+      f.key = "";
+    } catch (e) {
+      f.error = e.message;
+    }
+    f.busy = false;
+    render();
+  }
+
+  async function disconnect() {
+    if (model.busy) return;
+    if (!(await ask("Disconnect Outreach? Growth Studio will not send, post or call until you connect it again. Anything already sent or posted is not affected."))) return;
+    model.busy = true;
+    render();
+    try {
+      model.info = await call("DELETE", "/api/growth/outreach/connect");
+      model.status = "ok";
+      model.changed = true;
+      model.error = null;
+    } catch (e) {
+      model.error = e.message;
+      model.form.error = e.message;
+    }
+    model.busy = false;
+    render();
+  }
+
+  // `card` ("outreach" or "mail") scrolls to that card once the window has read its state.
+  function open(from, card) {
+    ensure();
+    opener = from || document.activeElement;
+    model.open = true;
+    overlay.classList.remove("hidden");
+    render();
+    const title = document.getElementById("connectionsTitle");
+    if (title) title.focus();
+    Promise.all([load(), loadMail()]).then(() => {
+      const target = card === "mail" && overlay.querySelector('[data-card="mail"]');
+      if (target && target.scrollIntoView) target.scrollIntoView({ block: "start" });
+    });
+  }
+
+  function close() {
+    if (!overlay) return;
+    model.open = false;
+    overlay.classList.add("hidden");
+    if (opener && opener.focus) try { opener.focus(); } catch (e) { /* the opener went away */ }
+    if (model.changed) {
+      // something was connected or disconnected: the panels that show how mail goes out look again
+      model.changed = false;
+      document.dispatchEvent(new root.CustomEvent("connections:changed"));
+    }
+  }
+
+  function start() {
+    try {
+      const url = new URL(root.location.href);
+      if (url.searchParams.get("outreach") === "connected") {
+        url.searchParams.delete("outreach");
+        root.history.replaceState(null, "", url.pathname + (url.search || "") + url.hash);
+        model.form.mode = "signin";
+        model.form.notice = "Your email is confirmed. Sign in with your Outreach email and password to finish connecting.";
+        setTimeout(() => open(null), 300);
+      }
+    } catch (e) { /* an unusual address: just do not open */ }
+    for (const id of ["btnConnections", "btnConnectionsNav"]) {
+      const b = document.getElementById(id);
+      if (b) b.addEventListener("click", () => open(b));
+    }
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && model.open) { e.stopPropagation(); close(); }
+    }, true);
+    // any button marked data-open-connections (Growth Studio panels, the Email settings) opens this window
+    document.addEventListener("click", (e) => {
+      const b = e.target && e.target.closest ? e.target.closest("[data-open-connections]") : null;
+      if (!b || b.disabled) return;
+      e.preventDefault();
+      open(b, b.getAttribute("data-open-connections"));
+    });
+  }
+  api.open = open;
+  api.close = close;
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+  else start();
+})(typeof window !== "undefined" ? window : globalThis);

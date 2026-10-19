@@ -562,7 +562,7 @@
       `<button type="button" class="gs-btn gs-btn--sm" data-action="export" data-format="mailchimp"${eligible ? "" : " disabled"}>Mailchimp audience (CSV)</button>` +
       `<button type="button" class="gs-btn gs-btn--sm" data-action="copy-mailchimp">Copy message for Mailchimp</button></div><div id="gsMcBox"></div>` +
       outreachPanel(m.outreach, eligible, m.dirty, d.targets.filter((t) => t.included && !t.opted_out && !t.contact_email).length) +
-      note("Send only to published, role-based public sector inboxes (such as procurement@), keep a clear way to opt out in every message, and never add a named person's address you found elsewhere. This is guidance, not legal advice. Export the list and send it from your own mail or Mailchimp, or use Send mail to send through Outreach; either way, record replies here.", "info") +
+      note("Send only to published, role-based public sector inboxes (such as procurement@), keep a clear way to opt out in every message, and never add a named person's address you found elsewhere. This is guidance, not legal advice. Export the list and send it from your own mail or Mailchimp, or use Send mail to send through Outreach or your own email account; either way, record replies here.", "info") +
       `</section></div>`
     );
   }
@@ -573,7 +573,7 @@
     const sentOut = d.outreach_id && (approval === "approved" || approval === "sent_now");
     const state = !d.outreach_id ? badge("Not sent", "warn") : sentOut ? badge(esc(d.status || "Sent"), "good") : badge("Made, not sent", "warn");
     return (
-      `<tr><td>${esc(d.buyer)}</td><td><code>${esc(d.outreach_id || "")}</code></td><td>${state}</td>` +
+      `<tr><td>${esc(d.buyer)}</td><td>${d.mode === "smtp" ? "Your email account" : `<code>${esc(d.outreach_id || "")}</code>`}</td><td>${state}</td>` +
       `<td>${esc(approval === "sent_now" ? "Sent at once" : d.approval || "–")}</td><td class="gs-num">${d.sent == null ? "–" : esc(d.sent)}</td>` +
       `<td class="gs-num">${d.replies == null ? "–" : esc(d.replies)}</td></tr>` +
       (d.error ? `<tr><td colspan="6" class="gs-hint gs-hint--warn">${esc(d.error)}</td></tr>` : "")
@@ -583,7 +583,9 @@
   function outreachResult(r) {
     if (!r) return "";
     const lines = [];
-    if (r.sent && r.sent.length) {
+    if (r.sent && r.sent.length && r.mode === "smtp") {
+      lines.push(`<li>${esc(plural(r.sent.length, "email"))} sent from <strong>${esc(r.mailbox || "your email account")}</strong>. Replies come back to that mailbox.</li>`);
+    } else if (r.sent && r.sent.length) {
       const m = r.mode === "live" ? "live" : "test";
       lines.push(r.route === "single"
         ? `<li>1 email sent now through Outreach (${m} mode)${r.sent[0].from ? ` from <strong>${esc(r.sent[0].from)}</strong>` : ""}. A single email goes out straight away.</li>`
@@ -598,21 +600,40 @@
     return lines.length ? `<ul class="gs-warnings gs-outreach__result">${lines.join("")}</ul>` : "";
   }
 
-  // Where "Connect Outreach" / "Manage in Outreach" go: Outreach's own web app, in a small window (outreach-popup.js), so the user signs in or
-  // signs up there, chooses a plan and connects a mailbox. Only an https link from the server is ever used.
-  function outreachConnectBox(info) {
-    const pick = (u) => (typeof u === "string" && /^https:\/\//i.test(u) ? u : "");
-    const connected = !!info.configured;
-    const url = pick(connected ? info.manage_url : info.connect_url);
-    if (!url) return "";
+  // The user's own email account, when it is set up and its login has been checked (Connections, "Email account").
+  const ownAccount = (info) => (info && info.mail_account && info.mail_account.verified ? info.mail_account : null);
+
+  // What an email goes out through: "smtp" (the user's own email account) or "" / a mailbox reference (Outreach). `selected` is
+  // what the user picked; with no pick the own account is used when there is one. Only a choice that can be used is returned.
+  function senderChoice(info, selected) {
+    const own = ownAccount(info);
+    if (!(info && info.ready)) return own ? "smtp" : "";
+    if (selected === "smtp") return own ? "smtp" : "";
+    if (selected == null) return own ? "smtp" : "";
+    return String(selected);
+  }
+
+  // "Connect Outreach" and "Add an email account" open the Connections window on this page (web/connections.js), where the user
+  // signs in to Outreach or sets up an email account. Nothing opens in another tab. When the window is closed after a change
+  // the panel that is showing checks again by itself. opts.mail === false leaves the email account button out (social, calls).
+  function openConnections(which, label, primary, tip) {
+    return `<button type="button" class="gs-btn gs-btn--sm${primary ? " gs-btn--primary" : ""}" data-open-connections="${which}" data-tip="${esc(tip)}">${esc(label)}</button>`;
+  }
+
+  function outreachConnectBox(info, opts) {
+    const i = info || {};
+    const withMail = !(opts && opts.mail === false);
+    if (i.ready) {
+      return `<div class="gs-actions gs-outreach__connect">${openConnections("outreach", "Connections", false, "Open Connections to see or change your Outreach connection and your email account.")}</div>`;
+    }
+    const own = withMail && ownAccount(i);
     return (
       `<div class="gs-actions gs-outreach__connect">` +
-      `<a class="gs-btn gs-btn--sm${connected ? "" : " gs-btn--primary"}" href="${esc(url)}" target="_blank" rel="noopener noreferrer" data-outreach-link="${connected ? "manage" : "connect"}">${connected ? "Manage in Outreach" : "Connect Outreach"}</a>` +
-      `<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-check">I have connected, check again</button>` +
+      openConnections("outreach", "Connect Outreach", !own, "Sign in to Outreach, or create an account, in a window on this page.") +
+      (withMail && !own ? openConnections("mail", "Add an email account", false, "Send from your own email account instead of Outreach. You set it up in a window on this page.") : "") +
+      `<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-check" data-tip="Ask Outreach again whether you are connected.">Check again</button>` +
       `</div>` +
-      (connected
-        ? ""
-        : `<p class="gs-hint">Outreach opens in a small window. Sign in or sign up there, choose a plan and connect your mailbox, then close the window and this panel checks again by itself. TenderFlow sends from the mailbox you connect.</p>`)
+      `<p class="gs-hint">${withMail ? "Sign in to Outreach, or add your own email account, in the Connections window." : "Sign in to Outreach in the Connections window."} It opens on this page; nothing opens in another tab.</p>`
     );
   }
 
@@ -625,29 +646,41 @@
     return (
       ` Sending from <strong>${names}</strong>.` +
       (blocked.length
-        ? ` <span class="gs-hint--warn">${esc(blocked.map((m) => m.email).join(", "))} cannot send yet. Finish its setup in Outreach (warm-up or connection test).</span>`
+        ? ` <span class="gs-hint--warn">${esc(blocked.map((m) => m.email).join(", "))} cannot send yet. Finish its setup in your Outreach account (warm-up or connection test).</span>`
         : "") +
       (boxes.length > 1 ? ` Pick one below, or let Outreach choose.` : "")
     );
   }
 
-  // "Send from" when more than one mailbox is connected: the chosen one is posted with Send mail.
-  function outreachMailboxPicker(wallet, selected, disabled) {
+  // "Send from": the user's own email account and/or the mailboxes Outreach has. Shown when there is more than one thing to
+  // choose; the chosen value is posted with Send mail ("smtp" is the own account).
+  function senderPicker(info, selected, disabled) {
+    const own = ownAccount(info);
+    const wallet = info && info.ready ? info.wallet : null;
     const boxes = (wallet && Array.isArray(wallet.mailboxes) ? wallet.mailboxes : []).filter((m) => m && m.email);
-    if (boxes.length < 2) return "";
     const ref = (m) => (m.id ? String(m.id) : String(m.email));
     // Outreach looks a mailbox up by id: one it reports without an id cannot be chosen (it would be refused)
     const noId = (m) => !m.id && !(wallet && wallet.select_by_address);
-    const opts = boxes.map((m) => {
-      const off = m.can_send === false || noId(m);
-      const note = m.can_send === false ? " (cannot send yet)" : noId(m) ? " (Outreach gives no id for this mailbox)" : "";
-      return `<option value="${esc(ref(m))}"${ref(m) === selected && !off ? " selected" : ""}${off ? " disabled" : ""}>${esc(m.email)}${note}</option>`;
-    });
+    const opt = (value, text, off) => `<option value="${esc(value)}"${value === selected && !off ? " selected" : ""}${off ? " disabled" : ""}>${esc(text)}</option>`;
+    const opts = [];
+    if (own) opts.push(opt("smtp", `${own.from_email} (your email account)`, false));
+    if (info && info.ready) {
+      if (boxes.length >= 2) {
+        opts.push(opt("", "Let Outreach choose", false));
+        boxes.forEach((m) => {
+          const off = m.can_send === false || noId(m);
+          const note = m.can_send === false ? " (cannot send yet)" : noId(m) ? " (Outreach gives no id for this mailbox)" : "";
+          opts.push(opt(ref(m), `${m.email}${note}`, off));
+        });
+      } else {
+        opts.push(opt("", boxes.length ? `${boxes[0].email} (through Outreach)` : "Through Outreach", false));
+      }
+    }
+    if (opts.length < 2) return "";
     return (
       `<label class="gs-inline gs-outreach__from">Send from ` +
-      `<select data-field="outreach-mailbox"${disabled ? " disabled" : ""}>` +
-      `<option value=""${selected ? "" : " selected"}>Let Outreach choose</option>${opts.join("")}</select></label>` +
-      (boxes.some(noId) ? `<p class="gs-hint">Outreach does not give an id for some mailboxes yet, so only "Let Outreach choose" works for them. It sends from its default mailbox.</p>` : "")
+      `<select data-field="outreach-mailbox"${disabled ? " disabled" : ""}>${opts.join("")}</select></label>` +
+      (boxes.length >= 2 && boxes.some(noId) ? `<p class="gs-hint">Outreach does not give an id for some mailboxes yet, so only "Let Outreach choose" works for them. It sends from its default mailbox.</p>` : "")
     );
   }
 
@@ -667,36 +700,50 @@
   }
 
   function outreachPanel(o, eligible, dirty, noEmail) {
-    const head = `<div class="gs-card__title gs-card__title--sub">Send to Outreach</div>`;
+    const head = `<div class="gs-card__title gs-card__title--sub">Send to buyers</div>`;
     if (!o || o.status === "idle" || (o.status === "loading" && !o.info)) {
-      return head + `<p class="gs-hint" id="gsOutreach">Checking Outreach…</p>`;
+      return head + `<p class="gs-hint" id="gsOutreach">Checking how you can send…</p>`;
     }
     const info = o.info || {};
+    const own = ownAccount(info);
     const drafts = o.drafts || [];
     const table = drafts.length
-      ? `<div class="gs-tablewrap"><table class="gs-table gs-table--outreach"><thead><tr><th>Buyer</th><th>Outreach id</th><th>State</th><th>Approval</th><th class="gs-num">Sent</th><th class="gs-num">Replies</th></tr></thead><tbody>${drafts.map(outreachDraftRow).join("")}</tbody></table></div>`
+      ? `<div class="gs-tablewrap"><table class="gs-table gs-table--outreach"><thead><tr><th>Buyer</th><th>Sent through</th><th>State</th><th>Approval</th><th class="gs-num">Sent</th><th class="gs-num">Replies</th></tr></thead><tbody>${drafts.map(outreachDraftRow).join("")}</tbody></table></div>`
       : "";
-    if (!info.ready) {
+    if (!info.ready && !own) {
       return (
         head +
         `<div id="gsOutreach"><p class="gs-hint gs-hint--warn">${esc(info.problem || o.error || "Outreach is not available.")}</p>${outreachConnectBox(info)}${table}</div>`
       );
     }
-    const mode = info.mode === "live" ? badge("Live key", "warn") : badge("Test mode", "good");
-    const credits = info.wallet && info.wallet.credits != null ? ` · ${esc(info.wallet.credits)} credits in Outreach` : "";
-    const cap = info.max_per_push || 25;
+    const choice = senderChoice(info, o.mailbox);
+    const viaOwn = choice === "smtp";
+    const cap = viaOwn ? Math.min(own.daily_cap || 25, info.max_per_push || 25) : info.max_per_push || 25;
     const canPush = eligible > 0 && !dirty && !o.pushing;
+    let status;
+    let how;
+    if (viaOwn) {
+      status = `${badge("Your email account", "good")} Sending from <strong>${esc(own.from_email)}</strong>. ${esc(own.sent_today || 0)} of ${esc(own.daily_cap)} sent in the last 24 hours. ` +
+        `Replies go to ${esc(own.reply_to || own.from_email)}, so read them there.`;
+      how = `Each buyer gets their own email, filled in for them and sent from ${esc(own.from_email)} (up to ${esc(cap)} at a time, within your daily limit). A buyer is never emailed twice.`;
+    } else {
+      const mode = info.mode === "live" ? badge("Live key", "warn") : badge("Test mode", "good");
+      const credits = info.wallet && info.wallet.credits != null ? ` · ${esc(info.wallet.credits)} credits in Outreach` : "";
+      status = `${mode} Connected${credits}.${outreachMailboxLine(info.wallet)} ` +
+        (info.mode === "live"
+          ? "Live key: Send mail emails the buyers from your connected Outreach mailbox. One buyer is sent straight away; several are sent as a campaign inside Outreach's sending hours."
+          : "Test key: Outreach pretends everything, charges nothing and sends nothing real.");
+      how = `Each buyer gets their own email, filled in for them and sent from your connected Outreach mailbox (up to ${esc(cap)} at a time). A buyer is never emailed twice, and Outreach's daily limits and warm-up decide when each one actually goes.`;
+    }
+    const noMailbox = info.ready && !viaOwn && !own && !((info.wallet && info.wallet.mailboxes) || []).length;
     return (
       head +
-      `<div id="gsOutreach"><p class="gs-hint">${mode} Connected${credits}.${outreachMailboxLine(info.wallet)} ` +
-      (info.mode === "live"
-        ? "Live key: Send mail emails the buyers from your connected Outreach mailbox. One buyer is sent straight away; several are sent as a campaign inside Outreach's sending hours."
-        : "Test key: Outreach pretends everything, charges nothing and sends nothing real.") +
-      `</p>` +
-      outreachMailboxPicker(info.wallet, o.mailbox || "", o.pushing) +
+      `<div id="gsOutreach"><p class="gs-hint">${status}</p>` +
+      (noMailbox ? `<p class="gs-hint gs-hint--warn">Your Outreach account has no email account yet, so Outreach has nothing to send from. Add your own email account in Connections to send from it.</p>` : "") +
+      senderPicker(info, choice, o.pushing) +
       `<label class="gs-inline"><input type="checkbox" data-field="outreach-personal"${o.personal ? " checked" : ""}> Include addresses that look like a named person's</label>` +
       `<div class="gs-actions"><button type="button" class="gs-btn gs-btn--primary gs-btn--sm" data-action="outreach-send"${canPush ? "" : " disabled"}>${o.pushing ? "Sending…" : "Send mail"}</button>` +
-      `<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-refresh"${drafts.some((d) => d.outreach_id) && !o.refreshing ? "" : " disabled"}>${o.refreshing ? "Checking…" : "Refresh status"}</button>` +
+      `<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-refresh"${drafts.some((d) => d.outreach_id && d.mode !== "smtp") && !o.refreshing ? "" : " disabled"}>${o.refreshing ? "Checking…" : "Refresh status"}</button>` +
       `</div>` +
       outreachConnectBox(info) +
       (dirty ? `<p class="gs-hint gs-hint--warn">Save the message first: the saved message is what gets sent.</p>` : "") +
@@ -704,7 +751,7 @@
         ? `<p class="gs-hint gs-hint--warn">${esc(plural(noEmail, "buyer"))} ${noEmail === 1 ? "has" : "have"} no email address yet and will be left out. ` +
           `<button type="button" class="gs-link" data-action="focus-email">Add addresses</button> in the Buyers table above.</p>`
         : "") +
-      `<p class="gs-hint">Each buyer gets their own email, filled in for them and sent from your connected Outreach mailbox (up to ${esc(cap)} at a time). A buyer is never emailed twice, and Outreach's daily limits and warm-up decide when each one actually goes.</p>` +
+      `<p class="gs-hint">${how}</p>` +
       outreachResult(o.last) +
       outreachSeenNote(o.seen) +
       table +
@@ -778,7 +825,7 @@
     hasCategory, defaultFilters, filtersBody, signalsQuery, campaignKeys,
     signalCard, signalsPane, selectionBar, campaignsPane, builderPane, previewHtml, warningsHtml, mailchimpBox, targetRow, mergeChips, performancePane,
     badge, note, empty, loading, errorBox,
-    outreachPanel, outreachConnectBox, outreachMailboxLine, outreachMailboxPicker, outreachSeenNote, outreachDraftRow, outreachResult,
+    outreachPanel, outreachConnectBox, openConnections, outreachMailboxLine, senderPicker, senderChoice, ownAccount, outreachSeenNote, outreachDraftRow, outreachResult,
     suppressionsBlock, fitParts, funnelBars, countsLine, TYPES, TARGET_STATUS, CAMPAIGN_STATUS,
   };
   root.GrowthView = api;

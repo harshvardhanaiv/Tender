@@ -25,14 +25,11 @@
     return out;
   }
 
-  // "Connect Outreach" / "Manage in Outreach": Outreach's own web app in a new tab (sign in or sign up, choose a plan,
-  // connect a mailbox). Only an https link from the server is used.
+  // "Connect Outreach": opens the Connections window on this page (web/connections.js), where the user signs in to Outreach or
+  // creates an account. Nothing opens in another tab or window.
   function connectHtml(info) {
-    const connected = !!info.configured;
-    const url = connected ? info.manage_url : info.connect_url;
-    if (typeof url !== "string" || !/^https:\/\//i.test(url)) return "";
-    return `<p class="eo-hint"><a class="eo-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer" data-outreach-link="${connected ? "manage" : "connect"}">${connected ? "Manage in Outreach" : "Connect Outreach"}</a>` +
-      (connected ? "" : ` &middot; opens in a small window: sign in or sign up there, choose a plan and connect your mailbox, then close the window.`) + `</p>`;
+    return `<p class="eo-hint"><button type="button" class="eo-link" data-open-connections="${info.configured ? "mail" : "outreach"}">${info.configured ? "Connections" : "Connect Outreach"}</button>` +
+      (info.configured ? "" : ` &middot; sign in to Outreach, or add your own email account, in a window on this page.`) + `</p>`;
   }
 
   function statusHtml(info) {
@@ -182,8 +179,8 @@
     $("eoPreview").addEventListener("click", () => act("preview"));
     $("eoSend").addEventListener("click", () => act("send"));
     $("eoRefresh").addEventListener("click", () => act("refresh"));
-    // the small Outreach window (outreach-popup.js) was closed: the user may have connected, so look again
-    document.addEventListener("outreach:window-closed", () => loadStatus());
+    // the Connections window was closed after a change: the user may have connected, so look again
+    document.addEventListener("connections:changed", () => loadStatus());
     loadStatus();
   }
 

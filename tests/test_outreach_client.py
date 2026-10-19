@@ -309,18 +309,13 @@ def test_mailbox_ids_can_be_given_by_configuration_and_a_sent_message_reports_it
     assert oc.message_summary({"id": "m2", "mailbox": "no address here"})["mailbox"] is None
 
 
-def test_web_links_use_only_plain_https_and_fall_back_to_the_site():
-    root = "https://outreach.aivhub.com"
-    assert oc.web_links(root) == {"connect_url": root, "manage_url": root}
-    got = oc.web_links(root, "https://outreach.aivhub.com/signup?plan=pro", "https://outreach.aivhub.com/mailboxes")
-    assert got == {"connect_url": "https://outreach.aivhub.com/signup?plan=pro", "manage_url": "https://outreach.aivhub.com/mailboxes"}
+def test_only_plain_https_links_from_outreach_are_passed_on():
+    good = "https://outreach.aivhub.com/p/abc?x=1"
+    assert oc._https_url(good) == good
     # anything that is not a clean https link is dropped, never passed on to the page
     for bad in ("http://outreach.aivhub.com", "javascript:alert(1)", "//evil.example", "https://", "https://u:p@evil.example/",
                 "https://x.example/a b", 'https://x.example/"onmouseover=1', "https://x.example/<script>", "ftp://x.example", None, ""):
-        out = oc.web_links(root, bad, bad)
-        assert out == {"connect_url": root, "manage_url": root}, (bad, out)
-    # a bad site root falls back to the product's own host
-    assert oc.web_links("http://nope", None, None)["connect_url"] == "https://outreach.aivhub.com"
+        assert oc._https_url(bad) is None, bad
 
 
 def test_social_post_requests_and_answers():

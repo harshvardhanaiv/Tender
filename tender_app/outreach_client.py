@@ -61,14 +61,6 @@ def _https_url(value: str | None) -> str | None:
     return text if host and "@" not in host else None
 
 
-def web_links(web_url: str | None, connect_url: str | None = None, manage_url: str | None = None) -> dict[str, str | None]:
-    """The two pages a user is sent to in Outreach's own web app: `connect` (sign in or sign up, choose a plan,
-    connect a mailbox) and `manage` (mailboxes and settings). Each falls back to the site root; a value that is not
-    an https link is dropped, so a mistake in the environment can never make the button point somewhere odd."""
-    root = _https_url(web_url) or _https_url(DEFAULT_BASE_URL)
-    return {"connect_url": _https_url(connect_url) or root, "manage_url": _https_url(manage_url) or root}
-
-
 def mask_key(key: str | None) -> str:
     """Enough to recognise which key is configured, never enough to use it."""
     text = (key or "").strip()
@@ -137,6 +129,52 @@ def _requests_transport(method: str, url: str, headers: Mapping[str, str], body:
 
     resp = requests.request(method, url, headers=dict(headers), data=body, timeout=timeout)
     return resp.status_code, resp.headers, resp.text
+
+
+PARTNER_AUTH_ACTIONS = ("signup", "login", "resend_verification", "forgot_password")
+
+
+def partner_auth(action: str, data: Mapping[str, Any], *, base_url: str = DEFAULT_BASE_URL, origin: str | None = None,
+                 timeout: float = DEFAULT_TIMEOUT, transport: Transport | None = None) -> dict[str, Any]:
+    """One of Outreach's partner `auth` actions (no key needed): POST /v1/run {"plugin": "auth", "action": ..., "data": ...}.
+    `signup` and `login` answer with the account's `api_key`, shown once; `signup` answers `verify_email: true` with no key
+    when the user must confirm their email first. The caller's `data` (which holds a password) is sent and then forgotten:
+    it is never logged, and an Outreach error text is scrubbed before it can reach the user."""
+    if action not in PARTNER_AUTH_ACTIONS:
+        raise OutreachError("That is not an Outreach sign-in action.", 400, "invalid_request")
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if origin:
+        headers["Origin"] = origin
+    body = json.dumps({"plugin": "auth", "action": action, "data": dict(data)}).encode("utf-8")
+    try:
+        status, resp_headers, text = (transport or _requests_transport)("POST", f"{(base_url or DEFAULT_BASE_URL).rstrip('/')}/v1/run", headers, body, timeout)
+    except Exception as exc:  # network down, DNS, timeout: say so without echoing the request
+        raise OutreachError(f"Outreach could not be reached ({type(exc).__name__}).", 502, "unreachable") from None
+    payload: Any = None
+    if text:
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            payload = None
+    if 200 <= status < 300:
+        if not isinstance(payload, dict):
+            raise OutreachError("Outreach answered with something that was not a JSON object.", 502, "bad_response")
+        return payload
+    raise _error_for(status, resp_headers, payload)
+
+
+def partner_key(answer: Mapping[str, Any]) -> str | None:
+    """The `api_key` of a signup / login answer (at the top, or under `data`), only when it is a well-formed Outreach key."""
+    for src in (answer, answer.get("data") if isinstance(answer.get("data"), Mapping) else None):
+        if isinstance(src, Mapping):
+            key = str(src.get("api_key") or "").strip()
+            if key_mode(key):
+                return key
+    return None
+
+
+def partner_needs_verification(answer: Mapping[str, Any]) -> bool:
+    return any(isinstance(s, Mapping) and s.get("verify_email") is True for s in (answer, answer.get("data")))
 
 
 class OutreachClient:
@@ -220,6 +258,11 @@ class OutreachClient:
 
     def wallets(self) -> dict[str, Any]:
         return self._call("GET", "/v1/wallets")
+
+    def disconnect_partner(self) -> dict[str, Any]:
+        """Tell Outreach this app is no longer connected to the account (`auth` `disconnect`, with the account's key), so the key
+        stops working there as well as being forgotten here."""
+        return self._call("POST", "/v1/run", {"plugin": "auth", "action": "disconnect"})
 
     def create_email_campaign(self, payload: Mapping[str, Any], idempotency_key: str) -> dict[str, Any]:
         if not idempotency_key:
@@ -716,3 +759,7 @@ def reply_detail(raw: Mapping[str, Any]) -> dict[str, Any]:
         "original": plain_text(_find(raw, ("body", "text", "html", "content", "message")), 4000),
         "bounce_reason": _text(_find(raw, ("bounce_reason", "reason", "error")), 300),
     }
+
+
+# the real class's error builder, kept apart so partner_auth keeps working when a test swaps the OutreachClient name
+_error_for = OutreachClient._error

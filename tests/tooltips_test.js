@@ -130,7 +130,7 @@ const staticButtons = [...html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g
 
 test("every button written in index.html gets a tip", () => {
   assert.ok(staticButtons.length > 150, "found the buttons: " + staticButtons.length);
-  const missing = staticButtons.filter((b) => !/visually-hidden/.test(b.attrs.class || "") && !T.resolve(el(b.attrs, b.text, b.id))).map((b) => `${b.id || "(no id)"} "${b.text}"`);
+  const missing = staticButtons.filter((b) => !/visually-hidden/.test(b.attrs.class || "") && !T.resolve(el(b.attrs, b.text, b.id))).map((b) => `${b.id || "(no id)"} "${b.text}"`);
   assert.deepEqual(missing, [], "no tip for:\n  " + missing.join("\n  "));
 });
 

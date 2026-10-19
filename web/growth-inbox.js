@@ -31,6 +31,35 @@
     return "mailto:" + a + (s ? "?subject=" + encodeURIComponent(/^re:/i.test(s) ? s : "Re: " + s) : "");
   }
 
+  // The email accounts emails can go out from: the user's own account (set up in Connections) and the mailboxes Outreach reports.
+  // Adding or changing the own account opens the Connections window on this page; Outreach's mailboxes belong to the user's
+  // Outreach account and are only listed here. The card shows the list and the panel checks again when Connections is closed.
+  function accountsCard(info) {
+    const i = info || {};
+    const own = V.ownAccount(i);
+    const mine = i.mail_account || null;
+    const boxes = ((i.wallet && Array.isArray(i.wallet.mailboxes)) ? i.wallet.mailboxes : []).filter((b) => b && b.email);
+    const ownRow = mine
+      ? `<li class="gs-in-acc__row"><span class="gs-in-acc__email">${esc(mine.from_email)}</span> ${V.badge("Your email account", "accent")} ${own ? V.badge("Can send", "good") : V.badge("Not checked yet", "warn")} <span class="gs-hint">${esc(mine.sent_today || 0)} of ${esc(mine.daily_cap)} sent in the last 24 hours</span></li>`
+      : "";
+    const rows = ownRow + boxes.map((b) => {
+      const ok = b.can_send !== false;
+      const status = b.status && !/^(ok|active|connected)$/i.test(String(b.status)) ? ` <span class="gs-hint">(${esc(String(b.status).replace(/_/g, " "))})</span>` : "";
+      return `<li class="gs-in-acc__row"><span class="gs-in-acc__email">${esc(b.email)}</span> ${V.badge("Outreach", "muted")} ${ok ? V.badge("Can send", "good") : V.badge("Cannot send yet", "warn")}${status}</li>`;
+    }).join("");
+    const have = !!rows;
+    const add = V.openConnections("mail", mine ? "Email account settings" : "＋ Add an email account", !have,
+      mine ? "Open Connections to change your email account, send a test email or disconnect it." : "Open Connections on this page to add your own email account (Gmail, Outlook or any other provider).");
+    return (
+      `<div class="gs-card gs-in-accounts"><div class="gs-in-accounts__head"><div class="gs-card__title">Email accounts</div>` +
+      `<div class="gs-actions gs-actions--tight">${add}<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-check" data-tip="Ask again which email accounts you have.">Refresh accounts</button></div></div>` +
+      (have
+        ? `<ul class="gs-in-acc">${rows}</ul><p class="gs-hint">Emails from Growth Studio go out from one of these accounts. Replies to an email sent from your own account arrive in that mailbox; replies to Outreach emails come back to this inbox.</p>`
+        : `<p class="gs-hint gs-hint--warn">No email account is set up yet, so nothing can be sent. Add your own email account (Gmail, Outlook or any SMTP login) and Growth Studio sends from it. The window opens on this page.</p>`) +
+      `</div>`
+    );
+  }
+
   function filterBar(m) {
     const pills = FILTERS.map(([v, l]) => `<button type="button" class="gs-btn gs-btn--sm${m.filter === v ? " gs-btn--primary" : ""}" data-action="in-filter" data-filter="${v}" aria-pressed="${m.filter === v}">${esc(l)}</button>`).join("");
     return (
@@ -54,7 +83,7 @@
     return (
       `<div class="gs-in-detail">` +
       (d.opt_out_hint ? V.note(`This reply looks like a request to stop. Add ${esc(d.buyer || "this buyer")} to your do-not-contact list so they are not emailed again.`, "warn") : "") +
-      (replies || (msg.status === "replied" ? `<p class="gs-hint">Outreach has marked this as replied but has not given the reply text. Open it in Outreach to read it.</p>` : "")) +
+      (replies || (msg.status === "replied" ? `<p class="gs-hint">Outreach has marked this as replied but has not given the reply text yet. Press Refresh in a moment.</p>` : "")) +
       (msg.bounce_reason ? V.note(`Bounced: ${esc(msg.bounce_reason)}`, "bad") : "") +
       (!replies && msg.status !== "replied" && !msg.bounce_reason ? `<p class="gs-hint">No reply yet.</p>` : "") +
       (msg.original ? `<details class="gs-notes"><summary>The email you sent</summary><p class="gs-ch-caption">${esc(msg.original)}</p></details>` : "") +
@@ -88,7 +117,7 @@
   function inboxPane(m) {
     if (!m || m.status === "idle" || (m.status === "loading" && !m.info)) return V.loading("Checking Outreach…");
     const info = m.info || {};
-    if (!info.ready) return V.note(esc(info.problem || m.error || "Outreach is not available."), "bad") + V.outreachConnectBox(info);
+    if (!info.ready) return V.note(esc(info.problem || m.error || "Outreach is not available."), "bad") + accountsCard(info) + V.outreachConnectBox(info, { mail: false });
     const items = m.items || [];
     let list;
     if (m.loading && !items.length) list = V.loading("Reading your emails from Outreach…");
@@ -96,6 +125,7 @@
     else if (!items.length) list = V.empty(EMPTY[m.filter][0], esc(EMPTY[m.filter][1]));
     else list = `<ul class="gs-in-list">${items.map((x) => rowHtml(x, m.openId === x.id ? (m.details || {})[x.id] || true : false)).join("")}</ul>`;
     return (
+      accountsCard(info) +
       filterBar(m) +
       (m.marked && m.marked.length ? V.note(`${esc(m.marked.join(", "))} replied. ${m.marked.length === 1 ? "That buyer is" : "Those buyers are"} now marked as replied in ${m.marked.length === 1 ? "its" : "their"} campaign.`, "info") : "") +
       list +
@@ -105,7 +135,7 @@
     );
   }
 
-  const api = { FILTERS, mailtoHref, filterBar, detailHtml, rowHtml, inboxPane };
+  const api = { FILTERS, mailtoHref, accountsCard, filterBar, detailHtml, rowHtml, inboxPane };
   root.GrowthInbox = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 
@@ -312,4 +342,9 @@
     }
   };
   api.close = function () { model.open = false; };
+  // The Connections window was closed after a change: ask again now if this tab is showing, else the next time it is shown
+  document.addEventListener("connections:changed", () => {
+    if (!model.opened) return;
+    if (model.open) loadStatus(); else model.opened = false;
+  });
 })(typeof window !== "undefined" ? window : globalThis);
