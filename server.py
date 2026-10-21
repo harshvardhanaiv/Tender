@@ -3386,7 +3386,7 @@ def create_app() -> Flask:
 
             # If no real pipeline tender matches, generate customized preview matching user's configured thresholds
             if not matched_tender:
-                fit_band_label = "strong" if fit_thresh >= 70 else ("possible" if fit_thresh >= 50 else "weak")
+                fit_band_label = "strong" if fit_thresh >= 80 else ("possible" if fit_thresh >= 50 else "weak")
                 mock_date = (datetime.now() + timedelta(days=days_thresh)).strftime("%d/%m/%Y")
                 matched_tender = {
                     "title": f"Preview Alert: Custom Tender ({fit_thresh}% Fit Score)",

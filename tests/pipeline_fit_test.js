@@ -20,7 +20,7 @@ function cut(first) {
 }
 function page(fitCache) {
   const ctx = vm.createContext({ state: { fitCache } });
-  vm.runInContext(cut("function pipelineItemFit(") + "\nthis.pipelineItemFit = pipelineItemFit;", ctx);
+  vm.runInContext(cut("function fitBandFor(") + "\n" + cut("function pipelineItemFit(") + "\nthis.pipelineItemFit = pipelineItemFit;", ctx);
   return ctx;
 }
 const tests = [];
@@ -38,7 +38,9 @@ test("without a deep score the quick score the search list shows is used", () =>
 
 test("a tender that was never scored in this browser falls back to the stored score, with a band", () => {
   const p = page({});
-  assert.deepEqual({ ...p.pipelineItemFit({ tender_key: "k2", fit_score: 72 }) }, { score: 72, band: "strong" });
+  // one set of bands app-wide (80+ strong, 50-79 possible): 72 used to read "strong" here and "possible" in the list
+  assert.deepEqual({ ...p.pipelineItemFit({ tender_key: "k2", fit_score: 85 }) }, { score: 85, band: "strong" });
+  assert.deepEqual({ ...p.pipelineItemFit({ tender_key: "k2", fit_score: 72 }) }, { score: 72, band: "possible" });
   assert.deepEqual({ ...p.pipelineItemFit({ tender_key: "k2", fit_score: 45, fit_band: "possible" }) }, { score: 45, band: "possible" });
   assert.equal(p.pipelineItemFit({ tender_key: "k3" }), null);
 });

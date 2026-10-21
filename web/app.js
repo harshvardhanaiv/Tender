@@ -4806,6 +4806,12 @@ function profileKeywords(meta) {
   return set;
 }
 
+// One set of fit bands for the whole app (the AI deep score is asked for the same ones): 80+ strong, 50-79 possible, below 50 weak.
+// The pipeline, the badges and the list used to disagree (70/40 in some places), so one score showed two colours.
+function fitBandFor(score) {
+  return score >= 80 ? "strong" : score >= 50 ? "possible" : "weak";
+}
+
 function computeQuickFit(row, meta) {
   if (!meta) return null;
   const reasons = [];
@@ -4877,7 +4883,7 @@ function computeQuickFit(row, meta) {
 
   let score = Math.round(kwScore + geoScore + valScore + dlScore);
   score = Math.max(0, Math.min(100, score));
-  const band = score >= 80 ? "strong" : score >= 50 ? "possible" : "weak";
+  const band = fitBandFor(score);
   return { score, band, reasons: reasons.slice(0, 4), gaps: gaps.slice(0, 4), tier: "quick" };
 }
 
@@ -4909,11 +4915,11 @@ function fitBarHtml(fit, key) {
   if (!fit) return `<span class="fit-bar-empty">—</span>`;
 
   const score = fit.score || 0;
-  const band = fit.band || (score >= 70 ? "strong" : score >= 40 ? "possible" : "weak");
+  const band = fit.band || fitBandFor(score);
 
   let colorClass = "fit-bar--weak";
-  if (band === "strong" || score >= 70) colorClass = "fit-bar--strong";
-  else if (band === "possible" || score >= 40) colorClass = "fit-bar--possible";
+  if (band === "strong") colorClass = "fit-bar--strong";
+  else if (band === "possible") colorClass = "fit-bar--possible";
 
   const isDeep = fit.tier === "deep";
   const labelPrefix = isDeep ? "⚡ Recalculated AI Deep Score" : "Quick Fit";
@@ -6343,10 +6349,10 @@ function buildResultRow(row) {
     const cachedDeep = state.fitCache[key]?.deep;
     if (cachedDeep) {
       const deepScore = cachedDeep.score || 0;
-      const band = cachedDeep.band || (deepScore >= 70 ? "strong" : deepScore >= 40 ? "possible" : "weak");
+      const band = cachedDeep.band || fitBandFor(deepScore);
       let colorClass = "fit-badge--weak";
-      if (band === "strong" || deepScore >= 70) colorClass = "fit-badge--strong";
-      else if (band === "possible" || deepScore >= 40) colorClass = "fit-badge--possible";
+      if (band === "strong") colorClass = "fit-badge--strong";
+      else if (band === "possible") colorClass = "fit-badge--possible";
       
       tdAi.innerHTML = `<span class="fit-badge ${colorClass}">${deepScore}</span>`;
     } else {
@@ -7432,7 +7438,7 @@ function populatePipelinePortalFilter() {
 // score, else the quick score. The pipeline used to show only the figure frozen when the tender was tracked (87 in the
 // pipeline against 15 in search once the profile or the full description changed), and counted "High fit" from it.
 function pipelineItemFit(item) {
-  const bandFor = (s) => (s >= 70 ? "strong" : s >= 40 ? "possible" : "weak");
+  const bandFor = (s) => (typeof fitBandFor === "function" ? fitBandFor(s) : s >= 80 ? "strong" : s >= 50 ? "possible" : "weak");
   const cached = state.fitCache && item ? state.fitCache[item.tender_key] : null;
   const live = cached && (cached.deep || cached.quick);
   if (live && live.score != null) return { score: live.score, band: live.band || bandFor(live.score) };
