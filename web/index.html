@@ -28,10 +28,10 @@
        instead of pins stacking invisibly on top of each other. -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-  <link rel="stylesheet" href="/styles.css?v=143" />
-  <link rel="stylesheet" href="/theme.css?v=36" />
+  <link rel="stylesheet" href="/styles.css?v=144" />
+  <link rel="stylesheet" href="/theme.css?v=38" />
   <link rel="stylesheet" href="/mobile.css?v=4" />
-  <link rel="stylesheet" href="/responsive-fixes.css?v=8" />
+  <link rel="stylesheet" href="/responsive-fixes.css?v=9" />
   <link rel="stylesheet" href="/growth-studio.css?v=12" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=2" />
@@ -160,6 +160,18 @@
         <button id="navSearch" class="tf-nav is-active" type="button" aria-current="page" title="Tender search" data-i18n-title="nav_search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><span data-i18n="nav_search">Tender search</span>
         </button>
+        <!-- Date filter, kept in the left panel while searching tenders (same state as the "Any date" chip) -->
+        <div id="railDateFilter" class="tf-rail__filter" role="group" aria-label="Published date">
+          <span class="tf-rail__filter-label">Published</span>
+          <div id="railDatePills" class="tf-rail__pills">
+            <button type="button" class="rm-pill active" data-days="all">Anytime</button>
+            <button type="button" class="rm-pill" data-days="7">7d</button>
+            <button type="button" class="rm-pill" data-days="14">14d</button>
+            <button type="button" class="rm-pill" data-days="30">30d</button>
+            <button type="button" class="rm-pill" data-days="60">60d</button>
+            <button type="button" class="rm-pill" data-days="custom" title="Pick exact dates">Custom</button>
+          </div>
+        </div>
         <button id="btnDashboard" class="tf-nav" type="button" title="Pipeline">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h10M4 19h6"/></svg><span data-i18n="nav_pipeline">Pipeline</span>
         </button>
@@ -764,7 +776,7 @@
                <colgroup id="resultsColgroup">
                 <col class="col-watchlist" style="width: 32px;" />
                 <col class="col-source" style="width: 130px;" />
-                <col class="col-fit" style="width: 76px;" />
+                <col class="col-fit" style="width: 104px;" />
                 <col class="col-ai-score" style="width: 76px;" />
                 <col class="col-title" style="width: 320px;" />
                 <col class="col-authority" style="width: 210px;" />
@@ -780,7 +792,7 @@
                   <th class="col-watchlist" data-col="watchlist"></th>
                   <th class="col-source" data-col="source"><span data-i18n="th_source">Source</span></th>
                   <th id="thFit" class="col-fit th--sortable" data-col="fit" title="Click to sort by fit score"><span class="fit-sort-label">FIT ↕</span></th>
-                  <th class="col-ai-score" data-col="ai_score"><span>AI Score</span></th>
+                  <th class="col-ai-score" data-col="ai_score"><span>Keyword Score</span></th>
                   <th class="col-title" data-col="title"><span data-i18n="th_title">Title</span></th>
                   <th class="col-authority" data-col="authority"><span data-i18n="th_authority">Authority</span></th>
                   <th id="thValue" class="col-value th--sortable" data-col="value" title="Click to sort by value"><span class="sort-label" data-i18n="th_value">Value ↕</span></th>
@@ -3266,7 +3278,7 @@
   <script src="/search-cache.js?v=2"></script>
   <script src="/watchlist.js?v=1"></script>
   <script src="/location-pin.js?v=1"></script>
-  <script src="/app.js?v=224"></script>
+  <script src="/app.js?v=226"></script>
   <script src="/planning.js?v=17"></script>
   <script src="/responsive-fixes.js?v=1" defer></script>
   <script src="/tooltips.js?v=1"></script>

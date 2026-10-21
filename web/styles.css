@@ -2268,7 +2268,7 @@ body.focus-mode-active .filter-sidebar__collapse-btn .sidebar-collapse-icon {
 /* Explicit pixel widths for every column to prevent header-body desync */
 .col-watchlist { width: 36px; min-width: 36px; }
 .col-source { width: 175px; min-width: 175px; }
-.col-fit { width: 80px; min-width: 80px; }
+.col-fit { width: 100px; min-width: 100px; }
 .col-ai-score { width: 85px; min-width: 85px; }
 .col-title { width: 340px; min-width: 340px; }
 .col-authority { width: 220px; min-width: 220px; }

@@ -5318,7 +5318,7 @@ const TABLE_COLUMNS = {
   all: [
     { id: "watchlist", label: "", width: "32px", className: "col-watchlist", type: "watchlist" },
     { id: "source", label: "Source", labelKey: "th_source", width: "130px", className: "col-source", type: "source" },
-    { id: "fit", label: "AI Score", labelKey: "th_ai_fit", width: "76px", className: "col-fit", type: "fit", sortable: true },
+    { id: "fit", label: "Keyword Score", labelKey: "th_ai_fit", width: "104px", className: "col-fit", type: "fit", sortable: true },
     { id: "ai_score", label: "AI Deep Score", labelKey: "th_ai_score", width: "76px", className: "col-ai-score", type: "ai_score" },
     { id: "title", label: "Title", labelKey: "th_title", width: "320px", className: "col-title", type: "title", sortable: true },
     { id: "authority", label: "Authority", labelKey: "th_authority", width: "210px", className: "col-authority", type: "authority" },
@@ -8727,6 +8727,23 @@ function setSearchControlsHidden(hidden) {
   });
 }
 
+// Which portals have answered, which are still working, and a plain note when the wait is long. The rows from the
+// portals that answered are already in the table, so the note says to start reading them.
+const SLOW_SEARCH_MS = 20000;
+function searchProgressDetailHtml(portalList) {
+  if (!portalList || !portalList.length) return "";
+  const waiting = portalList.filter((p) => p.status === "pending" || p.status === "running");
+  const done = portalList.filter((p) => p.status === "ok" || p.status === "empty");
+  const failed = portalList.filter((p) => p.status === "error" || p.status === "timeout");
+  const parts = [];
+  if (done.length) parts.push(`<span class="sp-done" title="Answered">✓ ${done.map((p) => `${esc(p.label)}${p.count ? " (" + p.count.toLocaleString() + ")" : ""}`).join(", ")}</span>`);
+  if (waiting.length) parts.push(`<span class="sp-wait" title="Still working">⏳ ${waiting.map((p) => esc(p.label)).join(", ")}</span>`);
+  if (failed.length) parts.push(`<span class="sp-fail" title="No answer">⚠ ${failed.map((p) => esc(p.label)).join(", ")}</span>`);
+  const slow = waiting.length && _searchStartedAt > 0 && Date.now() - _searchStartedAt >= SLOW_SEARCH_MS;
+  const slowNote = slow ? `<span class="sp-slow">${waiting.length === 1 ? esc(waiting[0].label) + " is" : waiting.length + " portals are"} taking longer than usual. Results from the faster portals are already listed below; the rest will be added as they arrive.</span>` : "";
+  return `<span class="sp-sources">${parts.join(" · ")}</span>${slowNote}`;
+}
+
 function updateSearchProgressUI() {
   const track = $("searchProgressTrack");
   const fill = $("searchProgressBar");
@@ -8855,7 +8872,7 @@ function updateSearchProgressUI() {
     if (tenderCount > 0) {
       detailText = `Searching portals${kwNote}: ${completedCount} of ${allPortals} finished${waitNote} (${tenderCount} tenders found so far)...`;
     }
-    textEl.innerHTML = `<span class="search-progress-spinner"></span> ${detailText}`;
+    textEl.innerHTML = `<span class="search-progress-spinner"></span> ${detailText}${searchProgressDetailHtml(portalList)}`;
   }
   if (typeof updateActiveSearchKeywordBadge === "function") {
     updateActiveSearchKeywordBadge();
@@ -10149,7 +10166,7 @@ $("btnReadyBid")?.addEventListener("click", () => {
 
 function syncAllDatePills(preset) {
   state.dateFilterPreset = preset || "all";
-  const containers = [$("datePillsContainer"), $("rmDatePills")].filter(Boolean);
+  const containers = [$("datePillsContainer"), $("rmDatePills"), $("railDatePills")].filter(Boolean);
   containers.forEach(container => {
     const pills = container.querySelectorAll(".pill, .rm-pill");
     pills.forEach(p => {
@@ -10188,7 +10205,7 @@ function syncAllDatePills(preset) {
 }
 
 function initDatePills() {
-  const containers = [$("datePillsContainer"), $("rmDatePills")].filter(Boolean);
+  const containers = [$("datePillsContainer"), $("rmDatePills"), $("railDatePills")].filter(Boolean);
   if (containers.length === 0) return;
 
   containers.forEach(container => {
@@ -10199,6 +10216,7 @@ function initDatePills() {
         const isAlreadyActive = pill.classList.contains("active") && days !== "all";
         const newPreset = isAlreadyActive ? "all" : days;
         syncAllDatePills(newPreset);
+        if (newPreset === "custom" && container.id === "railDatePills") $("chipPublished")?.click();
       });
     });
   });
