@@ -2193,3 +2193,6 @@ body.tf-shell .tf-rail__filter-label { display: block; margin-bottom: 6px; font-
 body.tf-shell .tf-rail__pills { display: flex; flex-wrap: wrap; gap: 4px; }
 body.tf-shell .tf-rail__pills .rm-pill { flex: 0 0 auto; padding: 2px 8px; font-size: 11px; }
 body.tf-section-open .tf-rail__filter, body.tf-rail-collapsed .tf-rail__filter { display: none; }
+.tf-pin-modal__radius { display: flex; align-items: center; gap: 12px; padding: 0 16px 10px; font-size: 12.5px; }
+.tf-pin-modal__radius .tf-pin-range { flex: 1; min-width: 0; }
+.tf-pin-any { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--muted, #64748b); }

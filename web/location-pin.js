@@ -62,14 +62,14 @@
   }
 
   // Put a place into a panel. refresh=true re-runs the panel's search the way its own distance slider does.
-  function apply(p, loc, refresh) {
+  function apply(p, loc, refresh, radiusMiles) {
     if (!write(p, loc)) return;
     setPinOption(p, loc);
     var r = byId(p.radius);
     if (refresh && r) {
-      if (parseFloat(r.value) === 0) {
-        r.value = "25"; r.dispatchEvent(new Event("input", { bubbles: true }));   // "Any distance" would ignore the place
-      }
+      // the distance picked on the map (0 = any); with none given, "Any distance" becomes 25 miles so the place is not ignored
+      var want = radiusMiles != null ? radiusMiles : (parseFloat(r.value) === 0 ? 25 : parseFloat(r.value));
+      if (parseFloat(r.value) !== want) { r.value = String(want); r.dispatchEvent(new Event("input", { bubbles: true })); }
       r.dispatchEvent(new Event("change", { bubbles: true }));
     }
   }
@@ -78,7 +78,10 @@
   }
 
   // ── the map ───────────────────────────────────────────────────────────────────────────────
-  function openPicker(start, done) {
+  function openPicker(start, done, opts) {
+    opts = opts || {};
+    var maxMiles = opts.maxMiles > 0 ? opts.maxMiles : 100;
+    var miles = opts.radiusMiles > 0 ? Math.min(opts.radiusMiles, maxMiles) : 25;
     if (!root.L) { if (root.showToast) root.showToast("The map is still loading. Try again in a moment.", "error"); return; }
     var from = valid(start) ? start : LONDON;
     var chosen = null;
@@ -88,13 +91,29 @@
       '<div class="tf-pin-modal__head"><b>Pin your location</b><button type="button" class="tf-pin-modal__x" aria-label="Close">×</button></div>' +
       '<div class="tf-pin-modal__search"><input type="text" class="input" placeholder="Find a postcode or town, or click the map to drop a pin" aria-label="Find a postcode or town">' +
       '<button type="button" class="btn btn--secondary tf-pin-find">Find</button></div>' +
+      '<div class="tf-pin-modal__radius"><label>Distance <b class="tf-pin-miles"></b></label><input type="range" class="tf-pin-range" min="1" max="' + maxMiles + '" step="1" aria-label="Distance from the pin in miles"><label class="tf-pin-any"><input type="checkbox" class="tf-pin-anyd"> Any distance</label></div>' +
       '<div class="tf-pin-modal__map" tabindex="-1"></div>' +
       '<div class="tf-pin-modal__foot"><span class="tf-pin-modal__hint">Click anywhere to drop a pin. Drag it to adjust.</span>' +
       '<button type="button" class="btn btn--secondary tf-pin-cancel">Cancel</button><button type="button" class="btn btn--primary tf-pin-use" disabled>Use this location</button></div></div>';
     document.body.appendChild(wrap);
     var map = root.L.map(wrap.querySelector(".tf-pin-modal__map")).setView([from.lat, from.lon], valid(start) ? 11 : 6);
     root.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap contributors" }).addTo(map);
-    var marker = null, use = wrap.querySelector(".tf-pin-use"), hint = wrap.querySelector(".tf-pin-modal__hint");
+    var marker = null, circle = null, use = wrap.querySelector(".tf-pin-use"), hint = wrap.querySelector(".tf-pin-modal__hint");
+    var range = wrap.querySelector(".tf-pin-range"), milesEl = wrap.querySelector(".tf-pin-miles"), anyD = wrap.querySelector(".tf-pin-anyd");
+    range.value = miles; anyD.checked = false;   // a pin with no distance would do nothing, so the picker starts at the last distance (25 mi if there was none)
+    function drawCircle() {
+      var any = anyD.checked;
+      range.disabled = any;
+      milesEl.textContent = any ? "any" : miles + " mi";
+      if (circle) { circle.remove(); circle = null; }
+      if (!any && chosen && root.L.circle) {
+        circle = root.L.circle([chosen.lat, chosen.lon], { radius: miles * 1609.344, color: "#2563eb", weight: 1.5, fillOpacity: 0.08 }).addTo(map);
+        try { map.fitBounds(circle.getBounds(), { maxZoom: 13, padding: [20, 20] }); } catch (e) { /* the map has no size yet */ }
+      }
+    }
+    range.addEventListener("input", function () { miles = parseInt(range.value, 10) || 25; if (circle) circle.setRadius(miles * 1609.344); milesEl.textContent = miles + " mi"; });
+    range.addEventListener("change", drawCircle);
+    anyD.addEventListener("change", drawCircle);
     function drop(lat, lon, label) {
       chosen = { lat: lat, lon: lon, label: label || "Pinned location" };
       if (!marker) {
@@ -103,6 +122,7 @@
       } else marker.setLatLng([lat, lon]);
       use.disabled = false;
       hint.textContent = "📌 " + chosen.label + " (" + fmt(chosen) + ")";
+      if (circle) circle.setLatLng([lat, lon]); else drawCircle();
     }
     if (valid(start)) drop(start.lat, start.lon, start.label);
     map.on("click", function (e) { drop(e.latlng.lat, e.latlng.lng); });
@@ -124,7 +144,10 @@
     wrap.querySelector(".tf-pin-cancel").addEventListener("click", close);
     wrap.querySelector(".tf-pin-modal__x").addEventListener("click", close);
     wrap.addEventListener("mousedown", function (e) { if (e.target === wrap) close(); });
-    use.addEventListener("click", function () { var c = chosen; close(); if (c && done) done(c); });
+    use.addEventListener("click", function () {
+      var c = chosen; close();
+      if (c) { c.radiusMiles = anyD.checked ? 0 : miles; if (done) done(c); }
+    });
     setTimeout(function () { map.invalidateSize(); }, 50);
   }
 
@@ -143,11 +166,12 @@
     function showClear() { clear.classList.toggle("hidden", !recall()); }
 
     pin.addEventListener("click", function () {
-      var cur = read(p);
-      openPicker(valid(Object.assign({ label: "x" }, cur)) ? { lat: cur.lat, lon: cur.lon, label: (cur && cur.label) || "Current location" } : recall(), function (loc) {
-        remember(loc); apply(p, loc, true); applyEverywhere(loc, p); showClear();
+      var cur = read(p), r = byId(p.radius);
+      var startAt = valid(Object.assign({ label: "x" }, cur)) ? { lat: cur.lat, lon: cur.lon, label: (cur && cur.label) || "Current location" } : recall();
+      openPicker(startAt, function (loc) {
+        remember(loc); apply(p, loc, true, loc.radiusMiles); applyEverywhere(loc, p); showClear();
         if (root.showToast) root.showToast("Location saved. Searches start from here until you change or clear it.", "success");
-      });
+      }, { radiusMiles: r ? parseFloat(r.value) : 25, maxMiles: r ? parseFloat(r.max) : 100 });
     });
     clear.addEventListener("click", function () {
       forget(); showClear();
