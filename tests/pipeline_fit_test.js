@@ -26,9 +26,21 @@ function page(fitCache) {
 const tests = [];
 const test = (n, f) => tests.push([n, f]);
 
-test("the cached deep score wins over the figure stored when the tender was tracked", () => {
-  const p = page({ "k1": { deep: { score: 15, band: "weak" }, quick: { score: 40 } } });
-  assert.deepEqual({ ...p.pipelineItemFit({ tender_key: "k1", fit_score: 87, fit_band: "strong" }) }, { score: 15, band: "weak" });
+test("the cached Keyword Score wins over the figure stored when the tender was tracked, and a deep score never replaces it", () => {
+  const p = page({ "k1": { deep: { score: 3, band: "weak" }, quick: { score: 69, band: "possible" } } });
+  assert.deepEqual({ ...p.pipelineItemFit({ tender_key: "k1", fit_score: 87, fit_band: "strong" }) }, { score: 69, band: "possible" });
+  // a tender with only a deep score cached still gets a figure
+  const q = page({ "k1": { deep: { score: 15, band: "weak" } } });
+  assert.deepEqual({ ...q.pipelineItemFit({ tender_key: "k1", fit_score: 87, fit_band: "strong" }) }, { score: 15, band: "weak" });
+});
+
+test("the AI deep score is offered separately for a ★ chip", () => {
+  const ctx = vm.createContext({ state: { fitCache: { k1: { deep: { score: 3 }, quick: { score: 69 } }, k2: { quick: { score: 50 } } } } });
+  vm.runInContext(cut("function fitBandFor(") + "\n" + cut("function pipelineItemDeep(") + "\nthis.d = pipelineItemDeep;", ctx);
+  assert.deepEqual({ ...ctx.d({ tender_key: "k1" }) }, { score: 3, band: "weak" });
+  assert.equal(ctx.d({ tender_key: "k2" }), null);
+  const board = cut("function renderPipelineBoard(");
+  assert.ok(board.includes("pipelineItemDeep(item)") && board.includes("fit-badge-deep-pill"), "the board shows the deep score as its own chip");
 });
 
 test("without a deep score the quick score the search list shows is used", () => {

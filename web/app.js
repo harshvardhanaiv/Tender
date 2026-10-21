@@ -1595,7 +1595,8 @@ async function trackTender(row, stage, existingKey) {
   const known = existingKey || row.tender_key ? state.pipeline[key] : null;
   // the score the list is showing for this row (computed now if the row was never scored), not whatever happened to be cached;
   // a card that is only being moved keeps the score it was saved with
-  const fit = known ? { score: known.fit_score, band: known.fit_band } : state.fitCache[key]?.deep || getRowFit(row) || null;
+  // (the Keyword Score: the Pipeline shows that one, with the AI deep score beside it when there is one)
+  const fit = known ? { score: known.fit_score, band: known.fit_band } : (typeof getQuickFit === "function" && getQuickFit(row)) || getRowFit(row) || null;
   const body = {
     tender_key: key,
     stage,
@@ -7440,16 +7441,25 @@ function populatePipelinePortalFilter() {
   }
 }
 
-// The score a tracked tender shows must be the one the search results show for the same tender: the cached AI deep
-// score, else the quick score. The pipeline used to show only the figure frozen when the tender was tracked (87 in the
-// pipeline against 15 in search once the profile or the full description changed), and counted "High fit" from it.
+// The score a tracked tender shows must be the Keyword Score the search results show for the same tender (the cached
+// quick score), so a 69 reads 69 "possible" in both places. The AI deep score is a different measure with its own column
+// in search; the Pipeline shows it as a separate ★ chip (pipelineItemDeep) and never lets it replace the Keyword Score.
+// The pipeline used to show only the figure frozen when the tender was tracked (87 in the pipeline against 15 in search
+// once the profile or the full description changed), and counted "High fit" from it. A deep score stands in only for a
+// tender that has no keyword score cached.
 function pipelineItemFit(item) {
   const bandFor = (s) => (typeof fitBandFor === "function" ? fitBandFor(s) : s >= 80 ? "strong" : s >= 50 ? "possible" : "weak");
   const cached = state.fitCache && item ? state.fitCache[item.tender_key] : null;
-  const live = cached && (cached.deep || cached.quick);
+  const live = cached && (cached.quick || cached.deep);
   if (live && live.score != null) return { score: live.score, band: live.band || bandFor(live.score) };
   if (item && item.fit_score != null) return { score: item.fit_score, band: item.fit_band || bandFor(item.fit_score) };
   return null;
+}
+
+function pipelineItemDeep(item) {
+  const cached = state.fitCache && item ? state.fitCache[item.tender_key] : null;
+  const d = cached && cached.deep;
+  return d && d.score != null ? { score: d.score, band: d.band || fitBandFor(d.score) } : null;
 }
 
 let _pipelineShowAllHighFit = false;
@@ -7481,7 +7491,8 @@ function renderPipelineBoard() {
 
   let items = Object.values(state.pipeline).map((item) => {
     const fit = pipelineItemFit(item);
-    return fit ? { ...item, fit_score: fit.score, fit_band: fit.band } : item;
+    const deep = pipelineItemDeep(item);
+    return { ...item, ...(fit ? { fit_score: fit.score, fit_band: fit.band } : {}), ai_score: deep ? deep.score : null, ai_band: deep ? deep.band : null };
   });
 
   if (portalFilter) {
@@ -7580,9 +7591,12 @@ function renderPipelineBoard() {
       const daysHtml = daysLeft !== null
         ? `<span class="dash-card__days ${daysLeft <= 7 ? "dash-card__days--urgent" : ""}">${daysLeft >= 0 ? daysLeft + "d left" : "Expired"}</span>`
         : "";
-      const fitHtml = item.fit_score != null
-        ? `<span class="fit-badge fit-badge--${item.fit_band || "weak"}">${item.fit_score}</span>`
+      const aiChip = item.ai_score != null
+        ? `<span class="fit-badge-deep-pill fit-badge-deep-pill--${item.ai_band}" title="AI deep score: ${item.ai_score}/100 (a separate measure from the Keyword Score)">★ ${item.ai_score}</span>`
         : "";
+      const fitHtml = item.fit_score != null
+        ? `<span class="fit-badge fit-badge--${item.fit_band || "weak"}" title="Keyword Score: ${item.fit_score}/100">${item.fit_score}</span>${aiChip}`
+        : aiChip;
       const sourceLabel = SOURCES_LABEL[item.source] || item.source || "";
       const sourceBadge = sourceLabel
         ? `<span class="dash-card__source" title="Portal: ${esc(sourceLabel)}" style="font-size:9.5px;font-weight:600;color:var(--muted);background:var(--surface-2,#f1f5f9);padding:1px 5px;border-radius:4px;border:1px solid var(--border,#e2e8f0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;">${esc(sourceLabel)}</span>`
