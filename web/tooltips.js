@@ -102,6 +102,7 @@
     btnPlanningSearchArea: "Look for applications in the part of the map you can see now.",
     growthStudioClose: "Close Growth Studio.",
     chipGsMore: "Show more filters.",
+    abChecklistBtn: "See which documents most tenders ask for you already have, and which are missing.",
     gsServicesBtn: "Choose one or more services you sell. Signals match any of them.",
     gsServicesSave: "Save this service to your list and select it.",
     gsServicesCustom: "Search by a CPV code or words in the contract title instead.",

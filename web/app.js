@@ -16194,6 +16194,7 @@ const abState = {
 const AB_DEFAULT_CATS = [
   "Company Overview", "Experience", "Methodology", "Quality",
   "Health & Safety", "Social Value", "Team", "Pricing", "General",
+  "Insurance & Certificates", "Policies & Compliance", "Cyber & Data Security", "Environmental & Sustainability", "Financial Standing",
 ];
 
 const AB_CATEGORY_QUESTIONS = {
@@ -16523,7 +16524,7 @@ function abShowForm(editId = null, prefillCat = null, prefillQ = null, prefillA 
   const fileStatus = $("abFileUploadStatus");
   const fileInp = $("abFileInput");
   if (fileInp) fileInp.value = "";
-  if (fileStatus) fileStatus.textContent = "Upload document(s) to automatically populate text or attach reference content for AI bid responses.";
+  if (fileStatus) { delete fileStatus.dataset.suggestion; fileStatus.textContent = "Upload document(s) to automatically populate text or attach reference content for AI bid responses."; }
   abRenderFileBadges();
 
   const titleEl = $("abFormTitle");
@@ -16625,6 +16626,59 @@ async function loadAnswerBank() {
   }
 }
 
+// What the user does and tenders for, as one block of words, so the checklist can add documents typical of their sector.
+function abContextText() {
+  const parts = [];
+  const meta = typeof getActiveProfileMeta === "function" ? getActiveProfileMeta() : null;
+  if (meta) parts.push(Object.values(meta).filter(v => typeof v === "string").join(" "));
+  const prof = typeof getActiveProfile === "function" ? getActiveProfile() : null;
+  if (prof && prof.profile_text) parts.push(String(prof.profile_text).slice(0, 4000));
+  Object.values(state.pipeline || {}).slice(0, 60).forEach(t => parts.push(t.title || ""));
+  return parts.join(" ");
+}
+
+function abChecklistHtml() {
+  const A = window.AnswerBankAssist;
+  if (!A) return "";
+  const status = A.checklistStatus(abState.items, { context: abContextText(), now: Date.now() });
+  const sum = A.summary(status);
+  const pct = Math.round((sum.covered / Math.max(1, sum.total)) * 100);
+  const label = { covered: "In your bank", attention: "Needs attention", missing: "Missing" };
+  const rows = status.map(e => {
+    const flag = e.flags.filter(f => f.code !== "thin" && f.code !== "stale")[0];
+    const action = e.status === "missing"
+      ? `<button type="button" class="ab-attention__btn" data-ab-add="${esc(e.id)}">＋ Add</button>`
+      : `<button type="button" class="ab-attention__btn" data-ab-edit="${e.matches[0]}">Open</button>`;
+    return `<div class="ab-check ab-check--${e.status}">
+      <span class="ab-check__dot" aria-hidden="true">${e.status === "covered" ? "✓" : e.status === "attention" ? "!" : "○"}</span>
+      <div class="ab-check__main">
+        <div class="ab-check__label">${esc(e.label)} ${e.level === "essential" ? '<em class="ab-check__tag">asked in most tenders</em>' : ""}${e.sector ? `<em class="ab-check__tag">${esc(e.sector)}</em>` : ""}</div>
+        <div class="ab-check__why">${esc(flag ? flag.detail : e.why)}</div>
+      </div>
+      <span class="ab-check__state">${esc(label[e.status])}</span>${action}
+    </div>`;
+  }).join("");
+  return `<div class="ab-checklist">
+    <div class="ab-checklist__head"><b>${sum.covered} of ${sum.total}</b> usual tender documents are in your bank${sum.attention ? `, ${sum.attention} need attention` : ""}${sum.essentialMissing ? `. ${sum.essentialMissing} that most tenders ask for are missing` : ""}.
+      <div class="ab-checklist__bar"><i style="width:${pct}%"></i></div></div>${rows}
+    <p class="ab-checklist__note">Suggestions come from rules, not AI, and use only your own bank, profile and tracked tenders.</p></div>`;
+}
+
+function abWireChecklist(list) {
+  const A = window.AnswerBankAssist;
+  const status = A.checklistStatus(abState.items, { context: abContextText(), now: Date.now() });
+  list.querySelectorAll("[data-ab-add]").forEach(btn => btn.addEventListener("click", () => {
+    const e = status.find(x => x.id === btn.dataset.abAdd);
+    if (!e) return;
+    abState.view = "list";
+    abShowForm(null, e.category, e.label, "");
+  }));
+  list.querySelectorAll("[data-ab-edit]").forEach(btn => btn.addEventListener("click", () => {
+    abState.view = "list";
+    abShowForm(Number(btn.dataset.abEdit));
+  }));
+}
+
 function renderAnswerBank() {
   abUpdateCountBadge();
   abRenderCategoryFilters();
@@ -16634,6 +16688,18 @@ function renderAnswerBank() {
   const searchVal = ($("abSearchInput")?.value || "").trim().toLowerCase();
 
   let items = filter ? abState.items.filter(i => i.category === filter) : abState.items;
+
+  if (abState.view === "checklist") {
+    list.innerHTML = abChecklistHtml();
+    abWireChecklist(list);
+    const footerCount0 = $("abFooterCount");
+    if (footerCount0) footerCount0.textContent = `${abState.items.length} ${abState.items.length === 1 ? "entry" : "entries"}`;
+    $("abChecklistBtn")?.classList.add("ab-add-btn--on");
+    return;
+  }
+  $("abChecklistBtn")?.classList.remove("ab-add-btn--on");
+  const flagged = window.AnswerBankAssist ? abState.items.filter(i => window.AnswerBankAssist.attentionFlags(i, Date.now()).length) : [];
+  if (abState.attentionOnly) items = items.filter(i => flagged.includes(i));
 
   if (searchVal) {
     items = items.filter(i =>
@@ -16665,7 +16731,13 @@ function renderAnswerBank() {
   }
 
   const profiles = state.companyProfiles || [];
-  list.innerHTML = items.map(item => {
+  const attentionStrip = flagged.length
+    ? `<div class="ab-attention"><span>⚠ ${flagged.length} ${flagged.length === 1 ? "answer needs" : "answers need"} attention (expired, unfinished, very short or out of date).</span> <button type="button" class="ab-attention__btn" id="abAttentionToggle">${abState.attentionOnly ? "Show all" : "Show only these"}</button></div>`
+    : "";
+  list.innerHTML = attentionStrip + items.map(item => {
+    const flagPills = window.AnswerBankAssist
+      ? window.AnswerBankAssist.attentionFlags(item, Date.now()).map(f => `<span class="ab-card__flag ab-card__flag--${esc(f.code)}" title="${esc(f.detail)}">⚠ ${esc(f.label)}</span>`).join("")
+      : "";
     let scopeBadgeHtml = "";
     if (item.profile_id) {
       const p = profiles.find(prof => String(prof.id) === String(item.profile_id));
@@ -16688,6 +16760,7 @@ function renderAnswerBank() {
           <div class="ab-card__tags" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
             <span class="ab-card__cat-pill">${esc(catLabel)}</span>
             ${scopeBadgeHtml}
+            ${flagPills}
             ${fileBadgeHtml}
           </div>
           <div class="ab-card__actions" style="display: flex; gap: 8px; align-items: center;">
@@ -16706,6 +16779,7 @@ function renderAnswerBank() {
     `;
   }).join("");
 
+  $("abAttentionToggle")?.addEventListener("click", () => { abState.attentionOnly = !abState.attentionOnly; renderAnswerBank(); });
   // Edit buttons
   list.querySelectorAll(".ab-card__btn--edit").forEach(btn => {
     btn.addEventListener("click", () => abShowForm(Number(btn.dataset.id)));
@@ -16724,6 +16798,13 @@ function renderAnswerBank() {
       btn.textContent = expanded ? "Show less" : "Show more";
     });
   });
+}
+
+// Says which category an uploaded document was sorted into and why, so the user can change it.
+function abNoteSuggestedCategory(sugg) {
+  const el = $("abFileUploadStatus");
+  if (!el || !sugg || sugg.confidence === "none") return;
+  el.dataset.suggestion = `Sorted into "${sugg.category}" (${sugg.reason}). Change it above if that is wrong.`;
 }
 
 async function abHandleFileUpload(files, isQuickUpload = false) {
@@ -16762,9 +16843,17 @@ async function abHandleFileUpload(files, isQuickUpload = false) {
       });
       successCount++;
 
+      const sugg = window.AnswerBankAssist ? window.AnswerBankAssist.suggestCategory(data.file_name, data.extracted_text, data.suggested_question) : null;
       if (isQuickUpload && successCount === 1) {
-        abShowForm(null, "Company Overview", data.suggested_question, "");
+        abShowForm(null, (sugg && sugg.confidence !== "none" ? sugg.category : "Company Overview"), data.suggested_question, "");
+        abNoteSuggestedCategory(sugg);
       } else {
+        // Sort the document into a category unless the user has already chosen one other than the default
+        const catSel = $("abFldCat");
+        if (sugg && sugg.confidence !== "none" && catSel && (!catSel.value || catSel.value === "General" || catSel.value === "Company Overview") && [...catSel.options].some(o => o.value === sugg.category)) {
+          catSel.value = sugg.category;
+        }
+        abNoteSuggestedCategory(sugg);
         if ($("abFldQ") && !$("abFldQ").value.trim() && data.suggested_question) {
           $("abFldQ").value = data.suggested_question;
         }
@@ -16773,9 +16862,9 @@ async function abHandleFileUpload(files, isQuickUpload = false) {
     abRenderFileBadges();
     const totalChars = abState.currentFiles.reduce((acc, f) => acc + (f.file_content ? f.file_content.length : 0), 0);
     if (statusEl) {
-      statusEl.textContent = abState.currentFiles.length > 0
+      statusEl.textContent = (statusEl.dataset.suggestion ? statusEl.dataset.suggestion + " " : "") + (abState.currentFiles.length > 0
         ? `Attached ${abState.currentFiles.length} reference document(s) (${totalChars} chars). Click 🤖 AI Generate or ✨ Enrich to draft your answer using these documents.`
-        : "Upload document(s) to attach reference content for AI bid responses.";
+        : "Upload document(s) to attach reference content for AI bid responses.");
     }
   } catch (err) {
     if (statusEl) statusEl.textContent = `Upload error: ${err.message}`;
@@ -16903,6 +16992,11 @@ function initAnswerBank() {
   $("abEditorModal")?.addEventListener("click", e => { if (e.target === $("abEditorModal")) abHideForm(); });
 
   $("abNewBtn")?.addEventListener("click", () => abShowForm());
+  $("abChecklistBtn")?.addEventListener("click", () => {
+    abState.view = abState.view === "checklist" ? "list" : "checklist";
+    abState.attentionOnly = false;
+    renderAnswerBank();
+  });
   $("abFormCancel")?.addEventListener("click", abHideForm);
   $("abFormSave")?.addEventListener("click", abSaveItem);
   $("abFormAi")?.addEventListener("click", abGenerateAnswer);
@@ -16969,6 +17063,8 @@ function initAnswerBank() {
     const btn = e.target.closest(".ab-tab");
     if (!btn) return;
     const cat = btn.dataset.cat || "";
+    abState.view = "list";
+    abState.attentionOnly = false;
     
     // If it's an empty category, check if click should open form
     const count = cat ? abState.items.filter(i => i.category === cat).length : abState.items.length;
