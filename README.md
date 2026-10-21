@@ -238,3 +238,10 @@ are preferred. The inbox is saved in the empty contact box with where it was fou
 A named person's address is not filled in automatically; the user is told and adds a role inbox themselves.
 `POST /api/growth/campaigns/<id>/targets/<tid>/find-contact`; answers are cached per buyer in `buyer_contact_cache`
 (30 days; 7 days for "nothing published"). Nothing is emailed by looking an address up.
+
+## Watchlist, pinned location and explained fit
+
+- **Global watchlist** (`/api/watchlist`, `tender_app/entity_watchlist.py`, `web/watchlist.js`): any buyer or supplier can be starred from Supplier Intelligence, Buyer Intelligence (profile and feed cards) and Growth Studio. The Pipeline page lists them with the section each was added from, and tracked tenders carry `pipeline.added_from`. Table `entity_watchlist` is created by `run_saas_migrations`.
+- **Pipeline page** scrolls as a whole; the board is at least 60% of the window tall and each column scrolls its own cards.
+- **Drop a pin** (`web/location-pin.js`): a pin button beside GPS in the Supplier, Buyer and Planning distance panels opens a Leaflet picker. The last chosen place is stored per user in `localStorage` (`tf_<user>_last_location`), restored on the next visit, and cleared with the ✕ button. It takes precedence over the company-profile postcode.
+- **Explained fit** (`tender_app/buyer_fit.py`): each Buyer Intelligence feed card shows the four weighted factors and an estimated engagement likelihood on hover or keyboard focus, lists why it fits without a click, and `?min_match=N` filters the feed ("Min fit" selector). The engagement figure is a heuristic ranking aid from public award data, not a prediction of winning.

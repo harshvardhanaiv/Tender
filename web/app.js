@@ -20590,7 +20590,8 @@ let _buyerFilterState = {
   openToNew: false,
   frameworksOnly: false,
   category: "all",
-  feedSort: "best_match"
+  feedSort: "best_match",
+  minMatch: "0"
 };
 window._buyerFilterState = _buyerFilterState; // seedOriginFromProfile() sits outside this closure
 
@@ -20846,6 +20847,7 @@ function refreshBuyerIntelligenceView() {
   _buyerFilterState.openToNew = $("chkOpenToNew")?.checked || false;
   _buyerFilterState.frameworksOnly = $("chkFrameworksOnly")?.checked || false;
   _buyerFilterState.feedSort = $("selFeedSort")?.value || "best_match";
+  _buyerFilterState.minMatch = $("selFeedMinMatch")?.value || "0";
 
   const lblMin = $("lblMinSpendVal");
   if (lblMin) {
@@ -20870,6 +20872,7 @@ function refreshBuyerIntelligenceView() {
     frameworks_only: _buyerFilterState.frameworksOnly ? "1" : "0",
     category: _buyerFilterState.category,
     sort: _buyerFilterState.feedSort,
+    min_match: _buyerFilterState.minMatch || "0",
     profile_id: state.activeProfileId || ""
   });
 
@@ -21065,6 +21068,7 @@ function renderOpportunityFeed(data) {
           <div>
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
               <h4 style="margin:0; font-size:14px; font-weight:700; color:var(--text,#0f172a); cursor:pointer;" onclick="openBuyerProfileDrawer('${escapeHtml(c.authority_name)}')" title="Click to view comprehensive buyer spending profile and supplier analytics">${escapeHtml(displayName(c.authority_name))}</h4>
+              ${window.TFWatch ? window.TFWatch.buttonHtml("buyer", c.authority_name, c.authority_name, "buyer_intelligence") : ""}
               <span style="background:var(--surface-2,#f1f5f9); color:var(--muted,#64748b); font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px;" title="Public sector classification">${escapeHtml(c.buyer_type)}</span>
             </div>
             <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
@@ -21073,7 +21077,7 @@ function renderOpportunityFeed(data) {
             </div>
           </div>
           <div style="text-align:right;">
-            <div style="background:${matchColor}; color:#fff; font-size:11px; font-weight:800; padding:2px 7px; border-radius:6px; display:inline-block; cursor:help;" title="Compatibility score based on: Sector keywords (35%), Proximity (25%), Upcoming contract renewal (25%), and Supplier openness (15%)">${c.match_score}% match</div>
+            ${buyerFitPopoverHtml(c, matchColor)}
           </div>
         </div>
 
@@ -21096,14 +21100,7 @@ function renderOpportunityFeed(data) {
           </div>
         </div>
 
-        <details style="font-size:11px; color:var(--muted,#64748b); background:var(--surface,#fff); border:1px dashed var(--border,#cbd5e1); border-radius:6px; padding:5px 8px; margin-bottom:8px;">
-          <summary style="cursor:pointer; font-weight:700; color:var(--primary,#2563eb); user-select:none;">
-            💡 Why am I seeing this recommendation?
-          </summary>
-          <div style="margin-top:4px; line-height:1.4; color:var(--text,#334155);">
-            ${escapeHtml(c.why_seeing_this)}
-          </div>
-        </details>
+        ${buyerFitSummaryHtml(c)}
 
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <span style="font-size:10px; color:var(--muted);">Top Vendors: <strong>${(c.top_suppliers && c.top_suppliers.length > 0) ? c.top_suppliers.map(s => escapeHtml(s)).join(", ") : "Not available"}</strong></span>
@@ -21114,6 +21111,34 @@ function renderOpportunityFeed(data) {
       </div>
     `;
   }).join("");
+}
+
+// Match score as a hover/focus card: the four factors with their weights and a sentence each, and the estimated chance of
+// engagement. Nothing needs a click; the card opens on hover and on keyboard focus.
+function buyerFitPopoverHtml(c, matchColor) {
+  const factors = c.fit_factors || [];
+  const eng = c.engagement || null;
+  const bars = factors.map((f) => `
+    <div class="fit-pop__row">
+      <div class="fit-pop__line"><span>${escapeHtml(f.label)} <em>${f.weight}%</em></span><b class="fit-pop__band fit-pop__band--${escapeHtml(f.band)}">${f.score}</b></div>
+      <div class="fit-pop__bar"><i class="fit-pop__fill fit-pop__fill--${escapeHtml(f.band)}" style="width:${Math.max(3, Math.min(100, f.score))}%"></i></div>
+      <div class="fit-pop__note">${escapeHtml(f.note)}</div>
+    </div>`).join("");
+  const engHtml = eng ? `<div class="fit-pop__eng"><b>Estimated chance of engagement: ${eng.percent}% (${escapeHtml(eng.level)})</b><div class="fit-pop__note">${escapeHtml(eng.note)}</div></div>` : "";
+  return `<span class="fit-pop" tabindex="0" role="button" aria-label="${c.match_score}% match. Show why">
+    <span class="fit-pop__badge" style="background:${matchColor}">${c.match_score}% match</span>
+    <span class="fit-pop__card" role="tooltip"><b class="fit-pop__title">Why ${c.match_score}% match</b>${bars}${engHtml}</span></span>`;
+}
+
+// The strongest reasons in one line each under the card, plus the engagement chip, so the fit is readable at a glance.
+function buyerFitSummaryHtml(c) {
+  const factors = (c.fit_factors || []).filter((f) => f.band === "strong");
+  const eng = c.engagement;
+  const reasons = factors.length
+    ? factors.map((f) => `<li><b>${escapeHtml(f.label)}:</b> ${escapeHtml(f.note)}</li>`).join("")
+    : `<li>${escapeHtml(c.why_seeing_this || "Matched on your profile and location.")}</li>`;
+  const chip = eng ? `<span class="fit-eng fit-eng--${escapeHtml(eng.level)}" title="${escapeHtml(eng.note)}">${eng.percent}% engagement likelihood (est.)</span>` : "";
+  return `<div class="fit-why"><div class="fit-why__head"><span>Why it fits</span>${chip}</div><ul class="fit-why__list">${reasons}</ul></div>`;
 }
 
 function renderOpportunityRadar(data) {
@@ -21454,6 +21479,7 @@ function initBuyerIntelligenceEvents() {
   $("chkOpenToNew")?.addEventListener("change", refreshBuyerIntelligenceView);
   $("chkFrameworksOnly")?.addEventListener("change", refreshBuyerIntelligenceView);
   $("selFeedSort")?.addEventListener("change", refreshBuyerIntelligenceView);
+  $("selFeedMinMatch")?.addEventListener("change", refreshBuyerIntelligenceView);
 
   const chipsContainer = $("feedCategoryChips");
   if (chipsContainer) {
