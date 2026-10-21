@@ -641,6 +641,26 @@ def create_supplier_contact_tables(cursor) -> None:
     )
 
 
+def create_entity_watchlist(cursor) -> None:
+    """A user's watched buyers and suppliers (tender_app/entity_watchlist.py); added_from names the section they added it in."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS entity_watchlist (
+            id          SERIAL PRIMARY KEY,
+            username    VARCHAR(100) NOT NULL,
+            kind        VARCHAR(20) NOT NULL,
+            entity_key  VARCHAR(200) NOT NULL,
+            name        TEXT NOT NULL,
+            added_from  VARCHAR(40) NOT NULL DEFAULT 'other',
+            note        TEXT,
+            created_at  TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+            UNIQUE (username, kind, entity_key)
+        )
+        """
+    )
+    cursor.execute("ALTER TABLE IF EXISTS pipeline ADD COLUMN IF NOT EXISTS added_from VARCHAR(40)")
+
+
 def create_growth_inbox_hidden(cursor) -> None:
     """Emails the user deleted from their Growth Studio inbox. Outreach's API has no way to erase a sent email or a reply,
     so deleting hides it here, for this user only, and can be undone (the row is removed)."""
@@ -777,6 +797,7 @@ def run_saas_migrations(conn: Any) -> None:
         create_email_send_tables(cursor)
         create_supplier_contact_tables(cursor)
         create_buyer_contact_cache(cursor)
+        create_entity_watchlist(cursor)
         conn.commit()
     except Exception:
         conn.rollback()

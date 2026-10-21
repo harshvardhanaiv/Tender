@@ -15,6 +15,7 @@ import json
 import re
 import math
 import time
+from tender_app import buyer_fit
 from datetime import datetime, timedelta
 
 from etenders_scraper.deadline import enrich_deadline_fields
@@ -1091,6 +1092,10 @@ def get_opportunity_feed():
     open_to_new_only = request.args.get("open_to_new", "").lower() in ("1", "true")
     frameworks_only = request.args.get("frameworks_only", "").lower() in ("1", "true")
     sort_by = (request.args.get("sort") or "best_match").lower()
+    try:
+        min_match = max(0, min(100, int(request.args.get("min_match") or 0)))
+    except ValueError:
+        min_match = 0
     fast = request.args.get("fast", "").lower() in ("1", "true", "yes")
 
     conn = _get_connection()
@@ -1345,6 +1350,8 @@ def get_opportunity_feed():
             # Weighted Formula: 35% Sector + 25% Proximity + 25% Renewal + 15% Openness
             final_match = round((0.35 * cpv_score) + (0.25 * prox_score) + (0.25 * renew_score) + (0.15 * openness_score))
             final_match = min(98, max(55, final_match))
+            if min_match and final_match < min_match:
+                continue
 
             # Assign Recommendation Tags
             tags = []
@@ -1402,7 +1409,14 @@ def get_opportunity_feed():
                 "longitude": round(b_lon, 6) if (b_lat or b_lon) else None,
                 "coords_approximate": coords_approx,
                 "top_suppliers": [],
-                "why_seeing_this": why_seeing_this
+                "why_seeing_this": why_seeing_this,
+                "fit_factors": buyer_fit.factors(
+                    cpv_score=cpv_score, prox_score=prox_score, renew_score=renew_score, openness_score=openness_score, tier=tier,
+                    cpv_match=cpv_match, dist_km=dist_km if dist_km < 9999 else None,
+                    days_until_renewal=days_until_renewal if days_until_renewal != 999 else None,
+                    next_renewal=next_ren, repeat_display=repeat_display, total_contracts=total_c),
+                "engagement": buyer_fit.engagement(
+                    cpv_score=cpv_score, prox_score=prox_score, renew_score=renew_score, openness_score=openness_score, total_contracts=total_c),
             })
 
         # Sort cards

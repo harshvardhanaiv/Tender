@@ -120,6 +120,7 @@ async function seedOriginFromProfile() {
     const meta = getActiveProfileMeta();
     const pc = String((meta && meta.postcode) || "").trim();
     if (!pc || _originSeededFor === pc || typeof resolveLocationAsync !== "function") return;
+    if (window.TFLocation && window.TFLocation.recall()) return; // the reader's last chosen place wins over the profile postcode
     _originSeededFor = pc;
     const found = await resolveLocationAsync(pc);
     if (!found) return;
@@ -168,7 +169,7 @@ function clearUserBrowserData() {
     const doomed = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k.startsWith(prefix) && /swr_|recent|saved|credit|plan|profile/i.test(k)) doomed.push(k);
+      if (k && k.startsWith(prefix) && /swr_|recent|saved|credit|plan|profile|location/i.test(k)) doomed.push(k);
     }
     doomed.forEach((k) => localStorage.removeItem(k));
   } catch (e) { /* storage blocked: nothing to clear */ }
@@ -634,6 +635,7 @@ async function loadCurrentUser() {
     if (!res.ok) return;
     const data = await res.json();
     state.username = data.username || "";
+    if (window.TFLocation) { window.TFLocation.configure({ storageKey: () => storageKey("last_location") }); window.TFLocation.init(); }
     state.email = data.email || "";
 
     // Update AIV dashboard link with logged-in user's username
@@ -1599,6 +1601,7 @@ async function trackTender(row, stage) {
     estimated_value: String(row.estimated_value_eur || row.estimated_value || ""),
     fit_score: fit?.score ?? null,
     fit_band: fit?.band ?? null,
+    added_from: state.pipeline[key]?.added_from || (state.activeKey === key ? "open_opportunity" : "tender_search"),
   };
   const res = await fetch("/api/pipeline", {
     method: "POST",
@@ -7439,6 +7442,22 @@ function pipelineItemFit(item) {
 
 let _pipelineShowAllHighFit = false;
 
+// Buyers and suppliers on the global watchlist (web/watchlist.js), each tagged with the section it was added from.
+function watchedEntitiesHtml() {
+  const list = window.TFWatch ? window.TFWatch.items() : [];
+  if (!list.length) return "";
+  const rows = list.map((w) => {
+    const icon = w.kind === "buyer" ? "🏛️" : "🏢";
+    return `<div class="dash-watched" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}">
+      <span class="dash-watched__icon" aria-hidden="true">${icon}</span>
+      <button type="button" class="dash-watched__name" data-open-watched="1" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}" data-name="${esc(w.name)}" title="Open ${w.kind === "buyer" ? "Buyer" : "Supplier"} Intelligence">${esc(displayName(w.name))}</button>
+      <span class="dash-watched__from" title="Where you added it">${esc(w.added_from_label)}</span>
+      <button type="button" class="dash-watched__remove" data-unwatch="1" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}" aria-label="Remove ${esc(w.name)} from the watchlist" title="Remove from watchlist">×</button>
+    </div>`;
+  }).join("");
+  return `<div class="dash-section"><div class="dash-section__title">⭐ Watched buyers &amp; suppliers (${list.length})</div><div class="dash-watched-list">${rows}</div></div>`;
+}
+
 function renderPipelineBoard() {
   const body = $("dashboardBody");
   if (!body) return;
@@ -7485,7 +7504,7 @@ function renderPipelineBoard() {
           ${profilePromptHtml}
          </div>`;
 
-    body.innerHTML = emptyMessage;
+    body.innerHTML = watchedEntitiesHtml() + emptyMessage;
     wireDashboardActions(body);
     return;
   }
@@ -7557,9 +7576,11 @@ function renderPipelineBoard() {
         ? `<span class="dash-card__source" title="Portal: ${esc(sourceLabel)}" style="font-size:9.5px;font-weight:600;color:var(--muted);background:var(--surface-2,#f1f5f9);padding:1px 5px;border-radius:4px;border:1px solid var(--border,#e2e8f0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;">${esc(sourceLabel)}</span>`
         : "";
       const stageSelectOptions = PIPELINE_STAGES.map(s => `<option value="${s}" ${s === stage ? "selected" : ""}>${STAGE_LABEL[s]}</option>`).join("");
+      const addedFromBadge = item.added_from && window.TFWatch
+        ? `<span class="dash-card__from" title="Where you added this lead">+ ${esc(window.TFWatch.sourceLabel(item.added_from))}</span>` : "";
       return `
         <div class="dash-card" data-key="${esc(key)}" data-stage="${esc(stage)}" draggable="true">
-          <div class="dash-card__top" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${sourceBadge}${fitHtml}${daysHtml}<button class="dash-card__remove dash-card__remove--top" data-key="${esc(key)}" title="Remove from pipeline" aria-label="Remove from pipeline">✕</button></div>
+          <div class="dash-card__top" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${sourceBadge}${addedFromBadge}${fitHtml}${daysHtml}<button class="dash-card__remove dash-card__remove--top" data-key="${esc(key)}" title="Remove from pipeline" aria-label="Remove from pipeline">✕</button></div>
           <div class="dash-card__title">${esc(item.title || key)}</div>
           ${item.contracting_authority ? `<div class="dash-card__auth">${esc(item.contracting_authority)}</div>` : ""}
           ${item.notes ? `<div class="dash-card__notes">${esc(item.notes)}</div>` : ""}
@@ -7582,7 +7603,7 @@ function renderPipelineBoard() {
       </div>`;
   }).join("");
 
-  body.innerHTML = statsHtml + urgentHtml + highFitHtml +
+  body.innerHTML = statsHtml + watchedEntitiesHtml() + urgentHtml + highFitHtml +
     `<div class="dash-section"><div class="dash-section__title">Pipeline board</div></div>` +
     `<div class="dash-kanban">${colsHtml}</div>`;
 
@@ -7590,6 +7611,16 @@ function renderPipelineBoard() {
 }
 
 function wireDashboardActions(body) {
+  body.querySelectorAll("[data-open-watched]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      closeDashboard();
+      if (btn.dataset.kind === "buyer") openBuyerProfileDrawer(btn.dataset.name);
+      else if (typeof openSupplierIntelligenceModal === "function") { openSupplierIntelligenceModal(); loadSupplierDetail(btn.dataset.key); }
+    });
+  });
+  body.querySelectorAll("[data-unwatch]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => { ev.stopPropagation(); window.TFWatch.remove(btn.dataset.kind, btn.dataset.key); });
+  });
   const toggleHighFit = body.querySelector("#dashToggleHighFit");
   if (toggleHighFit) {
     toggleHighFit.addEventListener("click", (ev) => {
@@ -7691,6 +7722,7 @@ function closeDashboard() {
 }
 
 $("btnDashboard")?.addEventListener("click", openDashboard);
+if (window.TFWatch) window.TFWatch.onChange(() => { if (!$("dashboardModal")?.classList.contains("hidden")) renderPipelineBoard(); });
 $("btnCloseDashboard")?.addEventListener("click", closeDashboard);
 $("pipelineSearchInput")?.addEventListener("input", renderPipelineBoard);
 $("pipelinePortalFilter")?.addEventListener("change", renderPipelineBoard);
@@ -18964,7 +18996,7 @@ async function loadSupplierDetail(supplierId) {
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
           <div>
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-              <h2 style="margin:0; font-size:1.35rem; font-weight:800; color:var(--text, #0f172a);">${esc(displayName(s.name))}</h2>
+              <h2 style="margin:0; font-size:1.35rem; font-weight:800; color:var(--text, #0f172a);">${esc(displayName(s.name))}${window.TFWatch ? " " + window.TFWatch.buttonHtml("supplier", s.id != null ? s.id : supplierId, s.name, "supplier_intelligence", { label: true }) : ""}</h2>
               ${smeBadge}
               ${vcseBadge}
               ${dateRangeLabel}
@@ -20558,7 +20590,8 @@ let _buyerFilterState = {
   openToNew: false,
   frameworksOnly: false,
   category: "all",
-  feedSort: "best_match"
+  feedSort: "best_match",
+  minMatch: "0"
 };
 window._buyerFilterState = _buyerFilterState; // seedOriginFromProfile() sits outside this closure
 
@@ -20604,6 +20637,8 @@ function openBuyerProfileDrawer(authorityName) {
   if (!drawerModal) return;
 
   $("drawerBuyerName").textContent = authorityName;
+  const watchSlot = $("drawerBuyerWatch");
+  if (watchSlot && window.TFWatch) watchSlot.innerHTML = window.TFWatch.buttonHtml("buyer", authorityName, authorityName, "buyer_intelligence", { label: true });
   drawerModal.classList.remove("hidden");
   // Cover the stats/tables while the real numbers load — without this the drawer briefly
   // shows whichever buyer was viewed last (or the static "£0" placeholders on first open),
@@ -20812,6 +20847,7 @@ function refreshBuyerIntelligenceView() {
   _buyerFilterState.openToNew = $("chkOpenToNew")?.checked || false;
   _buyerFilterState.frameworksOnly = $("chkFrameworksOnly")?.checked || false;
   _buyerFilterState.feedSort = $("selFeedSort")?.value || "best_match";
+  _buyerFilterState.minMatch = $("selFeedMinMatch")?.value || "0";
 
   const lblMin = $("lblMinSpendVal");
   if (lblMin) {
@@ -20836,6 +20872,7 @@ function refreshBuyerIntelligenceView() {
     frameworks_only: _buyerFilterState.frameworksOnly ? "1" : "0",
     category: _buyerFilterState.category,
     sort: _buyerFilterState.feedSort,
+    min_match: _buyerFilterState.minMatch || "0",
     profile_id: state.activeProfileId || ""
   });
 
@@ -21031,6 +21068,7 @@ function renderOpportunityFeed(data) {
           <div>
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
               <h4 style="margin:0; font-size:14px; font-weight:700; color:var(--text,#0f172a); cursor:pointer;" onclick="openBuyerProfileDrawer('${escapeHtml(c.authority_name)}')" title="Click to view comprehensive buyer spending profile and supplier analytics">${escapeHtml(displayName(c.authority_name))}</h4>
+              ${window.TFWatch ? window.TFWatch.buttonHtml("buyer", c.authority_name, c.authority_name, "buyer_intelligence") : ""}
               <span style="background:var(--surface-2,#f1f5f9); color:var(--muted,#64748b); font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px;" title="Public sector classification">${escapeHtml(c.buyer_type)}</span>
             </div>
             <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
@@ -21039,7 +21077,7 @@ function renderOpportunityFeed(data) {
             </div>
           </div>
           <div style="text-align:right;">
-            <div style="background:${matchColor}; color:#fff; font-size:11px; font-weight:800; padding:2px 7px; border-radius:6px; display:inline-block; cursor:help;" title="Compatibility score based on: Sector keywords (35%), Proximity (25%), Upcoming contract renewal (25%), and Supplier openness (15%)">${c.match_score}% match</div>
+            ${buyerFitPopoverHtml(c, matchColor)}
           </div>
         </div>
 
@@ -21062,14 +21100,7 @@ function renderOpportunityFeed(data) {
           </div>
         </div>
 
-        <details style="font-size:11px; color:var(--muted,#64748b); background:var(--surface,#fff); border:1px dashed var(--border,#cbd5e1); border-radius:6px; padding:5px 8px; margin-bottom:8px;">
-          <summary style="cursor:pointer; font-weight:700; color:var(--primary,#2563eb); user-select:none;">
-            💡 Why am I seeing this recommendation?
-          </summary>
-          <div style="margin-top:4px; line-height:1.4; color:var(--text,#334155);">
-            ${escapeHtml(c.why_seeing_this)}
-          </div>
-        </details>
+        ${buyerFitSummaryHtml(c)}
 
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <span style="font-size:10px; color:var(--muted);">Top Vendors: <strong>${(c.top_suppliers && c.top_suppliers.length > 0) ? c.top_suppliers.map(s => escapeHtml(s)).join(", ") : "Not available"}</strong></span>
@@ -21080,6 +21111,34 @@ function renderOpportunityFeed(data) {
       </div>
     `;
   }).join("");
+}
+
+// Match score as a hover/focus card: the four factors with their weights and a sentence each, and the estimated chance of
+// engagement. Nothing needs a click; the card opens on hover and on keyboard focus.
+function buyerFitPopoverHtml(c, matchColor) {
+  const factors = c.fit_factors || [];
+  const eng = c.engagement || null;
+  const bars = factors.map((f) => `
+    <div class="fit-pop__row">
+      <div class="fit-pop__line"><span>${escapeHtml(f.label)} <em>${f.weight}%</em></span><b class="fit-pop__band fit-pop__band--${escapeHtml(f.band)}">${f.score}</b></div>
+      <div class="fit-pop__bar"><i class="fit-pop__fill fit-pop__fill--${escapeHtml(f.band)}" style="width:${Math.max(3, Math.min(100, f.score))}%"></i></div>
+      <div class="fit-pop__note">${escapeHtml(f.note)}</div>
+    </div>`).join("");
+  const engHtml = eng ? `<div class="fit-pop__eng"><b>Estimated chance of engagement: ${eng.percent}% (${escapeHtml(eng.level)})</b><div class="fit-pop__note">${escapeHtml(eng.note)}</div></div>` : "";
+  return `<span class="fit-pop" tabindex="0" role="button" aria-label="${c.match_score}% match. Show why">
+    <span class="fit-pop__badge" style="background:${matchColor}">${c.match_score}% match</span>
+    <span class="fit-pop__card" role="tooltip"><b class="fit-pop__title">Why ${c.match_score}% match</b>${bars}${engHtml}</span></span>`;
+}
+
+// The strongest reasons in one line each under the card, plus the engagement chip, so the fit is readable at a glance.
+function buyerFitSummaryHtml(c) {
+  const factors = (c.fit_factors || []).filter((f) => f.band === "strong");
+  const eng = c.engagement;
+  const reasons = factors.length
+    ? factors.map((f) => `<li><b>${escapeHtml(f.label)}:</b> ${escapeHtml(f.note)}</li>`).join("")
+    : `<li>${escapeHtml(c.why_seeing_this || "Matched on your profile and location.")}</li>`;
+  const chip = eng ? `<span class="fit-eng fit-eng--${escapeHtml(eng.level)}" title="${escapeHtml(eng.note)}">${eng.percent}% engagement likelihood (est.)</span>` : "";
+  return `<div class="fit-why"><div class="fit-why__head"><span>Why it fits</span>${chip}</div><ul class="fit-why__list">${reasons}</ul></div>`;
 }
 
 function renderOpportunityRadar(data) {
@@ -21420,6 +21479,7 @@ function initBuyerIntelligenceEvents() {
   $("chkOpenToNew")?.addEventListener("change", refreshBuyerIntelligenceView);
   $("chkFrameworksOnly")?.addEventListener("change", refreshBuyerIntelligenceView);
   $("selFeedSort")?.addEventListener("change", refreshBuyerIntelligenceView);
+  $("selFeedMinMatch")?.addEventListener("change", refreshBuyerIntelligenceView);
 
   const chipsContainer = $("feedCategoryChips");
   if (chipsContainer) {
