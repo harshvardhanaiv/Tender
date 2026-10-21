@@ -459,12 +459,17 @@
     return `<div class="gs-hint">Found on ${url ? `<a class="gs-link" href="${esc(url)}" target="_blank" rel="noreferrer noopener">${where} ↗</a>` : where}. Check it before you send.</div>`;
   }
 
+  // The global watchlist button (web/watchlist.js); absent when that script is not loaded (the Node tests).
+  function watchButton(t) {
+    return typeof window !== "undefined" && window.TFWatch ? " " + window.TFWatch.buttonHtml("buyer", t.buyer_name, t.buyer_name, "growth_studio") : "";
+  }
+
   function targetRow(t) {
     const dim = !t.included || t.opted_out;
     return (
       `<tr class="gs-target${dim ? " is-off" : ""}" data-id="${esc(t.id)}">` +
       `<td><input type="checkbox" data-action="target-include" data-id="${esc(t.id)}"${t.included ? " checked" : ""}${t.opted_out ? " disabled" : ""} aria-label="Include ${esc(t.buyer_name)} in this campaign"></td>` +
-      `<td class="gs-target__who"><b>${esc(t.buyer_name)}</b>${t.opted_out ? " " + badge("Do not contact", "bad") : ""}` +
+      `<td class="gs-target__who"><b>${esc(t.buyer_name)}</b>${watchButton(t)}${t.opted_out ? " " + badge("Do not contact", "bad") : ""}` +
       `<div class="gs-target__sig">${badge(esc(t.signal_label), (TYPES[t.signal_type] || {}).tone)} <span>${esc(t.headline || "")}</span></div></td>` +
       `<td><input type="email" class="gs-input gs-input--sm" data-field="contact_email" data-id="${esc(t.id)}" value="${esc(t.contact_email || "")}" placeholder="procurement@…" autocomplete="off" aria-label="Contact email for ${esc(t.buyer_name)}">` +
       (t.personal_email ? `<div class="gs-hint gs-hint--warn">Looks like a named person's address. Use a role-based inbox such as procurement@ where you can.</div>` : "") +

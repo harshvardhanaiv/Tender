@@ -1116,7 +1116,7 @@ def api_pipeline():
         cur = conn.cursor()
         cur.execute(
             """SELECT tender_key, title, source, contracting_authority, submission_deadline,
-               estimated_value, stage, notes, fit_score, fit_band, updated_at
+               estimated_value, stage, notes, fit_score, fit_band, updated_at, added_from
                FROM pipeline WHERE username=%s ORDER BY updated_at DESC""",
             (username,),
         )
@@ -1135,7 +1135,7 @@ def api_pipeline():
                 "tender_key": r[0], "title": r[1], "source": r[2],
                 "contracting_authority": r[3], "submission_deadline": r[4],
                 "estimated_value": r[5], "stage": r[6], "notes": r[7] or "",
-                "fit_score": r[8], "fit_band": r[9], "updated_at": str(r[10]),
+                "fit_score": r[8], "fit_band": r[9], "updated_at": str(r[10]), "added_from": r[11] or "",
             })
         return jsonify({"items": items})
     body = request.get_json(silent=True) or {}
@@ -1166,18 +1166,20 @@ def api_pipeline():
         body.get("contracting_authority", ""), body.get("submission_deadline", ""),
         body.get("estimated_value", ""), stage, body.get("notes", ""),
         body.get("fit_score"), body.get("fit_band", ""),
+        str(body.get("added_from") or "").strip().lower()[:40] or None,
     )
     cur.execute(
         """INSERT INTO pipeline (username, tender_key, title, source, contracting_authority,
-           submission_deadline, estimated_value, stage, notes, fit_score, fit_band, updated_at)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,CURRENT_TIMESTAMP)
+           submission_deadline, estimated_value, stage, notes, fit_score, fit_band, added_from, updated_at)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,CURRENT_TIMESTAMP)
            ON CONFLICT(username, tender_key) DO UPDATE SET
            title=EXCLUDED.title, source=EXCLUDED.source,
            contracting_authority=EXCLUDED.contracting_authority,
            submission_deadline=EXCLUDED.submission_deadline,
            estimated_value=EXCLUDED.estimated_value, stage=EXCLUDED.stage,
            notes=EXCLUDED.notes, fit_score=EXCLUDED.fit_score,
-           fit_band=EXCLUDED.fit_band, updated_at=CURRENT_TIMESTAMP""",
+           fit_band=EXCLUDED.fit_band, added_from=COALESCE(pipeline.added_from, EXCLUDED.added_from),
+           updated_at=CURRENT_TIMESTAMP""",
         (username, tender_key, *fields),
     )
     conn.commit()

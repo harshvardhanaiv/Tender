@@ -1599,6 +1599,7 @@ async function trackTender(row, stage) {
     estimated_value: String(row.estimated_value_eur || row.estimated_value || ""),
     fit_score: fit?.score ?? null,
     fit_band: fit?.band ?? null,
+    added_from: state.pipeline[key]?.added_from || (state.activeKey === key ? "open_opportunity" : "tender_search"),
   };
   const res = await fetch("/api/pipeline", {
     method: "POST",
@@ -7439,6 +7440,22 @@ function pipelineItemFit(item) {
 
 let _pipelineShowAllHighFit = false;
 
+// Buyers and suppliers on the global watchlist (web/watchlist.js), each tagged with the section it was added from.
+function watchedEntitiesHtml() {
+  const list = window.TFWatch ? window.TFWatch.items() : [];
+  if (!list.length) return "";
+  const rows = list.map((w) => {
+    const icon = w.kind === "buyer" ? "🏛️" : "🏢";
+    return `<div class="dash-watched" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}">
+      <span class="dash-watched__icon" aria-hidden="true">${icon}</span>
+      <button type="button" class="dash-watched__name" data-open-watched="1" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}" data-name="${esc(w.name)}" title="Open ${w.kind === "buyer" ? "Buyer" : "Supplier"} Intelligence">${esc(displayName(w.name))}</button>
+      <span class="dash-watched__from" title="Where you added it">${esc(w.added_from_label)}</span>
+      <button type="button" class="dash-watched__remove" data-unwatch="1" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}" aria-label="Remove ${esc(w.name)} from the watchlist" title="Remove from watchlist">×</button>
+    </div>`;
+  }).join("");
+  return `<div class="dash-section"><div class="dash-section__title">⭐ Watched buyers &amp; suppliers (${list.length})</div><div class="dash-watched-list">${rows}</div></div>`;
+}
+
 function renderPipelineBoard() {
   const body = $("dashboardBody");
   if (!body) return;
@@ -7485,7 +7502,7 @@ function renderPipelineBoard() {
           ${profilePromptHtml}
          </div>`;
 
-    body.innerHTML = emptyMessage;
+    body.innerHTML = watchedEntitiesHtml() + emptyMessage;
     wireDashboardActions(body);
     return;
   }
@@ -7557,9 +7574,11 @@ function renderPipelineBoard() {
         ? `<span class="dash-card__source" title="Portal: ${esc(sourceLabel)}" style="font-size:9.5px;font-weight:600;color:var(--muted);background:var(--surface-2,#f1f5f9);padding:1px 5px;border-radius:4px;border:1px solid var(--border,#e2e8f0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;">${esc(sourceLabel)}</span>`
         : "";
       const stageSelectOptions = PIPELINE_STAGES.map(s => `<option value="${s}" ${s === stage ? "selected" : ""}>${STAGE_LABEL[s]}</option>`).join("");
+      const addedFromBadge = item.added_from && window.TFWatch
+        ? `<span class="dash-card__from" title="Where you added this lead">+ ${esc(window.TFWatch.sourceLabel(item.added_from))}</span>` : "";
       return `
         <div class="dash-card" data-key="${esc(key)}" data-stage="${esc(stage)}" draggable="true">
-          <div class="dash-card__top" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${sourceBadge}${fitHtml}${daysHtml}<button class="dash-card__remove dash-card__remove--top" data-key="${esc(key)}" title="Remove from pipeline" aria-label="Remove from pipeline">✕</button></div>
+          <div class="dash-card__top" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${sourceBadge}${addedFromBadge}${fitHtml}${daysHtml}<button class="dash-card__remove dash-card__remove--top" data-key="${esc(key)}" title="Remove from pipeline" aria-label="Remove from pipeline">✕</button></div>
           <div class="dash-card__title">${esc(item.title || key)}</div>
           ${item.contracting_authority ? `<div class="dash-card__auth">${esc(item.contracting_authority)}</div>` : ""}
           ${item.notes ? `<div class="dash-card__notes">${esc(item.notes)}</div>` : ""}
@@ -7582,7 +7601,7 @@ function renderPipelineBoard() {
       </div>`;
   }).join("");
 
-  body.innerHTML = statsHtml + urgentHtml + highFitHtml +
+  body.innerHTML = statsHtml + watchedEntitiesHtml() + urgentHtml + highFitHtml +
     `<div class="dash-section"><div class="dash-section__title">Pipeline board</div></div>` +
     `<div class="dash-kanban">${colsHtml}</div>`;
 
@@ -7590,6 +7609,16 @@ function renderPipelineBoard() {
 }
 
 function wireDashboardActions(body) {
+  body.querySelectorAll("[data-open-watched]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      closeDashboard();
+      if (btn.dataset.kind === "buyer") openBuyerProfileDrawer(btn.dataset.name);
+      else if (typeof openSupplierIntelligenceModal === "function") { openSupplierIntelligenceModal(); loadSupplierDetail(btn.dataset.key); }
+    });
+  });
+  body.querySelectorAll("[data-unwatch]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => { ev.stopPropagation(); window.TFWatch.remove(btn.dataset.kind, btn.dataset.key); });
+  });
   const toggleHighFit = body.querySelector("#dashToggleHighFit");
   if (toggleHighFit) {
     toggleHighFit.addEventListener("click", (ev) => {
@@ -7691,6 +7720,7 @@ function closeDashboard() {
 }
 
 $("btnDashboard")?.addEventListener("click", openDashboard);
+if (window.TFWatch) window.TFWatch.onChange(() => { if (!$("dashboardModal")?.classList.contains("hidden")) renderPipelineBoard(); });
 $("btnCloseDashboard")?.addEventListener("click", closeDashboard);
 $("pipelineSearchInput")?.addEventListener("input", renderPipelineBoard);
 $("pipelinePortalFilter")?.addEventListener("change", renderPipelineBoard);
@@ -18964,7 +18994,7 @@ async function loadSupplierDetail(supplierId) {
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
           <div>
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-              <h2 style="margin:0; font-size:1.35rem; font-weight:800; color:var(--text, #0f172a);">${esc(displayName(s.name))}</h2>
+              <h2 style="margin:0; font-size:1.35rem; font-weight:800; color:var(--text, #0f172a);">${esc(displayName(s.name))}${window.TFWatch ? " " + window.TFWatch.buttonHtml("supplier", s.id != null ? s.id : supplierId, s.name, "supplier_intelligence", { label: true }) : ""}</h2>
               ${smeBadge}
               ${vcseBadge}
               ${dateRangeLabel}
@@ -20604,6 +20634,8 @@ function openBuyerProfileDrawer(authorityName) {
   if (!drawerModal) return;
 
   $("drawerBuyerName").textContent = authorityName;
+  const watchSlot = $("drawerBuyerWatch");
+  if (watchSlot && window.TFWatch) watchSlot.innerHTML = window.TFWatch.buttonHtml("buyer", authorityName, authorityName, "buyer_intelligence", { label: true });
   drawerModal.classList.remove("hidden");
   // Cover the stats/tables while the real numbers load — without this the drawer briefly
   // shows whichever buyer was viewed last (or the static "£0" placeholders on first open),

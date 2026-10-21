@@ -1451,8 +1451,10 @@ body.tf-shell .dashboard-empty .dash-profile-link { margin-top: 8px; font-size: 
 body.tf-shell .dash-card__stage-select { max-width: none; }
 /* Page bodies fill the space under their header; the board takes what is left and its columns scroll */
 body.tf-shell :is(#dashboardModal, #historyModal, #pricingModal) .modal__body { flex: 1 1 auto; min-height: 0; max-height: none !important; }
-body.tf-shell #dashboardBody { display: flex; flex-direction: column; }
-body.tf-shell #dashboardBody .dash-kanban { flex: 1 0 260px; min-height: 260px; grid-template-rows: minmax(0, 1fr); }
+body.tf-shell #dashboardBody { display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; }
+/* The board is at least 60% of the window tall, so every column has room to scroll its own cards, and the whole page scrolls
+   when the stats, watched entities and board together are taller than the window. */
+body.tf-shell #dashboardBody .dash-kanban { flex: 1 0 auto; min-height: max(320px, 60vh); height: max(320px, 60vh); grid-template-rows: minmax(0, 1fr); }
 body.tf-shell #dashboardBody .dash-col { min-height: 0; overflow: hidden; }
 body.tf-shell #dashboardBody .dash-col__body { min-height: 0; max-height: none; }
 body.tf-shell .dash-section { padding: 14px 20px 0; }
@@ -2130,3 +2132,18 @@ i.planning-pin__key { display: inline-block; width: 10px; height: 10px; border-r
 }
 .tf-masthead .topbar-btn--credits svg { stroke: #fff !important; }
 .tf-masthead .tf-brand__sub { color: #fff !important; opacity: 1 !important; }
+
+/* ── Global watchlist (web/watchlist.js) ───────────────────────────────────────────────────── */
+.tf-watch { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border: 1px solid var(--border, #cbd5e1); border-radius: 999px;
+  background: var(--surface, #fff); color: var(--muted, #64748b); font: inherit; font-size: 12px; font-weight: 600; line-height: 1.5; cursor: pointer; vertical-align: middle; }
+.tf-watch:hover { border-color: var(--primary, #2563eb); color: var(--primary, #2563eb); }
+.tf-watch.is-on { background: #fffbeb; border-color: #f59e0b; color: #b45309; }
+.tf-watch:disabled { opacity: .6; cursor: progress; }
+.tf-watch__star { font-size: 14px; line-height: 1; }
+.dash-watched-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 2px; }
+.dash-watched { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border: 1px solid var(--border, #e2e8f0); border-radius: 999px; background: var(--surface, #fff); font-size: 12px; max-width: 100%; }
+.dash-watched__name { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: var(--text, #0f172a); cursor: pointer; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.dash-watched__name:hover { color: var(--primary, #2563eb); text-decoration: underline; }
+.dash-watched__from, .dash-card__from { font-size: 9.5px; font-weight: 600; color: #1e40af; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+.dash-watched__remove { border: 0; background: none; color: var(--muted, #64748b); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px; }
+.dash-watched__remove:hover { color: #b91c1c; }
