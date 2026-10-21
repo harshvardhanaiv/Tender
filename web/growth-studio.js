@@ -260,10 +260,8 @@
     const profileItems = state.profiles.length ? state.profiles.map((p) => [p.id, p.name + (p.is_default ? " (default)" : "")]) : [["", "No company profile yet"]];
     byId("gsProfile").innerHTML = optionsHtml(profileItems, state.profileId);
     byId("gsProfile").disabled = state.profiles.length < 2;
-    byId("gsCategory").innerHTML = optionsHtml(
-      [["", "Choose a category…"], ...o.presets.map((p) => [p.preset, p.label]), ["__custom", customActive ? `Custom: ${state.categoryLabel || "your search"}` : "Custom category…"]],
-      f.preset || (customActive ? "__custom" : "")
-    );
+    if (services) services.render();
+    byId("gsMinFit").innerHTML = optionsHtml((o.fit_choices || [0, 50, 60, 75, 90]).map((n) => [n, n ? `Fit ${n}%+` : "Any fit"]), Number(f.min_fit) || 0);
     const tv = typesValue(f.types);
     const typeItems = [["all", "All signal types"], ...o.signal_types.map((t) => [t.id, TYPE_CHOICES[t.id] || t.label])];
     if (tv === "mix") typeItems.push(["mix", (f.types || []).map((t) => (V.TYPES[t] || {}).label || t).join(" + ")]);
@@ -315,6 +313,21 @@
       saveTargeting.flush();
       loadSignals();
     });
+  }
+
+  let services = null;
+
+  // The services picker (web/growth-services.js) writes the chosen ids into the filters as a comma-separated preset.
+  function setServices(preset) {
+    const f = state.filters;
+    state.customOpen = false;
+    delete f.cpv;
+    delete f.q;
+    if (preset) f.preset = preset;
+    else delete f.preset;
+    state.categoryLabel = "";
+    if (!preset) state.signals.data = null;
+    filtersChanged(false);
   }
 
   function changeCategory(value) {
@@ -929,8 +942,10 @@
     switch (t.id) {
       case "gsProfile":
         return void changeProfile(t.value);
-      case "gsCategory":
-        return changeCategory(t.value);
+      case "gsMinFit":
+        f.min_fit = Number(t.value) || 0;
+        if (!f.min_fit) delete f.min_fit;
+        return filtersChanged(true);
       case "gsTypes":
         f.types = t.value === "all" ? V.defaultFilters().types : t.value === "mix" ? f.types : [t.value];
         return filtersChanged(true);
@@ -1049,11 +1064,18 @@
       state.filters = ctx.filters || V.defaultFilters(options);
       if (!V.hasCategory(state.filters) && state.suggestions.length) state.filters.preset = state.suggestions[0].preset;
       state.ready = true;
+      if (!services && window.GrowthServices) {
+        services = window.GrowthServices.init({
+          api, toast, options: () => state.options || { presets: [] }, filters: () => state.filters || {}, setPreset: setServices,
+          openCustom: () => { state.customOpen = true; syncFilterBar(); byId("gsCustomCpv").focus(); },
+        });
+      }
       syncFilterBar();
       renderAll();
       setTab("signals");
       if (V.hasCategory(state.filters) && !ctx.filters) saveTargeting();
     } catch (err) {
+      if (window.console) console.error("Growth Studio start failed", err);
       byId(PANES.signals).innerHTML = V.signalsPane({ filters: { preset: "x" }, status: "error", error: err.message || "Could not open Growth Studio.", data: null, selected: [], expanded: [] });
       byId(PANES.signals).querySelector('[data-action="reload-signals"]')?.setAttribute("data-action", "retry-start");
     } finally {

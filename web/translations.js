@@ -111,7 +111,7 @@ window.I18N_TRANSLATIONS = {
     "placeholder_rm_keywords": "Keywords, e.g. software, cyber security",
 
     // Results table dynamic headers
-    "th_ai_fit": "AI Score",
+    "th_ai_fit": "Keyword Score",
     "th_ai_score": "AI Deep Score",
 
     // Empty state (default, no query yet)
@@ -234,7 +234,7 @@ window.I18N_TRANSLATIONS = {
     "title_clear_all_filters": "Effacer tous les filtres",
     "placeholder_rm_keywords": "Mots-clés, ex. logiciel, cybersécurité",
 
-    "th_ai_fit": "Score IA",
+    "th_ai_fit": "Score mots-clés",
     "th_ai_score": "Score IA approfondi",
 
     "empty_search_title": "Rechercher des appels d'offres publics",
@@ -355,7 +355,7 @@ window.I18N_TRANSLATIONS = {
     "title_clear_all_filters": "Alle filters wissen",
     "placeholder_rm_keywords": "Trefwoorden, bijv. software, cyberbeveiliging",
 
-    "th_ai_fit": "AI-score",
+    "th_ai_fit": "Trefwoordscore",
     "th_ai_score": "AI-diepscore",
 
     "empty_search_title": "Zoek openbare aanbestedingen",

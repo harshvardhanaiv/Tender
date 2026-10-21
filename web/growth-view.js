@@ -120,6 +120,7 @@
     out.authority = f.authority || "all";
     out.where = f.where || "";
     out.frameworks = f.frameworks !== false;
+    if (Number(f.min_fit) > 0) out.min_fit = Number(f.min_fit);
     return out;
   }
 
@@ -133,6 +134,7 @@
     if (body.authority !== "all") p.set("authority", body.authority);
     if (body.where) p.set("where", body.where);
     p.set("frameworks", body.frameworks ? "1" : "0");
+    if (body.min_fit) p.set("min_fit", String(body.min_fit));
     if (profileId) p.set("profile_id", String(profileId));
     if (showDismissed) p.set("show_dismissed", "1");
     return p.toString();
@@ -272,6 +274,7 @@
     return (
       `<article class="gs-signal gs-signal--${esc(s.type)}${selected ? " is-selected" : ""}${state.dismissed ? " is-dismissed" : ""}" data-key="${esc(s.key)}">` +
       `<div class="gs-signal__top">${select}<div class="gs-signal__meta"><div class="gs-signal__chips">${chips.join("")}</div>` +
+      (s.services && s.services.length ? `<div class="gs-signal__services" title="The services you chose that this buyer's contracts fall under">${s.services.map((n) => `<span class="gs-badge">${esc(n)}</span>`).join(" ")}</div>` : "") +
       `<div class="gs-signal__buyer">${esc(s.buyer)}</div>${s.authority ? `<div class="gs-signal__authority">${esc(s.authority)}</div>` : ""}</div>` +
       `<button type="button" class="gs-fit gs-fit--${esc(s.band || fitBand(s.fit))}" data-action="toggle-fit" data-key="${esc(s.key)}" aria-expanded="${fitOpen}" title="Why this score?">Fit <b>${esc(s.fit)}%</b></button></div>` +
       `<h3 class="gs-signal__headline">${esc(s.headline)}</h3>` +
@@ -294,7 +297,9 @@
       const shown = s[type] == null ? n : s[type];
       return shown < n ? `${shown} of ${n} ${n === 1 ? one : many}` : plural(n, one, many);
     };
-    return [bit("renewal", "renewal", "renewals"), bit("development", "new development", "new developments"), bit("engagement", "market engagement", "market engagements")]
+    const hidden = data.below_min_fit && data.filters && data.filters.min_fit
+      ? `${plural(data.below_min_fit, "signal")} hidden below ${data.filters.min_fit}% fit` : null;
+    return [bit("renewal", "renewal", "renewals"), bit("development", "new development", "new developments"), bit("engagement", "market engagement", "market engagements"), hidden]
       .filter(Boolean)
       .join(" · ");
   }

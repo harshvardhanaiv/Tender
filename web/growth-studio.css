@@ -371,3 +371,19 @@ body.tf-shell #growthFilterBar select.tf-chip--select { flex: none; width: auto;
 .gs-in-mailform .gs-ch-row { align-items: flex-start; gap: 0 14px; }
 .gs-in-mailform .gs-ch-row > div { flex: 1 1 200px; min-width: 0; }
 .gs-in-mailform .gs-input, .gs-in-mailform .gs-select { width: 100%; box-sizing: border-box; }
+
+/* ── Services picker ───────────────────────────────────────────────────────────────────────── */
+.gs-services__pop { width: min(440px, 92vw); max-height: min(70vh, 560px); overflow-y: auto; }
+.gs-svc__top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.gs-svc__top .gs-input { flex: 1; min-width: 0; }
+.gs-svc__ghead { margin: 8px 0 2px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted, #64748b); }
+.gs-svc__row { display: flex; align-items: center; gap: 6px; padding: 3px 2px; font-size: 12.5px; cursor: pointer; }
+.gs-svc__row > span { flex: 1; min-width: 0; }
+.gs-svc__row:hover { background: var(--surface-2, #f1f5f9); }
+.gs-svc__tag { font-style: normal; font-size: 10px; color: var(--muted, #64748b); margin-left: 4px; }
+.gs-svc__del { border: 0; background: none; color: var(--muted, #64748b); font-size: 15px; line-height: 1; cursor: pointer; }
+.gs-svc__del:hover { color: #b91c1c; }
+.gs-svc__add { margin: 10px 0 6px; font-size: 12.5px; }
+.gs-svc__add summary { cursor: pointer; font-weight: 600; color: var(--primary, #2563eb); }
+.gs-svc__form { display: grid; gap: 6px; margin-top: 6px; }
+.gs-signal__services { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px; }

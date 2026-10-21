@@ -676,6 +676,25 @@ def create_growth_inbox_hidden(cursor) -> None:
     )
 
 
+def create_growth_services(cursor) -> None:
+    """Services users add to Growth Studio (tender_app/growth_services.py). cpv is comma-separated prefixes, keywords are
+    pipe-separated phrases; visibility is private, suggested (offered to everyone) or shared (approved by an administrator)."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS growth_services (
+            id          SERIAL PRIMARY KEY,
+            owner       VARCHAR(255) NOT NULL,
+            name        VARCHAR(80) NOT NULL,
+            cpv         TEXT NOT NULL DEFAULT '',
+            keywords    TEXT NOT NULL DEFAULT '',
+            visibility  VARCHAR(12) NOT NULL DEFAULT 'private',
+            created_at  TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+        )
+        """
+    )
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS growth_services_owner_name ON growth_services (owner, LOWER(name))")
+
+
 def create_buyer_contact_cache(cursor) -> None:
     """Buyer inboxes found by tender_app/buyer_contacts.py, kept per buyer (growth_campaign_targets.buyer_key) so the
     same buyer is looked up once, not once per campaign. candidates is JSON text."""
@@ -798,6 +817,7 @@ def run_saas_migrations(conn: Any) -> None:
         create_supplier_contact_tables(cursor)
         create_buyer_contact_cache(cursor)
         create_entity_watchlist(cursor)
+        create_growth_services(cursor)
         conn.commit()
     except Exception:
         conn.rollback()

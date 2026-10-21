@@ -121,3 +121,37 @@ def api_admin_grant_credits():
     finally:
         conn.close()
     return jsonify({"ok": True, "balance": new_bal})
+
+
+@admin_bp.route("/api/admin/growth-services", methods=["GET"])
+def api_admin_growth_services():
+    """Services users offered to everyone (visibility 'suggested'), newest first, for approval."""
+    if not session.get("logged_in") or not _is_admin():
+        return jsonify({"error": "Forbidden"}), 403
+    conn = _get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, owner, name, cpv, keywords, visibility, created_at FROM growth_services "
+                   "WHERE visibility IN ('suggested','shared') ORDER BY (visibility = 'suggested') DESC, created_at DESC LIMIT 200")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify({"services": [{"id": r[0], "owner": r[1], "name": r[2], "cpv": r[3], "keywords": r[4], "visibility": r[5],
+                                   "created_at": str(r[6])} for r in rows]})
+
+
+@admin_bp.post("/api/admin/growth-services/<int:service_row_id>/visibility")
+def api_admin_growth_service_visibility(service_row_id):
+    """Approve ('shared') or withdraw ('private') a service offered to everyone."""
+    if not session.get("logged_in") or not _is_admin():
+        return jsonify({"error": "Forbidden"}), 403
+    visibility = str((request.get_json(silent=True) or {}).get("visibility") or "")
+    if visibility not in ("shared", "private"):
+        return jsonify({"error": "visibility must be shared or private"}), 400
+    conn = _get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE growth_services SET visibility = %s WHERE id = %s", (visibility, service_row_id))
+    changed = cursor.rowcount
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return jsonify({"ok": bool(changed)}), (200 if changed else 404)

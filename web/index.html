@@ -28,11 +28,11 @@
        instead of pins stacking invisibly on top of each other. -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-  <link rel="stylesheet" href="/styles.css?v=143" />
-  <link rel="stylesheet" href="/theme.css?v=36" />
+  <link rel="stylesheet" href="/styles.css?v=146" />
+  <link rel="stylesheet" href="/theme.css?v=39" />
   <link rel="stylesheet" href="/mobile.css?v=4" />
-  <link rel="stylesheet" href="/responsive-fixes.css?v=8" />
-  <link rel="stylesheet" href="/growth-studio.css?v=12" />
+  <link rel="stylesheet" href="/responsive-fixes.css?v=9" />
+  <link rel="stylesheet" href="/growth-studio.css?v=13" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=2" />
   <script src="/translations.js?v=6"></script>
@@ -160,6 +160,18 @@
         <button id="navSearch" class="tf-nav is-active" type="button" aria-current="page" title="Tender search" data-i18n-title="nav_search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><span data-i18n="nav_search">Tender search</span>
         </button>
+        <!-- Date filter, kept in the left panel while searching tenders (same state as the "Any date" chip) -->
+        <div id="railDateFilter" class="tf-rail__filter" role="group" aria-label="Published date">
+          <span class="tf-rail__filter-label">Published</span>
+          <div id="railDatePills" class="tf-rail__pills">
+            <button type="button" class="rm-pill active" data-days="all">Anytime</button>
+            <button type="button" class="rm-pill" data-days="7">7d</button>
+            <button type="button" class="rm-pill" data-days="14">14d</button>
+            <button type="button" class="rm-pill" data-days="30">30d</button>
+            <button type="button" class="rm-pill" data-days="60">60d</button>
+            <button type="button" class="rm-pill" data-days="custom" title="Pick exact dates">Custom</button>
+          </div>
+        </div>
         <button id="btnDashboard" class="tf-nav" type="button" title="Pipeline">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h10M4 19h6"/></svg><span data-i18n="nav_pipeline">Pipeline</span>
         </button>
@@ -764,7 +776,7 @@
                <colgroup id="resultsColgroup">
                 <col class="col-watchlist" style="width: 32px;" />
                 <col class="col-source" style="width: 130px;" />
-                <col class="col-fit" style="width: 76px;" />
+                <col class="col-fit" style="width: 104px;" />
                 <col class="col-ai-score" style="width: 76px;" />
                 <col class="col-title" style="width: 320px;" />
                 <col class="col-authority" style="width: 210px;" />
@@ -780,7 +792,7 @@
                   <th class="col-watchlist" data-col="watchlist"></th>
                   <th class="col-source" data-col="source"><span data-i18n="th_source">Source</span></th>
                   <th id="thFit" class="col-fit th--sortable" data-col="fit" title="Click to sort by fit score"><span class="fit-sort-label">FIT ↕</span></th>
-                  <th class="col-ai-score" data-col="ai_score"><span>AI Score</span></th>
+                  <th class="col-ai-score" data-col="ai_score"><span>Keyword Score</span></th>
                   <th class="col-title" data-col="title"><span data-i18n="th_title">Title</span></th>
                   <th class="col-authority" data-col="authority"><span data-i18n="th_authority">Authority</span></th>
                   <th id="thValue" class="col-value th--sortable" data-col="value" title="Click to sort by value"><span class="sort-label" data-i18n="th_value">Value ↕</span></th>
@@ -1610,6 +1622,7 @@
           <button type="button" class="pill" data-type="analysis">Analysis</button>
           <button type="button" class="pill" data-type="summary">Summary</button>
           <button type="button" class="pill" data-type="proposal">Proposal</button>
+          <button type="button" class="pill" data-type="viewed" title="Tenders, buyers and suppliers you opened">Recently viewed</button>
         </div>
         <select id="historyCompanyFilter" class="tf-chip tf-chip--select" aria-label="Filter history by company" title="Filter by company profile">
           <option value="all">🏢 All Companies</option>
@@ -1762,6 +1775,7 @@
           <div class="ab-tabs" id="abCatFilter">
             <!-- Tabs generated dynamically -->
           </div>
+          <button type="button" class="ab-add-btn ab-add-btn--ghost" id="abChecklistBtn" title="See which of the documents most tenders ask for you already have">✔ Document checklist</button>
           <button type="button" class="ab-add-btn" id="abNewBtn">＋ Add Answer</button>
         </div>
         <div class="ab-legend-row">
@@ -2687,8 +2701,31 @@
 
       <form id="growthFilterBar" class="tf-filterbar tf-filterbar--page" role="search" aria-label="Filter signals">
         <select id="gsProfile" class="gs-chip-select" aria-label="Company profile"></select>
-        <select id="gsCategory" class="tf-chip tf-chip--select" aria-label="Category you sell into"></select>
+        <div class="tf-chip-wrap gs-services">
+          <button type="button" id="gsServicesBtn" class="tf-chip" aria-haspopup="dialog" aria-expanded="false" aria-controls="gsServicesPop"><span class="tf-chip__text" id="gsServicesText">Choose services…</span><span class="tf-chip__car" aria-hidden="true">▾</span></button>
+          <div id="gsServicesPop" class="tf-popover gs-services__pop hidden" role="dialog" aria-label="Services you sell into">
+            <div class="gs-svc__top">
+              <input type="search" id="gsServicesFilter" class="gs-input gs-input--sm" placeholder="Search services or any CPV description" aria-label="Search services" autocomplete="off" maxlength="60" />
+              <span id="gsServicesCount" class="gs-hint"></span>
+              <button type="button" id="gsServicesClear" class="gs-link">Clear</button>
+            </div>
+            <div id="gsServicesList" class="gs-svc__list"></div>
+            <div id="gsServicesCpv" class="gs-svc__list gs-svc__list--cpv"></div>
+            <details class="gs-svc__add">
+              <summary>Not listed? Add your own service</summary>
+              <div id="gsServicesForm" class="gs-svc__form">
+                <input name="name" class="gs-input gs-input--sm" placeholder="Service name, e.g. Swimming pool maintenance" maxlength="60" required aria-label="Service name" />
+                <input name="keywords" class="gs-input gs-input--sm" placeholder="Words in contract titles, comma separated" aria-label="Keywords" />
+                <input name="cpv" class="gs-input gs-input--sm" placeholder="CPV codes (optional), e.g. 5041" aria-label="CPV codes" />
+                <label class="tf-check"><input type="checkbox" name="share" /> Offer to all users (an administrator approves it first)</label>
+                <button type="button" id="gsServicesSave" class="gs-btn gs-btn--primary gs-btn--sm">Add service</button>
+              </div>
+            </details>
+            <button type="button" id="gsServicesCustom" class="gs-link">Custom search by CPV code or title words…</button>
+          </div>
+        </div>
         <select id="gsTypes" class="tf-chip tf-chip--select" aria-label="Signal type"></select>
+        <select id="gsMinFit" class="tf-chip tf-chip--select" aria-label="Minimum fit score" title="Hide signals that fit you less than this"></select>
         <select id="gsDays" class="gs-chip-select" aria-label="Time window: contracts ending within, and planning approvals granted within, this many days"></select>
         <label class="tf-search gs-where">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
@@ -3265,16 +3302,19 @@
   <script src="/portal-prefs.js?v=1"></script>
   <script src="/search-cache.js?v=2"></script>
   <script src="/watchlist.js?v=1"></script>
-  <script src="/location-pin.js?v=1"></script>
-  <script src="/app.js?v=224"></script>
+  <script src="/recent-views.js?v=1"></script>
+  <script src="/answer-bank-assist.js?v=1"></script>
+  <script src="/location-pin.js?v=2"></script>
+  <script src="/app.js?v=228"></script>
   <script src="/planning.js?v=17"></script>
   <script src="/responsive-fixes.js?v=1" defer></script>
-  <script src="/tooltips.js?v=1"></script>
+  <script src="/tooltips.js?v=2"></script>
   <script src="/connections.js?v=2"></script>
-  <script src="/growth-view.js?v=20"></script>
+  <script src="/growth-view.js?v=21"></script>
+  <script src="/growth-services.js?v=2"></script>
   <script src="/growth-channels.js?v=6"></script>
   <script src="/growth-inbox.js?v=4"></script>
-  <script src="/growth-studio.js?v=18"></script>
+  <script src="/growth-studio.js?v=19"></script>
   <script src="/email-outreach.js?v=5"></script>
   <script src="/shell.js?v=4"></script>
   <script src="/search-filters.js?v=10"></script>

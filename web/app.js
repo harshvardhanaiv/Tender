@@ -636,6 +636,7 @@ async function loadCurrentUser() {
     const data = await res.json();
     state.username = data.username || "";
     if (window.TFLocation) { window.TFLocation.configure({ storageKey: () => storageKey("last_location") }); window.TFLocation.init(); }
+    if (window.RecentViews) window.RecentViews.configure({ storageKey: () => storageKey("recent_views") });
     state.email = data.email || "";
 
     // Update AIV dashboard link with logged-in user's username
@@ -4806,6 +4807,12 @@ function profileKeywords(meta) {
   return set;
 }
 
+// One set of fit bands for the whole app (the AI deep score is asked for the same ones): 80+ strong, 50-79 possible, below 50 weak.
+// The pipeline, the badges and the list used to disagree (70/40 in some places), so one score showed two colours.
+function fitBandFor(score) {
+  return score >= 80 ? "strong" : score >= 50 ? "possible" : "weak";
+}
+
 function computeQuickFit(row, meta) {
   if (!meta) return null;
   const reasons = [];
@@ -4877,7 +4884,7 @@ function computeQuickFit(row, meta) {
 
   let score = Math.round(kwScore + geoScore + valScore + dlScore);
   score = Math.max(0, Math.min(100, score));
-  const band = score >= 80 ? "strong" : score >= 50 ? "possible" : "weak";
+  const band = fitBandFor(score);
   return { score, band, reasons: reasons.slice(0, 4), gaps: gaps.slice(0, 4), tier: "quick" };
 }
 
@@ -4909,11 +4916,11 @@ function fitBarHtml(fit, key) {
   if (!fit) return `<span class="fit-bar-empty">—</span>`;
 
   const score = fit.score || 0;
-  const band = fit.band || (score >= 70 ? "strong" : score >= 40 ? "possible" : "weak");
+  const band = fit.band || fitBandFor(score);
 
   let colorClass = "fit-bar--weak";
-  if (band === "strong" || score >= 70) colorClass = "fit-bar--strong";
-  else if (band === "possible" || score >= 40) colorClass = "fit-bar--possible";
+  if (band === "strong") colorClass = "fit-bar--strong";
+  else if (band === "possible") colorClass = "fit-bar--possible";
 
   const isDeep = fit.tier === "deep";
   const labelPrefix = isDeep ? "⚡ Recalculated AI Deep Score" : "Quick Fit";
@@ -5318,7 +5325,7 @@ const TABLE_COLUMNS = {
   all: [
     { id: "watchlist", label: "", width: "32px", className: "col-watchlist", type: "watchlist" },
     { id: "source", label: "Source", labelKey: "th_source", width: "130px", className: "col-source", type: "source" },
-    { id: "fit", label: "AI Score", labelKey: "th_ai_fit", width: "76px", className: "col-fit", type: "fit", sortable: true },
+    { id: "fit", label: "Keyword Score", labelKey: "th_ai_fit", width: "104px", className: "col-fit", type: "fit", sortable: true },
     { id: "ai_score", label: "AI Deep Score", labelKey: "th_ai_score", width: "76px", className: "col-ai-score", type: "ai_score" },
     { id: "title", label: "Title", labelKey: "th_title", width: "320px", className: "col-title", type: "title", sortable: true },
     { id: "authority", label: "Authority", labelKey: "th_authority", width: "210px", className: "col-authority", type: "authority" },
@@ -6343,10 +6350,10 @@ function buildResultRow(row) {
     const cachedDeep = state.fitCache[key]?.deep;
     if (cachedDeep) {
       const deepScore = cachedDeep.score || 0;
-      const band = cachedDeep.band || (deepScore >= 70 ? "strong" : deepScore >= 40 ? "possible" : "weak");
+      const band = cachedDeep.band || fitBandFor(deepScore);
       let colorClass = "fit-badge--weak";
-      if (band === "strong" || deepScore >= 70) colorClass = "fit-badge--strong";
-      else if (band === "possible" || deepScore >= 40) colorClass = "fit-badge--possible";
+      if (band === "strong") colorClass = "fit-badge--strong";
+      else if (band === "possible") colorClass = "fit-badge--possible";
       
       tdAi.innerHTML = `<span class="fit-badge ${colorClass}">${deepScore}</span>`;
     } else {
@@ -7200,6 +7207,7 @@ async function loadDetails(row) {
   const rid = String(row.resource_id || "");
   const key = rowKey(row);
   state.activeKey = key;
+  if (window.RecentViews && key && row.title) window.RecentViews.record("tender", key, row.title, row.contracting_authority || "", window.RecentViews.slimRow(row));
   renderRows();
 
   // Reset the new-tab button to hidden until we know the URL.
@@ -7432,7 +7440,7 @@ function populatePipelinePortalFilter() {
 // score, else the quick score. The pipeline used to show only the figure frozen when the tender was tracked (87 in the
 // pipeline against 15 in search once the profile or the full description changed), and counted "High fit" from it.
 function pipelineItemFit(item) {
-  const bandFor = (s) => (s >= 70 ? "strong" : s >= 40 ? "possible" : "weak");
+  const bandFor = (s) => (typeof fitBandFor === "function" ? fitBandFor(s) : s >= 80 ? "strong" : s >= 50 ? "possible" : "weak");
   const cached = state.fitCache && item ? state.fitCache[item.tender_key] : null;
   const live = cached && (cached.deep || cached.quick);
   if (live && live.score != null) return { score: live.score, band: live.band || bandFor(live.score) };
@@ -8727,6 +8735,24 @@ function setSearchControlsHidden(hidden) {
   });
 }
 
+// Which portals have answered, which are still working, and a plain note when the wait is long. The rows from the
+// portals that answered are already in the table, so the note says to start reading them.
+function searchProgressDetailHtml(portalList) {
+  const SLOW_SEARCH_MS = 20000;
+  if (!portalList || !portalList.length) return "";
+  const waiting = portalList.filter((p) => p.status === "pending" || p.status === "running");
+  const done = portalList.filter((p) => p.status === "ok" || p.status === "empty");
+  const failed = portalList.filter((p) => p.status === "error" || p.status === "timeout");
+  const parts = [];
+  if (done.length) parts.push(`<span class="sp-done" title="Answered">✓ ${done.map((p) => `${esc(p.label)}${p.count ? " (" + p.count.toLocaleString() + ")" : ""}`).join(", ")}</span>`);
+  if (waiting.length) parts.push(`<span class="sp-wait" title="Still working">⏳ ${waiting.map((p) => esc(p.label)).join(", ")}</span>`);
+  if (failed.length) parts.push(`<span class="sp-fail" title="No answer">⚠ ${failed.map((p) => esc(p.label)).join(", ")}</span>`);
+  const startedAt = typeof _searchStartedAt === "number" ? _searchStartedAt : 0;
+  const slow = waiting.length && startedAt > 0 && Date.now() - startedAt >= SLOW_SEARCH_MS;
+  const slowNote = slow ? `<span class="sp-slow">${waiting.length === 1 ? esc(waiting[0].label) + " is" : waiting.length + " portals are"} taking longer than usual. Results from the faster portals are already listed below; the rest will be added as they arrive.</span>` : "";
+  return `<span class="sp-sources">${parts.join(" · ")}</span>${slowNote}`;
+}
+
 function updateSearchProgressUI() {
   const track = $("searchProgressTrack");
   const fill = $("searchProgressBar");
@@ -8855,7 +8881,7 @@ function updateSearchProgressUI() {
     if (tenderCount > 0) {
       detailText = `Searching portals${kwNote}: ${completedCount} of ${allPortals} finished${waitNote} (${tenderCount} tenders found so far)...`;
     }
-    textEl.innerHTML = `<span class="search-progress-spinner"></span> ${detailText}`;
+    textEl.innerHTML = `<span class="search-progress-spinner"></span> ${detailText}${searchProgressDetailHtml(portalList)}`;
   }
   if (typeof updateActiveSearchKeywordBadge === "function") {
     updateActiveSearchKeywordBadge();
@@ -10149,7 +10175,7 @@ $("btnReadyBid")?.addEventListener("click", () => {
 
 function syncAllDatePills(preset) {
   state.dateFilterPreset = preset || "all";
-  const containers = [$("datePillsContainer"), $("rmDatePills")].filter(Boolean);
+  const containers = [$("datePillsContainer"), $("rmDatePills"), $("railDatePills")].filter(Boolean);
   containers.forEach(container => {
     const pills = container.querySelectorAll(".pill, .rm-pill");
     pills.forEach(p => {
@@ -10188,7 +10214,7 @@ function syncAllDatePills(preset) {
 }
 
 function initDatePills() {
-  const containers = [$("datePillsContainer"), $("rmDatePills")].filter(Boolean);
+  const containers = [$("datePillsContainer"), $("rmDatePills"), $("railDatePills")].filter(Boolean);
   if (containers.length === 0) return;
 
   containers.forEach(container => {
@@ -10199,6 +10225,7 @@ function initDatePills() {
         const isAlreadyActive = pill.classList.contains("active") && days !== "all";
         const newPreset = isAlreadyActive ? "all" : days;
         syncAllDatePills(newPreset);
+        if (newPreset === "custom" && container.id === "railDatePills") $("chipPublished")?.click();
       });
     });
   });
@@ -15766,11 +15793,55 @@ async function loadHistory() {
   }
 }
 
+// The "Recently viewed" tab of History: tenders, buyers and suppliers opened in this browser, newest first.
+function renderRecentViews(container, emptyState, countLabel) {
+  const q = ($("historySearchInput")?.value || "").toLowerCase().trim();
+  const KIND = { tender: ["📄", "Tender"], buyer: ["🏛️", "Buyer"], supplier: ["🏢", "Supplier"] };
+  const items = (window.RecentViews ? window.RecentViews.list() : []).filter(e => !q || `${e.title} ${e.sub}`.toLowerCase().includes(q));
+  if (countLabel) countLabel.textContent = `${items.length} ${items.length === 1 ? "item" : "items"}`;
+  if (!items.length) {
+    emptyState.innerHTML = `<span style="font-size: 36px; display: block; margin-bottom: 10px;">🕘</span>${q ? "Nothing viewed matches that." : "Tenders, buyers and suppliers you open will be listed here so you can get back to them."}`;
+    emptyState.style.display = "block";
+    return;
+  }
+  emptyState.style.display = "none";
+  container.innerHTML = `<div class="rv-bar"><span>Kept in this browser only.</span> <button type="button" class="rv-clear" id="rvClear">Clear</button></div>` + items.map((e, i) => `
+    <div class="history-card rv-card" data-rv="${i}" tabindex="0" role="button" style="cursor:pointer;">
+      <div class="history-card__icon-wrapper icon--summary" aria-hidden="true">${KIND[e.kind][0]}</div>
+      <div class="history-card__info">
+        <h4 class="history-card__title" title="${esc(e.title)}">${esc(e.title)}</h4>
+        <div class="history-card__meta">
+          <span class="history-card__badge badge--summary">${KIND[e.kind][1]}</span>
+          ${e.sub ? `<span>${esc(e.sub)}</span>` : ""}
+          <span class="history-card__date">🕘 ${esc(window.RecentViews.ago(e.ts))}${e.views > 1 ? ` · viewed ${e.views}×` : ""}</span>
+        </div>
+      </div>
+      <div class="history-card__actions"><button type="button" class="btn-history-view" tabindex="-1">Open</button></div>
+    </div>`).join("");
+  const open = (e) => {
+    closeHistoryModal();
+    if (e.kind === "buyer") openBuyerProfileDrawer(e.title);
+    else if (e.kind === "supplier") { openSupplierIntelligenceModal(); loadSupplierDetail(e.key); }
+    else if (e.payload) { state.autoExpandDetails = true; loadDetails({ ...e.payload }); }
+  };
+  container.querySelectorAll(".rv-card").forEach(card => {
+    const e = items[Number(card.dataset.rv)];
+    card.addEventListener("click", () => open(e));
+    card.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(e); } });
+  });
+  $("rvClear")?.addEventListener("click", () => { window.RecentViews.clear(); renderHistoryList(); });
+}
+
 function renderHistoryList() {
   const container = $("historyCardList");
   const emptyState = $("historyEmptyState");
   const countLabel = $("historyCountLabel");
   if (!container) return;
+  if (state.historyFilterType === "viewed") {
+    container.innerHTML = "";
+    renderRecentViews(container, emptyState, countLabel);
+    return;
+  }
 
   container.innerHTML = "";
 
@@ -16169,6 +16240,7 @@ const abState = {
 const AB_DEFAULT_CATS = [
   "Company Overview", "Experience", "Methodology", "Quality",
   "Health & Safety", "Social Value", "Team", "Pricing", "General",
+  "Insurance & Certificates", "Policies & Compliance", "Cyber & Data Security", "Environmental & Sustainability", "Financial Standing",
 ];
 
 const AB_CATEGORY_QUESTIONS = {
@@ -16498,7 +16570,7 @@ function abShowForm(editId = null, prefillCat = null, prefillQ = null, prefillA 
   const fileStatus = $("abFileUploadStatus");
   const fileInp = $("abFileInput");
   if (fileInp) fileInp.value = "";
-  if (fileStatus) fileStatus.textContent = "Upload document(s) to automatically populate text or attach reference content for AI bid responses.";
+  if (fileStatus) { delete fileStatus.dataset.suggestion; fileStatus.textContent = "Upload document(s) to automatically populate text or attach reference content for AI bid responses."; }
   abRenderFileBadges();
 
   const titleEl = $("abFormTitle");
@@ -16600,6 +16672,59 @@ async function loadAnswerBank() {
   }
 }
 
+// What the user does and tenders for, as one block of words, so the checklist can add documents typical of their sector.
+function abContextText() {
+  const parts = [];
+  const meta = typeof getActiveProfileMeta === "function" ? getActiveProfileMeta() : null;
+  if (meta) parts.push(Object.values(meta).filter(v => typeof v === "string").join(" "));
+  const prof = typeof getActiveProfile === "function" ? getActiveProfile() : null;
+  if (prof && prof.profile_text) parts.push(String(prof.profile_text).slice(0, 4000));
+  Object.values(state.pipeline || {}).slice(0, 60).forEach(t => parts.push(t.title || ""));
+  return parts.join(" ");
+}
+
+function abChecklistHtml() {
+  const A = window.AnswerBankAssist;
+  if (!A) return "";
+  const status = A.checklistStatus(abState.items, { context: abContextText(), now: Date.now() });
+  const sum = A.summary(status);
+  const pct = Math.round((sum.covered / Math.max(1, sum.total)) * 100);
+  const label = { covered: "In your bank", attention: "Needs attention", missing: "Missing" };
+  const rows = status.map(e => {
+    const flag = e.flags.filter(f => f.code !== "thin" && f.code !== "stale")[0];
+    const action = e.status === "missing"
+      ? `<button type="button" class="ab-attention__btn" data-ab-add="${esc(e.id)}">＋ Add</button>`
+      : `<button type="button" class="ab-attention__btn" data-ab-edit="${e.matches[0]}">Open</button>`;
+    return `<div class="ab-check ab-check--${e.status}">
+      <span class="ab-check__dot" aria-hidden="true">${e.status === "covered" ? "✓" : e.status === "attention" ? "!" : "○"}</span>
+      <div class="ab-check__main">
+        <div class="ab-check__label">${esc(e.label)} ${e.level === "essential" ? '<em class="ab-check__tag">asked in most tenders</em>' : ""}${e.sector ? `<em class="ab-check__tag">${esc(e.sector)}</em>` : ""}</div>
+        <div class="ab-check__why">${esc(flag ? flag.detail : e.why)}</div>
+      </div>
+      <span class="ab-check__state">${esc(label[e.status])}</span>${action}
+    </div>`;
+  }).join("");
+  return `<div class="ab-checklist">
+    <div class="ab-checklist__head"><b>${sum.covered} of ${sum.total}</b> usual tender documents are in your bank${sum.attention ? `, ${sum.attention} need attention` : ""}${sum.essentialMissing ? `. ${sum.essentialMissing} that most tenders ask for are missing` : ""}.
+      <div class="ab-checklist__bar"><i style="width:${pct}%"></i></div></div>${rows}
+    <p class="ab-checklist__note">Suggestions come from rules, not AI, and use only your own bank, profile and tracked tenders.</p></div>`;
+}
+
+function abWireChecklist(list) {
+  const A = window.AnswerBankAssist;
+  const status = A.checklistStatus(abState.items, { context: abContextText(), now: Date.now() });
+  list.querySelectorAll("[data-ab-add]").forEach(btn => btn.addEventListener("click", () => {
+    const e = status.find(x => x.id === btn.dataset.abAdd);
+    if (!e) return;
+    abState.view = "list";
+    abShowForm(null, e.category, e.label, "");
+  }));
+  list.querySelectorAll("[data-ab-edit]").forEach(btn => btn.addEventListener("click", () => {
+    abState.view = "list";
+    abShowForm(Number(btn.dataset.abEdit));
+  }));
+}
+
 function renderAnswerBank() {
   abUpdateCountBadge();
   abRenderCategoryFilters();
@@ -16609,6 +16734,18 @@ function renderAnswerBank() {
   const searchVal = ($("abSearchInput")?.value || "").trim().toLowerCase();
 
   let items = filter ? abState.items.filter(i => i.category === filter) : abState.items;
+
+  if (abState.view === "checklist") {
+    list.innerHTML = abChecklistHtml();
+    abWireChecklist(list);
+    const footerCount0 = $("abFooterCount");
+    if (footerCount0) footerCount0.textContent = `${abState.items.length} ${abState.items.length === 1 ? "entry" : "entries"}`;
+    $("abChecklistBtn")?.classList.add("ab-add-btn--on");
+    return;
+  }
+  $("abChecklistBtn")?.classList.remove("ab-add-btn--on");
+  const flagged = window.AnswerBankAssist ? abState.items.filter(i => window.AnswerBankAssist.attentionFlags(i, Date.now()).length) : [];
+  if (abState.attentionOnly) items = items.filter(i => flagged.includes(i));
 
   if (searchVal) {
     items = items.filter(i =>
@@ -16640,7 +16777,13 @@ function renderAnswerBank() {
   }
 
   const profiles = state.companyProfiles || [];
-  list.innerHTML = items.map(item => {
+  const attentionStrip = flagged.length
+    ? `<div class="ab-attention"><span>⚠ ${flagged.length} ${flagged.length === 1 ? "answer needs" : "answers need"} attention (expired, unfinished, very short or out of date).</span> <button type="button" class="ab-attention__btn" id="abAttentionToggle">${abState.attentionOnly ? "Show all" : "Show only these"}</button></div>`
+    : "";
+  list.innerHTML = attentionStrip + items.map(item => {
+    const flagPills = window.AnswerBankAssist
+      ? window.AnswerBankAssist.attentionFlags(item, Date.now()).map(f => `<span class="ab-card__flag ab-card__flag--${esc(f.code)}" title="${esc(f.detail)}">⚠ ${esc(f.label)}</span>`).join("")
+      : "";
     let scopeBadgeHtml = "";
     if (item.profile_id) {
       const p = profiles.find(prof => String(prof.id) === String(item.profile_id));
@@ -16663,6 +16806,7 @@ function renderAnswerBank() {
           <div class="ab-card__tags" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
             <span class="ab-card__cat-pill">${esc(catLabel)}</span>
             ${scopeBadgeHtml}
+            ${flagPills}
             ${fileBadgeHtml}
           </div>
           <div class="ab-card__actions" style="display: flex; gap: 8px; align-items: center;">
@@ -16681,6 +16825,7 @@ function renderAnswerBank() {
     `;
   }).join("");
 
+  $("abAttentionToggle")?.addEventListener("click", () => { abState.attentionOnly = !abState.attentionOnly; renderAnswerBank(); });
   // Edit buttons
   list.querySelectorAll(".ab-card__btn--edit").forEach(btn => {
     btn.addEventListener("click", () => abShowForm(Number(btn.dataset.id)));
@@ -16699,6 +16844,13 @@ function renderAnswerBank() {
       btn.textContent = expanded ? "Show less" : "Show more";
     });
   });
+}
+
+// Says which category an uploaded document was sorted into and why, so the user can change it.
+function abNoteSuggestedCategory(sugg) {
+  const el = $("abFileUploadStatus");
+  if (!el || !sugg || sugg.confidence === "none") return;
+  el.dataset.suggestion = `Sorted into "${sugg.category}" (${sugg.reason}). Change it above if that is wrong.`;
 }
 
 async function abHandleFileUpload(files, isQuickUpload = false) {
@@ -16737,9 +16889,17 @@ async function abHandleFileUpload(files, isQuickUpload = false) {
       });
       successCount++;
 
+      const sugg = window.AnswerBankAssist ? window.AnswerBankAssist.suggestCategory(data.file_name, data.extracted_text, data.suggested_question) : null;
       if (isQuickUpload && successCount === 1) {
-        abShowForm(null, "Company Overview", data.suggested_question, "");
+        abShowForm(null, (sugg && sugg.confidence !== "none" ? sugg.category : "Company Overview"), data.suggested_question, "");
+        abNoteSuggestedCategory(sugg);
       } else {
+        // Sort the document into a category unless the user has already chosen one other than the default
+        const catSel = $("abFldCat");
+        if (sugg && sugg.confidence !== "none" && catSel && (!catSel.value || catSel.value === "General" || catSel.value === "Company Overview") && [...catSel.options].some(o => o.value === sugg.category)) {
+          catSel.value = sugg.category;
+        }
+        abNoteSuggestedCategory(sugg);
         if ($("abFldQ") && !$("abFldQ").value.trim() && data.suggested_question) {
           $("abFldQ").value = data.suggested_question;
         }
@@ -16748,9 +16908,9 @@ async function abHandleFileUpload(files, isQuickUpload = false) {
     abRenderFileBadges();
     const totalChars = abState.currentFiles.reduce((acc, f) => acc + (f.file_content ? f.file_content.length : 0), 0);
     if (statusEl) {
-      statusEl.textContent = abState.currentFiles.length > 0
+      statusEl.textContent = (statusEl.dataset.suggestion ? statusEl.dataset.suggestion + " " : "") + (abState.currentFiles.length > 0
         ? `Attached ${abState.currentFiles.length} reference document(s) (${totalChars} chars). Click 🤖 AI Generate or ✨ Enrich to draft your answer using these documents.`
-        : "Upload document(s) to attach reference content for AI bid responses.";
+        : "Upload document(s) to attach reference content for AI bid responses.");
     }
   } catch (err) {
     if (statusEl) statusEl.textContent = `Upload error: ${err.message}`;
@@ -16878,6 +17038,11 @@ function initAnswerBank() {
   $("abEditorModal")?.addEventListener("click", e => { if (e.target === $("abEditorModal")) abHideForm(); });
 
   $("abNewBtn")?.addEventListener("click", () => abShowForm());
+  $("abChecklistBtn")?.addEventListener("click", () => {
+    abState.view = abState.view === "checklist" ? "list" : "checklist";
+    abState.attentionOnly = false;
+    renderAnswerBank();
+  });
   $("abFormCancel")?.addEventListener("click", abHideForm);
   $("abFormSave")?.addEventListener("click", abSaveItem);
   $("abFormAi")?.addEventListener("click", abGenerateAnswer);
@@ -16944,6 +17109,8 @@ function initAnswerBank() {
     const btn = e.target.closest(".ab-tab");
     if (!btn) return;
     const cat = btn.dataset.cat || "";
+    abState.view = "list";
+    abState.attentionOnly = false;
     
     // If it's an empty category, check if click should open form
     const count = cat ? abState.items.filter(i => i.category === cat).length : abState.items.length;
@@ -18881,6 +19048,7 @@ async function loadSupplierDetail(supplierId) {
     const s = data.supplier;
     const m = data.metrics;
     const awards = data.awards || [];
+    if (window.RecentViews && s && s.name) window.RecentViews.record("supplier", String(supplierId), s.name, s.location || s.company_number || "");
 
     const smeBadge = s.sme_status === "SME"
       ? '<span class="badge-sme" title="🌱 Small &amp; Medium Enterprise (SME): Business verified with <250 employees and turnover ≤ €50M.">🌱 SME Verified</span>'
@@ -20637,6 +20805,7 @@ function openBuyerProfileDrawer(authorityName) {
   if (!drawerModal) return;
 
   $("drawerBuyerName").textContent = authorityName;
+  if (window.RecentViews) window.RecentViews.record("buyer", String(authorityName).toUpperCase(), authorityName, "");
   const watchSlot = $("drawerBuyerWatch");
   if (watchSlot && window.TFWatch) watchSlot.innerHTML = window.TFWatch.buttonHtml("buyer", authorityName, authorityName, "buyer_intelligence", { label: true });
   drawerModal.classList.remove("hidden");
