@@ -62,13 +62,11 @@ History has a **Recently viewed** tab: tenders, buyers and suppliers opened, new
 ## 10. Date filter: built
 "Published" pills (Anytime, 7d, 14d, 30d, 60d, Custom) sit in the left panel under Tender search and stay in step with the Any date chip. Custom opens the chip's date sliders.
 
-## 11. Token rollover: needs a decision (facts first)
-**Today credits never expire.** There is one balance per user (`credit_wallet`); a subscription renewal adds its credits on top (`PLAN_CREDITS`: 150/500/1,500 a month) and nothing is removed. So unused tokens already carry forward without limit. A three-month limit would *take away* something users have now.
-
-Decisions needed:
-1. Is the intent to **keep** unlimited carry-over, or to **limit** subscription credits to 3 months?
-2. Do bought packs (100/300/1,000) expire? Suggested: no.
-3. Spend order if there is an expiry: oldest first (suggested), packs last.
-4. Existing balances: leave untouched (suggested) or put under the new rule from a date?
-
-If a limit is chosen: replace the single number with `credit_lots (username, amount_left, source, granted_at, expires_at)`, spend oldest first, keep `credit_wallet.balance` as the sum, show "N credits expire on <date>", email a reminder 14 days before, and migrate current balances into one lot with no expiry. About two days of work with tests.
+## 11. Token rollover: built (3-month expiry)
+Decided: every grant expires 3 months after it is granted (`CREDIT_EXPIRY_DAYS`, default 90): plan credits, bought packs, signup, admin grants and refunds. Credits held at go-live become one `legacy` lot that expires 3 months after the first start with this code.
+- `credit_lots (username, amount_left, source, granted_at, expires_at, reminded_at)`; `credit_wallet.balance` stays the total.
+- Spending takes from the lot that expires first. Expired credits leave the balance with a `credit_expiry` ledger row, applied on any balance read or spend and by the daily sweep.
+- Credits written straight into `credit_wallet` (no lot) get a 3-month lot the next time the balance is read.
+- `/api/billing/status` adds `next_expiry` and `credit_lots`; one reminder email per lot 14 days before expiry (daily sweep in the email scheduler).
+- Not built: showing "N credits expire on <date>" in the UI.
+- Test: `python tests/test_credit_expiry.py`.

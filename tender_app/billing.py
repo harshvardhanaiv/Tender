@@ -6,7 +6,7 @@ import os
 from typing import Any, Callable
 
 from tender_app.config import get_app_base_url, PACK_CREDITS, PLAN_CREDITS
-from tender_app.credits import grant_credits, get_balance
+from tender_app.credits import grant_credits, get_balance, get_expiring_lots
 
 logger = logging.getLogger(__name__)
 
@@ -516,9 +516,9 @@ def get_billing_status(conn, username: str) -> dict:
         (username,),
     )
     sub = cursor.fetchone()
-    cursor.execute(f"SELECT balance FROM credit_wallet WHERE username = {ph}", (username,))
-    bal = cursor.fetchone()
     cursor.close()
+    bal = (get_balance(conn, username),)
+    expiring = get_expiring_lots(conn, username)
     customer_id = sub[4] if sub else None
     sub_info: dict[str, Any] = {"legacy": False, "interval": None, "price_id": None}
     invoice_pdf = None
@@ -538,6 +538,8 @@ def get_billing_status(conn, username: str) -> dict:
         "monthly_credits": sub[2] if sub else 0,
         "current_period_end": str(sub[3]) if sub and sub[3] else None,
         "balance": int(bal[0]) if bal else 0,
+        "next_expiry": expiring[0] if expiring else None,
+        "credit_lots": expiring,
         "has_stripe_customer": bool(sub and sub[4]),
         "subscription_legacy": sub_info.get("legacy", False),
         "billing_interval": sub_info.get("interval"),

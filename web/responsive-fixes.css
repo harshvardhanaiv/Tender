@@ -31,7 +31,7 @@ body.tf-shell .tf-keyword .sidebar-search-input { min-width: 0; text-overflow: e
   .table col.col-title, .table th.col-title { width: 270px !important; min-width: 0 !important; }
   .table col.col-authority, .table th.col-authority { width: 170px !important; min-width: 0 !important; }
   .table col.col-source, .table th.col-source { width: 100px !important; min-width: 0 !important; }
-  .table col.col-fit, .table th.col-fit { width: 100px !important; min-width: 0 !important; }
+  .table col.col-fit, .table th.col-fit { width: 112px !important; min-width: 0 !important; }
 }
 @container results (max-width: 1000px) {
   .table :is(.col-source, .col-ai-score, .col-procedure, .col-status) { display: none; }
@@ -120,7 +120,9 @@ body.search-quiet #status { display: none !important; }
 
 /* Values never wrap mid-number; narrow headers wrap onto two lines instead of being cut off ("AI DEEP SCC") */
 .table td.col-value, .table td:has(> .value-cell) { white-space: nowrap; }
-.table th.col-fit, .table th.col-ai-score { white-space: normal; line-height: 1.15; overflow-wrap: anywhere; }
+/* styles.css sets "thead th { white-space: nowrap !important }", which beat this rule: French "Score mots-clés" and Dutch
+   "Trefwoordscore" ran into the next header. They wrap at a space or hyphen (never mid-word) inside a 112px column. */
+.table thead th.col-fit, .table thead th.col-ai-score { white-space: normal !important; line-height: 1.15; overflow-wrap: normal; }
 
 /* "AI DEEP SCORE" spilled out of its cell at 1366px (83px of text in a 76px column) */
 @container results (max-width: 1180px) {

@@ -256,6 +256,19 @@ def send_low_credit(email: str, balance: int) -> None:
     )
 
 
+def send_credit_expiry_reminder(email: str, lots: list) -> bool:
+    """lots: [(amount, expires_at)] that expire soon."""
+    total = sum(n for n, _ in lots)
+    lines = "\n".join(f"  {n} credits expire on {str(e)[:10]}" for n, e in lots)
+    return send_email(
+        email,
+        f"{total} TenderFlow credits expire soon",
+        "Some of your TenderFlow credits are about to expire:\n\n"
+        f"{lines}\n\n"
+        "Credits are used oldest first. Use them before the date shown, or they will be removed.\n",
+    )
+
+
 from datetime import datetime, timezone
 
 

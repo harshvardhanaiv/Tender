@@ -59,6 +59,37 @@ def create_saas_tables(cursor) -> None:
         CREATE INDEX IF NOT EXISTS idx_credit_ledger_username
         ON credit_ledger(username);
     """)
+    # Credits expire per grant. credit_wallet.balance stays the sum of amount_left.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS credit_lots (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(100) NOT NULL,
+            amount_left INTEGER NOT NULL,
+            source VARCHAR(100) NOT NULL DEFAULT '',
+            granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            reminded_at TIMESTAMP
+        );
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_credit_lots_username
+        ON credit_lots(username, expires_at);
+    """)
+    # Balances held before expiry existed: one lot per wallet, expiring CREDIT_EXPIRY_DAYS
+    # after the first start with this code. Wallets that already have lots are skipped, so
+    # re-running changes nothing.
+    from tender_app.credits import CREDIT_EXPIRY_DAYS
+    cursor.execute(
+        """
+        INSERT INTO credit_lots (username, amount_left, source, expires_at)
+        SELECT w.username, w.balance, 'legacy',
+               CURRENT_TIMESTAMP + (%s * INTERVAL '1 day')
+        FROM credit_wallet w
+        WHERE w.balance > 0
+          AND NOT EXISTS (SELECT 1 FROM credit_lots l WHERE l.username = w.username)
+        """,
+        (CREDIT_EXPIRY_DAYS,),
+    )
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS subscriptions (
             id SERIAL PRIMARY KEY,

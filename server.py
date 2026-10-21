@@ -2712,6 +2712,11 @@ def start_email_scheduler():
                 send_empty_pipeline_recommendation_emails()
             except Exception as e:
                 print(f"[Email Scheduler] Unhandled error: {e}")
+            try:
+                from tender_app.credits import run_credit_expiry_sweep
+                run_credit_expiry_sweep(get_db_connection)
+            except Exception as e:
+                print(f"[Credit Expiry] sweep failed: {e}")
             # Sleep 24 hours
             threading.Event().wait(86400)
 

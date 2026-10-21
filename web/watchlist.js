@@ -64,10 +64,12 @@
   }
   function remove(kind, key) {
     var k = keyFor(kind, key);
+    var was = items.filter(function (i) { return i.kind === kind && i.entity_key === k; })[0];
     return fetch("/api/watchlist/" + encodeURIComponent(kind) + "/" + encodeURIComponent(k), { method: "DELETE" }).then(function (r) {
-      if (!r.ok) return false;
+      if (!r.ok) { if (root.showToast) root.showToast("Could not remove it from the watchlist", "error"); return false; }
       items = items.filter(function (i) { return !(i.kind === kind && i.entity_key === k); });
       changed();
+      if (root.showToast) root.showToast("Removed " + (was && was.name ? was.name : "it") + " from your watchlist");
       return true;
     });
   }

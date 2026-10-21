@@ -85,6 +85,20 @@ def test_cpv_search_finds_any_branch_by_its_description():
     assert gsv.search_cpv(labels, counts, "x") == []
 
 
+def test_cpv_search_offers_a_zero_padded_branch_once():
+    # the awards data keeps 50000000 under 500, 5000, 50000, 500000 and 5000000; the user must see one row, the shortest
+    labels = {c: "Repair and maintenance services" for c in ("500", "5000", "50000", "500000", "5000000")}
+    labels["5041"] = "Repair of swimming pool plant"
+    labels["504100"] = "Repair of swimming pool plant"
+    counts = {c: 5638 for c in ("500", "5000", "50000", "500000", "5000000")}
+    counts["5041"] = 12
+    counts["504100"] = 12
+    got = gsv.search_cpv(labels, counts, "repair")
+    assert [r["cpv"] for r in got] == ["500", "5041"], got
+    assert [r["cpv"] for r in gsv.search_cpv(labels, counts, "5041")] == ["5041"]
+    assert [r["cpv"] for r in gsv.search_cpv(labels, counts, "500")] == ["500"], "a code typed in digits is not repeated either"
+
+
 def test_min_fit_is_validated_and_round_trips():
     f = gs.filters_from({"category": "cyber-security,legal-services", "min_fit": "60"})
     assert f.min_fit == 60 and f.to_public()["min_fit"] == 60 and f.to_request()["min_fit"] == 60
