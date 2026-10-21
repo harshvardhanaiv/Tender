@@ -140,8 +140,312 @@ CATEGORY_PRESETS: tuple[dict[str, Any], ...] = (
         "cpv": ("45",),
         "keywords": (),
     },
+    {
+        "id": 'energy-efficiency-retrofit',
+        "label": 'Energy efficiency & retrofit',
+        "hint": 'Insulation, heat pumps, solar PV and decarbonisation works',
+        "cpv": ('45321', '71314', '09331'),
+        "keywords": ('retrofit', 'energy efficiency', 'heat pump', 'decarbonisation', 'solar pv', 'insulation'),
+        "keyword_cpv": ('45', '71', '50', '09'),
+    },
+    {
+        "id": 'new-build-housing',
+        "label": 'New-build housing',
+        "hint": 'Construction of homes and multi-dwelling buildings',
+        "cpv": ('45211',),
+        "keywords": ('new build', 'new homes', 'housing development'),
+    },
+    {
+        "id": 'mechanical-electrical',
+        "label": 'Mechanical & electrical (M&E) works',
+        "hint": 'Electrical installation, plumbing, heating and ventilation works',
+        "cpv": ('4531', '4533'),
+        "keywords": (),
+    },
+    {
+        "id": 'roofing-building-fabric',
+        "label": 'Roofing, windows & building fabric',
+        "hint": 'Roofing, joinery, glazing and external envelope works',
+        "cpv": ('45261', '4542', '4544'),
+        "keywords": (),
+    },
+    {
+        "id": 'groundworks-civils',
+        "label": 'Groundworks & civil engineering',
+        "hint": 'Site clearance, earthworks, drainage and civil works',
+        "cpv": ('4511', '4522'),
+        "keywords": (),
+    },
+    {
+        "id": 'fire-safety',
+        "label": 'Fire safety & alarms',
+        "hint": 'Fire alarms, detection, sprinklers and fire door works',
+        "cpv": ('45343', '35111', '3513'),
+        "keywords": ('fire alarm', 'fire safety', 'fire door', 'sprinkler', 'fire risk'),
+        "keyword_cpv": ('45', '50', '51', '35'),
+    },
+    {
+        "id": 'lifts-escalators',
+        "label": 'Lifts & escalators',
+        "hint": 'Lift installation, servicing and repair',
+        "cpv": ('42416', '45313', '50750'),
+        "keywords": (),
+    },
+    {
+        "id": 'asbestos-decontamination',
+        "label": 'Asbestos & decontamination',
+        "hint": 'Asbestos surveys and removal, disinfection and decontamination',
+        "cpv": ('90650', '45262660', '9067'),
+        "keywords": (),
+    },
+    {
+        "id": 'furniture-fit-out',
+        "label": 'Furniture & fit-out',
+        "hint": 'Furniture supply and interior fit-out',
+        "cpv": ('39', '454'),
+        "keywords": (),
+    },
+    {
+        "id": 'building-materials',
+        "label": 'Building materials & supplies',
+        "hint": 'Construction materials and components',
+        "cpv": ('44',),
+        "keywords": (),
+    },
+    {
+        "id": 'street-cleansing',
+        "label": 'Street cleansing & sweeping',
+        "hint": 'Street sweeping, litter and gully cleaning',
+        "cpv": ('9061',),
+        "keywords": (),
+    },
+    {
+        "id": 'hazardous-waste',
+        "label": 'Hazardous & clinical waste',
+        "hint": 'Hazardous, clinical and special waste handling',
+        "cpv": ('9052',),
+        "keywords": (),
+    },
+    {
+        "id": 'environmental-ecology',
+        "label": 'Environmental, ecology & remediation',
+        "hint": 'Environmental management, ecology surveys and land remediation',
+        "cpv": ('907', '71313'),
+        "keywords": (),
+    },
+    {
+        "id": 'water-wastewater',
+        "label": 'Water & wastewater',
+        "hint": 'Water supply, sewerage and wastewater treatment',
+        "cpv": ('41', '904'),
+        "keywords": (),
+    },
+    {
+        "id": 'pest-control',
+        "label": 'Pest control',
+        "hint": 'Pest and vermin control services',
+        "cpv": ('90923',),
+        "keywords": (),
+    },
+    {
+        "id": 'telecoms-networks',
+        "label": 'Telecoms & networks',
+        "hint": 'Telecoms services, network equipment and network support',
+        "cpv": ('642', '32', '727'),
+        "keywords": (),
+    },
+    {
+        "id": 'cyber-security',
+        "label": 'Cyber security',
+        "hint": 'Security testing, monitoring and information-security services',
+        "cpv": ('7221273',),
+        "keywords": ('cyber', 'penetration test', 'information security', 'security operations'),
+        "keyword_cpv": ('72', '48', '79'),
+    },
+    {
+        "id": 'data-analytics',
+        "label": 'Data & analytics',
+        "hint": 'Data analysis, business intelligence and database services',
+        "cpv": ('72316', '72320'),
+        "keywords": ('data analytics', 'business intelligence', 'data platform', 'machine learning'),
+        "keyword_cpv": ('72', '48', '73'),
+    },
+    {
+        "id": 'cloud-hosting',
+        "label": 'Cloud & hosting',
+        "hint": 'Cloud, hosting and managed IT platforms',
+        "cpv": ('72415', '72416', '72314'),
+        "keywords": ('cloud', 'hosting', 'managed service'),
+        "keyword_cpv": ('72', '48'),
+    },
+    {
+        "id": 'it-hardware',
+        "label": 'IT hardware & equipment',
+        "hint": 'Computers, devices and peripherals',
+        "cpv": ('30',),
+        "keywords": (),
+    },
+    {
+        "id": 'architecture-engineering',
+        "label": 'Architecture, engineering & surveying',
+        "hint": 'Design, engineering consultancy, surveying and project management',
+        "cpv": ('71',),
+        "keywords": (),
+    },
+    {
+        "id": 'legal-services',
+        "label": 'Legal services',
+        "hint": 'Legal advice and representation',
+        "cpv": ('791',),
+        "keywords": (),
+    },
+    {
+        "id": 'accountancy-audit',
+        "label": 'Accountancy, audit & payroll',
+        "hint": 'Accounting, auditing, tax and payroll services',
+        "cpv": ('792',),
+        "keywords": (),
+    },
+    {
+        "id": 'management-consultancy',
+        "label": 'Management & business consultancy',
+        "hint": 'Strategy, change and business consultancy',
+        "cpv": ('794',),
+        "keywords": (),
+    },
+    {
+        "id": 'recruitment-staffing',
+        "label": 'Recruitment & agency staffing',
+        "hint": 'Recruitment, temporary and agency staff',
+        "cpv": ('796',),
+        "keywords": (),
+    },
+    {
+        "id": 'marketing-communications',
+        "label": 'Marketing, advertising & PR',
+        "hint": 'Advertising, marketing, campaigns and public relations',
+        "cpv": ('7934', '79416'),
+        "keywords": (),
+    },
+    {
+        "id": 'print-design',
+        "label": 'Printing & design',
+        "hint": 'Printing, publishing and graphic design',
+        "cpv": ('798', '22'),
+        "keywords": (),
+    },
+    {
+        "id": 'translation-interpreting',
+        "label": 'Translation & interpreting',
+        "hint": 'Translation, interpreting and language services',
+        "cpv": ('7953', '7954'),
+        "keywords": (),
+    },
+    {
+        "id": 'security-guarding',
+        "label": 'Security & guarding services',
+        "hint": 'Manned guarding, patrols, alarm response and CCTV monitoring',
+        "cpv": ('797',),
+        "keywords": (),
+    },
+    {
+        "id": 'training-education',
+        "label": 'Training & education services',
+        "hint": 'Training, courses, schools and further education',
+        "cpv": ('80',),
+        "keywords": (),
+    },
+    {
+        "id": 'research-development',
+        "label": 'Research & development',
+        "hint": 'Research, studies and development services',
+        "cpv": ('73',),
+        "keywords": (),
+    },
+    {
+        "id": 'insurance-finance',
+        "label": 'Insurance & financial services',
+        "hint": 'Insurance, banking and financial services',
+        "cpv": ('66',),
+        "keywords": (),
+    },
+    {
+        "id": 'property-estates',
+        "label": 'Property & estate services',
+        "hint": 'Estate management, valuation and letting',
+        "cpv": ('70',),
+        "keywords": (),
+    },
+    {
+        "id": 'health-medical-services',
+        "label": 'Health & medical services',
+        "hint": 'Clinical, diagnostic and health services',
+        "cpv": ('851', '852'),
+        "keywords": (),
+    },
+    {
+        "id": 'medical-equipment',
+        "label": 'Medical equipment & supplies',
+        "hint": 'Medical devices, consumables and pharmaceuticals',
+        "cpv": ('33',),
+        "keywords": (),
+    },
+    {
+        "id": 'catering-food',
+        "label": 'Catering & food supply',
+        "hint": 'Catering services, meals and food supply',
+        "cpv": ('55', '15'),
+        "keywords": (),
+    },
+    {
+        "id": 'vehicles-fleet',
+        "label": 'Vehicles & fleet',
+        "hint": 'Vehicle supply, repair and fleet management',
+        "cpv": ('34', '501'),
+        "keywords": (),
+    },
+    {
+        "id": 'transport-logistics',
+        "label": 'Transport & logistics',
+        "hint": 'Passenger and freight transport, storage and logistics',
+        "cpv": ('60', '63'),
+        "keywords": (),
+    },
+    {
+        "id": 'postal-courier',
+        "label": 'Postal & courier services',
+        "hint": 'Mail, parcels and courier services',
+        "cpv": ('641',),
+        "keywords": (),
+    },
+    {
+        "id": 'leisure-culture',
+        "label": 'Leisure, sport & culture',
+        "hint": 'Sports facilities, libraries, museums and entertainment',
+        "cpv": ('92',),
+        "keywords": (),
+    },
+    {
+        "id": 'funeral-bereavement',
+        "label": 'Funeral & bereavement services',
+        "hint": 'Funeral, cemetery and crematorium services',
+        "cpv": ('9837',),
+        "keywords": (),
+    },
 )
 _PRESETS_BY_ID = {p["id"]: p for p in CATEGORY_PRESETS}
+
+# How the services are grouped in the picker (anything not listed is "Other")
+PRESET_GROUPS: dict[str, tuple[str, ...]] = {
+    "Housing & property": ("housing-repairs-gas", "new-build-housing", "energy-efficiency-retrofit", "property-estates", "asbestos-decontamination", "lifts-escalators", "fire-safety"),
+    "Construction & engineering": ("construction-works", "mechanical-electrical", "roofing-building-fabric", "groundworks-civils", "highways-maintenance", "architecture-engineering", "building-materials"),
+    "Environment, waste & grounds": ("grounds-tree-works", "waste-recycling", "hazardous-waste", "street-cleansing", "environmental-ecology", "water-wastewater", "pest-control", "cleaning-facilities"),
+    "Technology": ("crm-case-management", "it-services-software", "cyber-security", "data-analytics", "cloud-hosting", "it-hardware", "telecoms-networks"),
+    "Professional services": ("legal-services", "accountancy-audit", "management-consultancy", "recruitment-staffing", "marketing-communications", "print-design", "translation-interpreting", "research-development", "insurance-finance", "training-education"),
+    "People & care": ("social-care", "health-medical-services", "medical-equipment", "catering-food", "security-guarding", "leisure-culture", "funeral-bereavement"),
+    "Energy, transport & supplies": ("energy-utilities", "vehicles-fleet", "transport-logistics", "postal-courier", "furniture-fit-out"),
+}
+PRESET_GROUP_OF = {pid: group for group, ids in PRESET_GROUPS.items() for pid in ids}
 
 
 @dataclass(frozen=True)
@@ -155,10 +459,17 @@ class Category:
     keyword_cpv: tuple[str, ...] = ()    # allowed CPV prefixes when a keyword matches
     text_tokens: tuple[str, ...] = ()    # custom search: every token must appear
     preset_id: str | None = None
+    parts: tuple["Category", ...] = ()   # several services chosen together: an award is in the category when it is in any part
+
+    def leaves(self) -> tuple["Category", ...]:
+        """The single services this category is made of (itself when it is one)."""
+        return self.parts or (self,)
 
     def to_public(self) -> dict[str, Any]:
         out: dict[str, Any] = {"key": self.key, "label": self.label}
-        if self.preset_id:
+        if self.parts:
+            out["preset"] = ",".join(p.preset_id for p in self.parts if p.preset_id)
+        elif self.preset_id:
             out["preset"] = self.preset_id
         else:
             if self.cpv:
@@ -190,16 +501,47 @@ def _clean_text(raw: str) -> tuple[str, ...]:
     return tuple(tokens)
 
 
+MAX_SERVICES = 12   # services that can be chosen together
+
+
+def combine(cats: list[Category]) -> Category:
+    """One category from several services. Keys are sorted so the same choice always makes the same cache key; the flat
+    cpv / keywords of the parts are kept for the helpers that only need "where to look"."""
+    unique: dict[str, Category] = {}
+    for c in cats:
+        for leaf in c.leaves():
+            unique.setdefault(leaf.key, leaf)
+    ordered = sorted(unique.values(), key=lambda c: c.key)
+    if not ordered:
+        raise CategoryError("choose a category: a preset, a CPV code or some search text")
+    if len(ordered) == 1:
+        return ordered[0]
+    label = " + ".join(c.label for c in ordered)
+    return Category(
+        key="multi:" + "+".join(c.key for c in ordered),
+        label=label if len(label) <= 120 else f"{len(ordered)} services",
+        cpv=tuple(dict.fromkeys(p for c in ordered for p in c.cpv)),
+        keywords=tuple(dict.fromkeys(k for c in ordered for k in c.keywords)),
+        keyword_cpv=tuple(dict.fromkeys(p for c in ordered for p in c.keyword_cpv)),
+        text_tokens=tuple(dict.fromkeys(t for c in ordered for t in c.text_tokens)),
+        preset_id="multi", parts=tuple(ordered),
+    )
+
+
 def resolve_category(
     preset: str | None = None,
     cpv: str | None = None,
     q: str | None = None,
     cpv_labels: dict[str, str] | None = None,
+    services: dict[str, dict[str, Any]] | None = None,
 ) -> Category:
-    """Build a Category from request arguments (a preset id, or a CPV prefix and/or search text)."""
+    """Build a Category from request arguments: one preset id or several joined by commas (custom services are
+    "service:<id>" and come in through `services`), or a CPV prefix and/or search text."""
     preset = (preset or "").strip()
+    if isinstance(preset, str) and "," in preset:
+        return combine([resolve_category(one.strip(), services=services) for one in preset.split(",") if one.strip()][:MAX_SERVICES])
     if preset:
-        spec = _PRESETS_BY_ID.get(preset)
+        spec = _PRESETS_BY_ID.get(preset) or (services or {}).get(preset)
         if not spec:
             raise CategoryError(f"unknown category preset: {preset}")
         return Category(
@@ -243,6 +585,13 @@ def category_where(cat: Category, alias: str = "a") -> tuple[str, list[Any]]:
     SQL text contains no literal percent sign other than the %s placeholders (psycopg2 treats any
     other as a format specifier)."""
     a = alias
+    if cat.parts:
+        wheres, all_params = [], []
+        for part in cat.parts:
+            w, ps = category_where(part, alias)
+            wheres.append(w)
+            all_params.extend(ps)
+        return "(" + " OR ".join(wheres) + ")", all_params
     parts: list[str] = []
     params: list[Any] = []
     if cat.preset_id:
@@ -274,6 +623,8 @@ def category_where(cat: Category, alias: str = "a") -> tuple[str, list[Any]]:
 
 def category_matches(cat: Category, title: str | None, cpv_code: str | None, cpv_description: str | None = None) -> bool:
     """Python mirror of category_where, for tagging rows that were fetched with an OR of categories."""
+    if cat.parts:
+        return any(category_matches(p, title, cpv_code, cpv_description) for p in cat.parts)
     title_l = (title or "").lower()
     code = cpv_code or ""
     if cat.preset_id:
@@ -294,6 +645,11 @@ def category_matches(cat: Category, title: str | None, cpv_code: str | None, cpv
 def match_reason(cat: Category, title: str | None, cpv_code: str | None, cpv_description: str | None = None) -> str | None:
     """Why an award is in the category, in words a buyer can check: its CPV code, or a word in its title.
     The CPV counts first, as it is the notice's own classification; None when the award does not match."""
+    if cat.parts:
+        reasons = [(p.label, match_reason(p, title, cpv_code, cpv_description)) for p in cat.parts]
+        reasons = [(label, r) for label, r in reasons if r]
+        reasons.sort(key=lambda lr: not lr[1].startswith("CPV"))   # a CPV match is stronger than a word
+        return f"{reasons[0][1]} ({reasons[0][0]})" if reasons else None
     title_l = (title or "").lower()
     code = cpv_code or ""
     if cat.preset_id:

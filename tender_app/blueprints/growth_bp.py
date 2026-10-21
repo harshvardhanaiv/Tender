@@ -50,6 +50,7 @@ from typing import Any
 from flask import Blueprint, Response, g, jsonify, request, session
 
 from tender_app import growth_outreach as go
+from tender_app import growth_services as gsv
 from tender_app import growth_studio as gs
 from tender_app import mail_account as ma
 from tender_app import market_radar as mr
@@ -234,6 +235,25 @@ def _keywords(profile: dict[str, Any] | None) -> frozenset[str]:
     return gs.profile_keywords(profile["text"], profile["meta"]) if profile else frozenset()
 
 
+def _services_for(source) -> dict[str, dict[str, Any]] | None:
+    """The custom services a request names (own ones, or ones an administrator shared), keyed "service:<id>"."""
+    ids = gsv.ids_in(source.get("category") or source.get("preset"))
+    if not ids:
+        return None
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, cpv, keywords FROM growth_services WHERE id = ANY(%s) AND (owner = %s OR visibility = 'shared')",
+                        (ids, _username()))
+            return {gsv.service_id(r[0]): gsv.spec_from_row(*r) for r in cur.fetchall()}
+    finally:
+        conn.close()
+
+
+def _filters(source) -> "gs.Filters":
+    return gs.filters_from(source, _cpv_labels(source), _services_for(source))
+
+
 def _cpv_labels(source) -> dict[str, str] | None:
     if (source.get("cpv") or "").strip():
         labels, _ = mr.load_cpv_labels(_connect)
@@ -287,7 +307,9 @@ def _signals_for(conn, username: str, profile: dict[str, Any] | None, f: gs.Filt
 @growth_bp.get("/api/growth/options")
 def growth_options():
     return jsonify({
-        "presets": [{"preset": p["id"], "label": p["label"], "hint": p["hint"]} for p in mr.CATEGORY_PRESETS],
+        "presets": [{"preset": p["id"], "label": p["label"], "hint": p["hint"], "group": mr.PRESET_GROUP_OF.get(p["id"], "Other")} for p in mr.CATEGORY_PRESETS],
+        "max_services": mr.MAX_SERVICES,
+        "fit_choices": [0, 50, 60, 75, 90],
         "authority_types": [{"id": i, "label": label} for i, label in mr.AUTHORITY_TYPES],
         "signal_types": [{"id": t, "label": gs.SIGNAL_LABELS[t]} for t in gs.SIGNAL_TYPES],
         "day_choices": [90, 120, 180, 270, 365],
@@ -326,7 +348,7 @@ def growth_context():
         raw = _get_pref(conn, username, f"{PREF_TARGETING}{chosen['id'] if chosen else 0}")
         if raw:
             try:
-                saved = gs.filters_from(json.loads(raw), _cpv_labels(json.loads(raw)))
+                saved = _filters(json.loads(raw))
             except (ValueError, TypeError, AttributeError, mr.CategoryError):
                 saved = None
     finally:
@@ -349,7 +371,7 @@ def growth_save_targeting():
     raw_filters = body.get("filters")
     if not isinstance(raw_filters, dict):
         raise _Http("filters must be an object")
-    f = gs.filters_from(raw_filters, _cpv_labels(raw_filters))
+    f = _filters(raw_filters)
     username = _username()
     conn = _connect()
     try:
@@ -380,7 +402,7 @@ SIGNAL_NOTES = {
 @rate_limit(RATE_LIMIT_SEARCH)
 def growth_signals():
     username = _username()
-    f = gs.filters_from(request.args, _cpv_labels(request.args))
+    f = _filters(request.args)
     show_dismissed = _flag(request.args.get("show_dismissed"))
     conn = _connect()
     try:
@@ -388,6 +410,8 @@ def growth_signals():
         signals, notes = _signals_for(conn, username, profile, f)
     finally:
         conn.close()
+    below_fit = [s for s in signals if s["fit"] < f.min_fit]
+    signals = [s for s in signals if s["fit"] >= f.min_fit]
     dismissed = [s for s in signals if s["state"]["dismissed"]]
     live = [s for s in signals if not s["state"]["dismissed"]]
     visible = signals if show_dismissed else live
@@ -403,6 +427,7 @@ def growth_signals():
         "profile": {"id": profile["id"], "name": profile["name"], "has_description": len(profile["text"].strip()) >= 20} if profile else None,
         "counts": {t: counts.get(t, 0) for t in gs.SIGNAL_TYPES} | {"total": len(live), "dismissed": len(dismissed)},
         "signals": shown,
+        "below_min_fit": len(below_fit),
         "shown": len(shown),
         "shown_by_type": {t: shown_by_type.get(t, 0) for t in gs.SIGNAL_TYPES},
         "total": len(visible),
@@ -413,6 +438,69 @@ def growth_signals():
         },
         "computed_at": _now().isoformat(timespec="seconds") + "Z",
     })
+
+
+@growth_bp.get("/api/growth/services")
+def growth_services_list():
+    """The user's own services and the ones an administrator shared with everyone."""
+    me = _username()
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, owner, name, cpv, keywords, visibility FROM growth_services "
+                        "WHERE owner = %s OR visibility = 'shared' ORDER BY (owner = %s) DESC, LOWER(name)", (me, me))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return jsonify({"services": [gsv.public(r, me) for r in rows], "limit": gsv.MAX_PER_USER})
+
+
+@growth_bp.get("/api/growth/services/search")
+@rate_limit(RATE_LIMIT_SEARCH)
+def growth_services_search():
+    """Find any CPV branch in the awards data by its description, to use as a service."""
+    labels, counts = mr.load_cpv_labels(_connect)
+    return jsonify({"results": gsv.search_cpv(labels, counts, request.args.get("q") or "")})
+
+
+@growth_bp.post("/api/growth/services")
+@rate_limit(30, 60)
+def growth_services_create():
+    clean = gsv.clean_service(_json_body())
+    me = _username()
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM growth_services WHERE owner = %s", (me,))
+            if cur.fetchone()[0] >= gsv.MAX_PER_USER:
+                raise _Http(f"You can keep {gsv.MAX_PER_USER} services. Remove one first.", 400)
+            cur.execute("SELECT 1 FROM growth_services WHERE owner = %s AND LOWER(name) = LOWER(%s)", (me, clean["name"]))
+            if cur.fetchone():
+                raise _Http("You already have a service with that name", 409)
+            cur.execute(
+                """INSERT INTO growth_services (owner, name, cpv, keywords, visibility) VALUES (%s, %s, %s, %s, %s)
+                   RETURNING id, owner, name, cpv, keywords, visibility""",
+                (me, clean["name"], ",".join(clean["cpv"]), "|".join(clean["keywords"]), "suggested" if clean["share"] else "private"))
+            row = cur.fetchone()
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"service": gsv.public(row, me)}), 201
+
+
+@growth_bp.delete("/api/growth/services/<int:service_row_id>")
+def growth_services_delete(service_row_id: int):
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM growth_services WHERE id = %s AND owner = %s", (service_row_id, _username()))
+            gone = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if not gone:
+        raise _Http("That service was not found", 404)
+    return jsonify({"ok": True})
 
 
 @growth_bp.put("/api/growth/signals/state")
@@ -623,7 +711,7 @@ def _resolve_picks(conn, username: str, body: dict[str, Any], existing: set[str]
     raw_filters = body.get("filters")
     if not isinstance(raw_filters, dict):
         raise _Http("filters must be an object")
-    f = gs.filters_from(raw_filters, _cpv_labels(raw_filters))
+    f = _filters(raw_filters)
     profile = _profile_for(conn, username, body.get("profile_id"))
     signals, _ = _signals_for(conn, username, profile, f)
     by_key = {s["key"]: s for s in signals}

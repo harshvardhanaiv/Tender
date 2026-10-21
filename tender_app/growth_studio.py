@@ -134,6 +134,7 @@ class Filters:
     authority: str = "all"
     where: str = ""
     frameworks: bool = True
+    min_fit: int = 0   # hide signals scoring below this; applied after scoring, so it is not part of any cache key
 
     def to_public(self) -> dict[str, Any]:
         return {
@@ -144,6 +145,7 @@ class Filters:
             "authority_label": mr.AUTHORITY_LABELS[self.authority],
             "where": self.where,
             "frameworks": self.frameworks,
+            "min_fit": self.min_fit,
         }
 
     def to_request(self) -> dict[str, Any]:
@@ -153,6 +155,8 @@ class Filters:
         out.pop("label", None)
         out.update(types=list(self.types), days=self.days, authority=self.authority, where=self.where,
                    frameworks=self.frameworks)
+        if self.min_fit:
+            out["min_fit"] = self.min_fit
         return out
 
 
@@ -164,10 +168,14 @@ def _flag(value: Any, default: bool) -> bool:
     return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
-def filters_from(source: Mapping[str, Any], cpv_labels: dict[str, str] | None = None) -> Filters:
+def filters_from(source: Mapping[str, Any], cpv_labels: dict[str, str] | None = None,
+                 services: dict[str, dict[str, Any]] | None = None) -> Filters:
     """Validate request arguments (query string or JSON body) into Filters. Raises mr.CategoryError
     for a bad category and ValidationError for anything else, both of which mean HTTP 400."""
-    cat = mr.resolve_category(source.get("category") or source.get("preset"), source.get("cpv"), source.get("q"), cpv_labels)
+    raw_cat = source.get("category") or source.get("preset")
+    if isinstance(raw_cat, (list, tuple)):   # several services sent as a JSON list
+        raw_cat = ",".join(str(c).strip() for c in raw_cat if str(c).strip())
+    cat = mr.resolve_category(raw_cat, source.get("cpv"), source.get("q"), cpv_labels, services)
 
     raw_types = source.get("types")
     if raw_types in (None, "", []):
@@ -192,8 +200,17 @@ def filters_from(source: Mapping[str, Any], cpv_labels: dict[str, str] | None = 
     if authority not in mr.AUTHORITY_LABELS or authority == "local-other":
         raise ValidationError(f"unknown authority type: {authority}")
 
+    raw_fit = source.get("min_fit")
+    try:
+        min_fit = 0 if raw_fit in (None, "") else int(raw_fit)
+    except (TypeError, ValueError):
+        raise ValidationError("min_fit must be a whole number") from None
+    if not 0 <= min_fit <= 100:
+        raise ValidationError("min_fit must be between 0 and 100")
+
     return Filters(
         category=cat,
+        min_fit=min_fit,
         types=types,
         days=days,
         authority=authority,
@@ -284,6 +301,9 @@ def _finish(parts: list[dict[str, Any]]) -> dict[str, Any]:
 def category_strength(cat: mr.Category, title: str | None, cpv_code: str | None, cpv_description: str | None = None) -> str | None:
     """How an award sits in a category: "cpv" (its own CPV code is in the category), "keyword" (only
     the title or CPV description matches) or None (not in the category)."""
+    if cat.parts:
+        found = {category_strength(p, title, cpv_code, cpv_description) for p in cat.parts}
+        return "cpv" if "cpv" in found else "keyword" if "keyword" in found else None
     if not mr.category_matches(cat, title, cpv_code, cpv_description):
         return None
     code = cpv_code or ""
@@ -309,10 +329,13 @@ def score_renewal(contract: Mapping[str, Any], cat: mr.Category, keywords: froze
         timing, timing_note = 15, f"Ends in {days_left} days: a long way off"
 
     strength = category_strength(cat, contract.get("title"), contract.get("cpv"), contract.get("cpv_description"))
+    label = cat.label
+    if cat.parts:   # name the service the contract is in, not the whole list
+        label = next((p.label for p in cat.parts if category_strength(p, contract.get("title"), contract.get("cpv"), contract.get("cpv_description")) == strength), cat.label)
     if strength == "cpv":
-        category, category_note = 30, f"The contract's CPV code ({contract.get('cpv')}) is in {cat.label}"
+        category, category_note = 30, f"The contract's CPV code ({contract.get('cpv')}) is in {label}"
     elif strength == "keyword":
-        category, category_note = 20, f"The contract title matches {cat.label}, but its CPV code does not"
+        category, category_note = 20, f"The contract title matches {label}, but its CPV code does not"
     else:
         category, category_note = 0, "Not in the chosen category"
 
@@ -359,6 +382,9 @@ BUILD_WORDS = (
 
 def build_strength(cat: mr.Category) -> str | None:
     """"preset", "cpv" or "keyword" when planning approvals are relevant to the category, else None."""
+    if cat.parts:
+        found = {build_strength(p) for p in cat.parts} - {None}
+        return next((k for k in ("preset", "cpv", "keyword") if k in found), None)
     if cat.preset_id:
         return "preset" if cat.preset_id in BUILD_PRESETS else None
     if cat.cpv:
@@ -523,6 +549,15 @@ def _renewal_text(entry: Mapping[str, Any]) -> tuple[str, str]:
     return headline, " ".join(bits)
 
 
+def matched_services(cat: mr.Category, entries: Iterable[Mapping[str, Any]]) -> list[str]:
+    """Labels of the chosen services this buyer's contracts fall under (only when more than one was chosen)."""
+    if not cat.parts:
+        return []
+    entries = list(entries)
+    return [p.label for p in cat.parts
+            if any(mr.category_matches(p, e.get("title"), e.get("cpv"), e.get("cpv_description")) for e in entries)]
+
+
 def renewal_signals(rows: Iterable[Mapping[str, Any]], cat: mr.Category, keywords: frozenset[str], today: date,
                     authority: str = "all") -> list[dict[str, Any]]:
     """One signal per buyer from prepared award rows (mr.prepare_row output plus cpv_description)."""
@@ -542,6 +577,7 @@ def renewal_signals(rows: Iterable[Mapping[str, Any]], cat: mr.Category, keyword
         name = Counter(r["buyer"] for r in members).most_common(1)[0][0]
         headline, detail = _renewal_text(top)
         type_id = members[0]["type_id"]
+        services = matched_services(cat, entries)
         out.append({
             "key": f"renewal:{buyer_key}",
             "type": "renewal",
@@ -555,6 +591,7 @@ def renewal_signals(rows: Iterable[Mapping[str, Any]], cat: mr.Category, keyword
             "fit": top["fit"]["score"],
             "band": top["fit"]["band"],
             "fit_parts": top["fit"]["parts"],
+            "services": services,
             "contracts": [{k: v for k, v in e.items() if k != "fit"} | {"fit": e["fit"]["score"]} for e in entries[:MAX_CONTRACTS_SHOWN]],
             "more_contracts": max(0, len(entries) - MAX_CONTRACTS_SHOWN),
             "target": {"name": name, "key": buyer_key, "targetable": True, "reason": None},
@@ -844,7 +881,8 @@ def build_signals(
             conn.close()
         signals += engagement_signals(rows, cat, today, f.authority)
 
-    signals.sort(key=lambda s: (-s["fit"], s["days"] if s["days"] is not None else 10**6, s["key"]))
+    # Equal fit: a buyer whose contracts fall under more of the chosen services comes first
+    signals.sort(key=lambda s: (-s["fit"], -len(s.get("services") or ()), s["days"] if s["days"] is not None else 10**6, s["key"]))
     return {"signals": signals, "notes": notes}
 
 

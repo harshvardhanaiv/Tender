@@ -100,7 +100,7 @@ def test_preset_suggestions_and_rounding():
     assert len(got) <= 3 and all(s["matches"] for s in got)
     sizes = [len(s["matches"]) for s in got]
     assert sizes == sorted(sizes, reverse=True), "best match first"
-    later = gs.suggest_presets(gs.profile_keywords("gas solar electricity fuel water"))
+    later = gs.suggest_presets(gs.profile_keywords("gas electricity fuel water"))
     assert [s["preset"] for s in later[:2]] == ["energy-utilities", "housing-repairs-gas"], "the stronger match leads even when a weaker one comes earlier in the list"
     assert gs.suggest_presets(frozenset()) == [] and gs.suggest_presets(gs.profile_keywords("zzz qqq")) == []
     assert gs.suggest_presets(gs.profile_keywords("Waste collection and recycling")) [0]["preset"] == "waste-recycling"
