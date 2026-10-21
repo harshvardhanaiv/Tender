@@ -309,18 +309,13 @@ def test_mailbox_ids_can_be_given_by_configuration_and_a_sent_message_reports_it
     assert oc.message_summary({"id": "m2", "mailbox": "no address here"})["mailbox"] is None
 
 
-def test_web_links_use_only_plain_https_and_fall_back_to_the_site():
-    root = "https://outreach.aivhub.com"
-    assert oc.web_links(root) == {"connect_url": root, "manage_url": root}
-    got = oc.web_links(root, "https://outreach.aivhub.com/signup?plan=pro", "https://outreach.aivhub.com/mailboxes")
-    assert got == {"connect_url": "https://outreach.aivhub.com/signup?plan=pro", "manage_url": "https://outreach.aivhub.com/mailboxes"}
+def test_only_plain_https_links_from_outreach_are_passed_on():
+    good = "https://outreach.aivhub.com/p/abc?x=1"
+    assert oc._https_url(good) == good
     # anything that is not a clean https link is dropped, never passed on to the page
     for bad in ("http://outreach.aivhub.com", "javascript:alert(1)", "//evil.example", "https://", "https://u:p@evil.example/",
                 "https://x.example/a b", 'https://x.example/"onmouseover=1', "https://x.example/<script>", "ftp://x.example", None, ""):
-        out = oc.web_links(root, bad, bad)
-        assert out == {"connect_url": root, "manage_url": root}, (bad, out)
-    # a bad site root falls back to the product's own host
-    assert oc.web_links("http://nope", None, None)["connect_url"] == "https://outreach.aivhub.com"
+        assert oc._https_url(bad) is None, bad
 
 
 def test_social_post_requests_and_answers():
@@ -351,6 +346,37 @@ def test_a_post_decision_is_one_of_three_and_needs_a_key():
         raises(lambda b=bad: client(Fake()).decide_social_post("v2_1", b, "k"), 400, "invalid_request")
     raises(lambda: client(Fake()).decide_social_post("v2_1", "cancel", ""), 400, "invalid_request")
     raises(lambda: client(Fake()).decide_social_post("a b", "cancel", "k"), 400, "invalid_request")
+
+
+def test_a_post_is_changed_with_a_patch_and_an_approval_may_carry_a_new_time():
+    f = Fake(200, {"id": "v2_1", "status": "writing"})
+    client(f).update_social_post("v2_1", {"regenerate": "picture", "instruction": "Brighter"}, "tf-e-1")
+    c = f.calls[0]
+    assert c["method"] == "PATCH" and c["url"].endswith("/v1/social/posts/v2_1") and c["headers"]["Idempotency-Key"] == "tf-e-1"
+    assert json.loads(c["data"]) == {"regenerate": "picture", "instruction": "Brighter"}
+    raises(lambda: client(Fake()).update_social_post("v2_1", {}, "k"), 400, "invalid_request")
+    raises(lambda: client(Fake()).update_social_post("v2_1", {"publish_at": "x"}, ""), 400, "invalid_request")
+    raises(lambda: client(Fake()).update_social_post("a b", {"publish_at": "x"}, "k"), 400, "invalid_request")
+    f = Fake(200, {"id": "v2_1", "status": "approved"})
+    client(f).decide_social_post("v2_1", "approve", "k1", "2026-11-01T09:00:00Z")
+    assert json.loads(f.calls[0]["data"]) == {"decision": "approve", "publish_at": "2026-11-01T09:00:00Z"}
+    f = Fake(200, {"id": "v2_1", "status": "rejected"})
+    client(f).decide_social_post("v2_1", "reject", "k2", "2026-11-01T09:00:00Z")
+    assert json.loads(f.calls[0]["data"]) == {"decision": "reject"}, "a time only goes with an approval"
+
+
+def test_the_post_picture_and_per_channel_text_are_read_in_any_shape_and_only_over_https():
+    for shape in ("https://img.example/a.png", {"url": "https://img.example/a.png"}, ["https://img.example/a.png"], [{"src": "https://img.example/a.png"}]):
+        assert oc.post_summary({"id": "v2_1", "image": shape})["image_url"] == "https://img.example/a.png", shape
+    assert oc.post_summary({"id": "v2_1", "picture_url": "https://img.example/b.png"})["image_url"] == "https://img.example/b.png"
+    for bad in ("http://img.example/a.png", "javascript:alert(1)", {"url": "data:image/png;base64,AAAA"}, None, 5):
+        assert oc.post_summary({"id": "v2_1", "image": bad})["image_url"] is None, bad
+    s = oc.post_summary({"id": "v2_1", "channels": [{"platform": "LinkedIn", "text": "<p>Long form</p>"}, {"platform": "x", "caption": "Short"}, "facebook"]})
+    assert s["channels"] == ["linkedin", "x", "facebook"]
+    assert s["variants"] == [{"channel": "linkedin", "text": "Long form"}, {"channel": "x", "text": "Short"}]
+    s = oc.post_summary({"id": "v2_1", "previews": {"linkedin": "Hello <b>all</b>", "facebook": {"text": "Hi"}, "bad;": "no"}})
+    assert s["variants"] == [{"channel": "linkedin", "text": "Hello all"}, {"channel": "facebook", "text": "Hi"}]
+    assert oc.post_summary({"id": "v2_1"})["variants"] == []
 
 
 def test_post_summary_drops_links_that_are_not_plain_https():

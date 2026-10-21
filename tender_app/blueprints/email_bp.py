@@ -29,9 +29,6 @@ from tender_app.config import (
     OUTREACH_API_BASE,
     OUTREACH_API_KEY,
     OUTREACH_CAMPAIGN_MERGE_FIELDS,
-    OUTREACH_CONNECT_URL,
-    OUTREACH_MANAGE_URL,
-    OUTREACH_WEB_URL,
     OUTREACH_DAILY_SEND_CAP,
     OUTREACH_MAX_BATCH,
     OUTREACH_TIMEOUT_SECONDS,
@@ -86,15 +83,22 @@ def _json_body() -> dict[str, Any]:
     return body
 
 
+def _key() -> str:
+    """The Outreach key for this user: their own, the organisation's, or "" when they disconnected (Connections window)."""
+    from tender_app import outreach_connection as occ
+    from tender_app.config import MAIL_CRED_KEY
+    return occ.effective_key(_username(), OUTREACH_API_KEY, MAIL_CRED_KEY)
+
+
 def _problem() -> str | None:
-    return oc.config_problem(OUTREACH_API_KEY, OUTREACH_ALLOW_LIVE)
+    return oc.config_problem(_key(), OUTREACH_ALLOW_LIVE)
 
 
 def _client() -> "oc.OutreachClient":
     problem = _problem()
     if problem:
         raise _Http(problem, 409)
-    return oc.OutreachClient(OUTREACH_API_KEY, OUTREACH_API_BASE, timeout=OUTREACH_TIMEOUT_SECONDS)
+    return oc.OutreachClient(_key(), OUTREACH_API_BASE, timeout=OUTREACH_TIMEOUT_SECONDS)
 
 
 def _can_send(conn, username: str) -> bool:
@@ -125,15 +129,14 @@ def _usage(conn, key_mode: str | None) -> dict[str, Any]:
 @email_bp.get("/api/email/outreach/status")
 def outreach_status():
     """Configured yes/no, key mode, the masked key and the wallet. The key itself is never returned."""
-    key = (OUTREACH_API_KEY or "").strip()
+    key = (_key() or "").strip()
     mode = oc.key_mode(key)
     conn = _connect()
     try:
         allowed = _can_send(conn, _username())
         out: dict[str, Any] = {"configured": bool(key), "can_send": allowed, "ready": False, "problem": _problem(),
                                "mode": None, "key_hint": None, "live_allowed": bool(OUTREACH_ALLOW_LIVE),
-                               "wallet": None, "usage": None, "setup_hints": SETUP_HINTS,
-                               **oc.web_links(OUTREACH_WEB_URL, OUTREACH_CONNECT_URL, OUTREACH_MANAGE_URL)}
+                               "wallet": None, "usage": None, "setup_hints": SETUP_HINTS}
         if not allowed:
             out["problem"] = "You do not have permission to send email through Outreach. Ask an administrator to allow it."
             return jsonify(out)

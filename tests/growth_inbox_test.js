@@ -35,6 +35,68 @@ test("the four filters are offered and the chosen one is pressed", () => {
   assert.match(html, /data-filter="replies"[^>]*aria-pressed="false"/);
 });
 
+test("the Inbox lists the Outreach mailboxes and the user's own email account, with a button that opens Connections on this page", () => {
+  const info = { ready: true, configured: true,
+    wallet: { mailboxes: [{ id: "mb_1", email: "sales@tvd.example", can_send: true, status: "active" }, { id: "mb_2", email: "bids@tvd.example", can_send: false, status: "warming_up" }] } };
+  const html = I.accountsCard(info);
+  assert.match(html, /Email accounts/);
+  assert.match(html, /sales@tvd\.example<\/span> <span class="gs-badge gs-badge--muted">Outreach<\/span> <span class="gs-badge gs-badge--good">Can send/);
+  assert.match(html, /bids@tvd\.example<\/span> <span class="gs-badge gs-badge--muted">Outreach<\/span> <span class="gs-badge gs-badge--warn">Cannot send yet<\/span> <span class="gs-hint">\(warming up\)/);
+  assert.ok(!html.includes("mb_1"), "ids are not shown");
+  assert.match(html, /<button type="button" class="gs-btn gs-btn--sm gs-btn--primary"[^>]*data-open-connections="mail"|<button type="button" class="gs-btn gs-btn--sm" data-open-connections="mail"/);
+  assert.match(html, /＋ Add an email account<\/button>/);
+  assert.ok(!/<a |href=|target="_blank"|data-outreach-link/.test(html), "nothing opens in another tab or window");
+  assert.match(html, /data-action="outreach-check"[^>]*>Refresh accounts</);
+  assert.match(I.inboxPane(model({ info })), /gs-in-accounts/);
+  const own = I.accountsCard(Object.assign({}, info, { mail_account: { from_email: "sam@acme.example", verified: true, sent_today: 3, daily_cap: 100 } }));
+  assert.match(own, /sam@acme\.example<\/span> <span class="gs-badge gs-badge--accent">Your email account<\/span> <span class="gs-badge gs-badge--good">Can send<\/span> <span class="gs-hint">3 of 100 sent in the last 24 hours/);
+  assert.match(own, />Email account settings<\/button>/, "with an account set up the button changes it");
+});
+
+test("with no email account anywhere it says nothing can be sent and makes Add the main button", () => {
+  const html = I.accountsCard({ ready: true, configured: true, wallet: { mailboxes: [] } });
+  assert.match(html, /No email account is set up yet, so nothing can be sent/);
+  assert.match(html, /class="gs-btn gs-btn--sm gs-btn--primary"[^>]*data-open-connections="mail"/);
+  const notYet = I.accountsCard({ ready: false, configured: false, wallet: null });
+  assert.match(notYet, /data-open-connections="mail"/);
+});
+
+test("names are escaped, and an unverified account is not shown as able to send", () => {
+  const bad = I.accountsCard({ configured: true, wallet: { mailboxes: [{ email: '"><img src=x onerror=alert(1)>@x.example' }] }, mail_account: { from_email: '"><b>@x.example', verified: false, daily_cap: 5 } });
+  assert.ok(!/<img src=x/.test(bad) && !/<b>@x/.test(bad));
+  assert.match(bad, /Not checked yet/);
+  assert.equal(I.accountsCard(undefined).includes("Email accounts"), true);
+});
+
+test("when Outreach is not connected the Inbox still offers the email account and a way to connect Outreach", () => {
+  const html = I.inboxPane(model({ info: { ready: false, configured: false, problem: "Outreach is not connected." } }));
+  assert.match(html, /Outreach is not connected\./);
+  assert.match(html, /gs-in-accounts/);
+  assert.match(html, /data-open-connections="outreach"[^>]*>Connect Outreach</);
+  assert.ok(!html.includes("target=\"_blank\""));
+});
+
+test("every row has a Delete button beside it (not inside the row button), and an opened email has one too", () => {
+  const html = I.rowHtml(item(), false);
+  assert.match(html, /<button type="button" class="gs-in-del" data-action="in-delete" data-id="m1"[^>]*>Delete<\/button>/);
+  const row = html.match(/<button type="button" class="gs-in-row"[\s\S]*?<\/button>/)[0];
+  assert.ok(!row.includes("in-delete"), "a button cannot sit inside another button");
+  const open = I.rowHtml(item(), detail());
+  assert.equal((open.match(/data-action="in-delete"/g) || []).length, 2, "the row's and the opened email's");
+  assert.match(open, /gs-btn--danger" data-action="in-delete" data-id="m1">Delete</);
+  assert.ok(!I.detailHtml({ message: { status: "replied", replies: [] } }).includes("in-delete"), "no id, nothing to delete");
+});
+
+test("the footnote says Delete only removes it from this list, because Outreach keeps its own record", () => {
+  const html = I.inboxPane(model());
+  assert.match(html, /Delete removes an email from this list only: Outreach keeps its own record and the email stays sent/);
+});
+
+test("a hostile id cannot break out of the delete button", () => {
+  const html = I.rowHtml(item({ id: 'a"><img src=x onerror=alert(1)>' }), false);
+  assert.ok(!/<img src=x/.test(html));
+});
+
 test("a row shows the buyer, the address, the subject, the campaign, a status and New for an unread reply", () => {
   const html = I.rowHtml(item(), false);
   assert.match(html, /Alpha Council/);

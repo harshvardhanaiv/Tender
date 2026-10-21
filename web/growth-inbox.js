@@ -31,6 +31,35 @@
     return "mailto:" + a + (s ? "?subject=" + encodeURIComponent(/^re:/i.test(s) ? s : "Re: " + s) : "");
   }
 
+  // The email accounts emails can go out from: the user's own account (set up in Connections) and the mailboxes Outreach reports.
+  // Adding or changing the own account opens the Connections window on this page; Outreach's mailboxes belong to the user's
+  // Outreach account and are only listed here. The card shows the list and the panel checks again when Connections is closed.
+  function accountsCard(info) {
+    const i = info || {};
+    const own = V.ownAccount(i);
+    const mine = i.mail_account || null;
+    const boxes = ((i.wallet && Array.isArray(i.wallet.mailboxes)) ? i.wallet.mailboxes : []).filter((b) => b && b.email);
+    const ownRow = mine
+      ? `<li class="gs-in-acc__row"><span class="gs-in-acc__email">${esc(mine.from_email)}</span> ${V.badge("Your email account", "accent")} ${own ? V.badge("Can send", "good") : V.badge("Not checked yet", "warn")} <span class="gs-hint">${esc(mine.sent_today || 0)} of ${esc(mine.daily_cap)} sent in the last 24 hours</span></li>`
+      : "";
+    const rows = ownRow + boxes.map((b) => {
+      const ok = b.can_send !== false;
+      const status = b.status && !/^(ok|active|connected)$/i.test(String(b.status)) ? ` <span class="gs-hint">(${esc(String(b.status).replace(/_/g, " "))})</span>` : "";
+      return `<li class="gs-in-acc__row"><span class="gs-in-acc__email">${esc(b.email)}</span> ${V.badge("Outreach", "muted")} ${ok ? V.badge("Can send", "good") : V.badge("Cannot send yet", "warn")}${status}</li>`;
+    }).join("");
+    const have = !!rows;
+    const add = V.openConnections("mail", mine ? "Email account settings" : "＋ Add an email account", !have,
+      mine ? "Open Connections to change your email account, send a test email or disconnect it." : "Open Connections on this page to add your own email account (Gmail, Outlook or any other provider).");
+    return (
+      `<div class="gs-card gs-in-accounts"><div class="gs-in-accounts__head"><div class="gs-card__title">Email accounts</div>` +
+      `<div class="gs-actions gs-actions--tight">${add}<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-check" data-tip="Ask again which email accounts you have.">Refresh accounts</button></div></div>` +
+      (have
+        ? `<ul class="gs-in-acc">${rows}</ul><p class="gs-hint">Emails from Growth Studio go out from one of these accounts. Replies to an email sent from your own account arrive in that mailbox; replies to Outreach emails come back to this inbox.</p>`
+        : `<p class="gs-hint gs-hint--warn">No email account is set up yet, so nothing can be sent. Add your own email account (Gmail, Outlook or any SMTP login) and Growth Studio sends from it. The window opens on this page.</p>`) +
+      `</div>`
+    );
+  }
+
   function filterBar(m) {
     const pills = FILTERS.map(([v, l]) => `<button type="button" class="gs-btn gs-btn--sm${m.filter === v ? " gs-btn--primary" : ""}" data-action="in-filter" data-filter="${v}" aria-pressed="${m.filter === v}">${esc(l)}</button>`).join("");
     return (
@@ -54,7 +83,7 @@
     return (
       `<div class="gs-in-detail">` +
       (d.opt_out_hint ? V.note(`This reply looks like a request to stop. Add ${esc(d.buyer || "this buyer")} to your do-not-contact list so they are not emailed again.`, "warn") : "") +
-      (replies || (msg.status === "replied" ? `<p class="gs-hint">Outreach has marked this as replied but has not given the reply text. Open it in Outreach to read it.</p>` : "")) +
+      (replies || (msg.status === "replied" ? `<p class="gs-hint">Outreach has marked this as replied but has not given the reply text yet. Press Refresh in a moment.</p>` : "")) +
       (msg.bounce_reason ? V.note(`Bounced: ${esc(msg.bounce_reason)}`, "bad") : "") +
       (!replies && msg.status !== "replied" && !msg.bounce_reason ? `<p class="gs-hint">No reply yet.</p>` : "") +
       (msg.original ? `<details class="gs-notes"><summary>The email you sent</summary><p class="gs-ch-caption">${esc(msg.original)}</p></details>` : "") +
@@ -63,6 +92,7 @@
       (canMark && (status === "sent" || status === "replied") ? `<button type="button" class="gs-btn gs-btn--sm" data-action="in-meeting" data-target="${esc(d.target_id)}" data-campaign="${esc(d.campaign.id)}">Meeting booked</button>` : "") +
       (canMark && status !== "opted_out" ? `<button type="button" class="gs-btn gs-btn--sm" data-action="in-optout" data-target="${esc(d.target_id)}" data-campaign="${esc(d.campaign.id)}">Add to do-not-contact</button>` : "") +
       (status === "opted_out" ? V.badge("On your do-not-contact list", "muted") : "") +
+      (msg.id ? `<button type="button" class="gs-btn gs-btn--sm gs-btn--danger" data-action="in-delete" data-id="${esc(msg.id)}">Delete</button>` : "") +
       `</div></div>`
     );
   }
@@ -73,10 +103,12 @@
     const when = stamp(m.replied_at || m.sent_at);
     return (
       `<li class="gs-in-item${m.unread ? " is-unread" : ""}" data-message="${esc(m.id)}">` +
+      `<div class="gs-in-line">` +
       `<button type="button" class="gs-in-row" data-action="in-open" data-id="${esc(m.id)}" aria-expanded="${open ? "true" : "false"}">` +
       `<span class="gs-in-dot" aria-hidden="true"></span><span class="gs-in-who"><strong>${esc(who)}</strong>${m.buyer && m.to ? ` <span class="gs-hint">${esc(m.to)}</span>` : ""}</span>` +
       `<span class="gs-in-subject">${esc(m.subject || "(no subject)")}${m.campaign_name ? ` <span class="gs-hint">· ${esc(m.campaign_name)}</span>` : ""}</span>` +
       `<span class="gs-in-meta">${V.badge(esc(st[0]), st[1])}${m.unread ? " " + V.badge("New", "accent") : ""} <span class="gs-hint">${when}</span></span></button>` +
+      `<button type="button" class="gs-in-del" data-action="in-delete" data-id="${esc(m.id)}" aria-label="Delete this email from your inbox" title="Delete">Delete</button></div>` +
       (open ? detailHtml(open === true ? null : open) : "") +
       `</li>`
     );
@@ -85,7 +117,7 @@
   function inboxPane(m) {
     if (!m || m.status === "idle" || (m.status === "loading" && !m.info)) return V.loading("Checking Outreach…");
     const info = m.info || {};
-    if (!info.ready) return V.note(esc(info.problem || m.error || "Outreach is not available."), "bad") + V.outreachConnectBox(info);
+    if (!info.ready) return V.note(esc(info.problem || m.error || "Outreach is not available."), "bad") + accountsCard(info) + V.outreachConnectBox(info, { mail: false });
     const items = m.items || [];
     let list;
     if (m.loading && !items.length) list = V.loading("Reading your emails from Outreach…");
@@ -93,16 +125,17 @@
     else if (!items.length) list = V.empty(EMPTY[m.filter][0], esc(EMPTY[m.filter][1]));
     else list = `<ul class="gs-in-list">${items.map((x) => rowHtml(x, m.openId === x.id ? (m.details || {})[x.id] || true : false)).join("")}</ul>`;
     return (
+      accountsCard(info) +
       filterBar(m) +
       (m.marked && m.marked.length ? V.note(`${esc(m.marked.join(", "))} replied. ${m.marked.length === 1 ? "That buyer is" : "Those buyers are"} now marked as replied in ${m.marked.length === 1 ? "its" : "their"} campaign.`, "info") : "") +
       list +
       (m.error && items.length ? `<p class="gs-hint gs-hint--warn">${esc(m.error)}</p>` : "") +
       (m.nextCursor ? `<div class="gs-actions"><button type="button" class="gs-btn gs-btn--sm" data-action="in-more"${m.loadingMore ? " disabled" : ""}>${m.loadingMore ? "Loading…" : "Look further back"}</button></div>` : "") +
-      `<p class="gs-hint">Shows the emails you sent through Outreach and the replies to them. Outreach holds the full conversation; answer from your own mail program with Reply by email.</p>`
+      `<p class="gs-hint">Shows the emails you sent through Outreach and the replies to them. Outreach holds the full conversation; answer from your own mail program with Reply by email. Delete removes an email from this list only: Outreach keeps its own record and the email stays sent.</p>`
     );
   }
 
-  const api = { FILTERS, mailtoHref, filterBar, detailHtml, rowHtml, inboxPane };
+  const api = { FILTERS, mailtoHref, accountsCard, filterBar, detailHtml, rowHtml, inboxPane };
   root.GrowthInbox = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 
@@ -224,6 +257,44 @@
     render();
   }
 
+  // Delete hides the email from this user's list (Outreach cannot erase a sent email); the toast offers Undo.
+  async function deleteMessage(id) {
+    const row = model.items.find((x) => x.id === id);
+    const what = row && row.status === "replied" ? "this reply and the email it answers" : "this email";
+    if (!(await confirmIt(`Delete ${what} from your inbox? It stays sent: Outreach keeps its own record. You can undo straight after.`))) return;
+    await fetchJson("DELETE", `/api/growth/inbox/${encodeURIComponent(id)}`);
+    model.items = model.items.filter((x) => x.id !== id);
+    delete model.details[id];
+    if (model.openId === id) model.openId = null;
+    model.lastDeleted = id;
+    render();
+    undoToast("Deleted from your inbox.");
+  }
+  async function undoDelete() {
+    const id = model.lastDeleted;
+    if (!id) return;
+    model.lastDeleted = null;
+    try {
+      await fetchJson("POST", `/api/growth/inbox/${encodeURIComponent(id)}/restore`, {});
+      toast("Brought back.");
+      await load(false);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+  function undoToast(message) {
+    const el = byId("gsToast");
+    if (!el) return;
+    el.className = "gs-toast is-on";
+    el.innerHTML = `<span>${esc(message)}</span> <button type="button" class="gs-btn gs-btn--sm" data-action="in-undo">Undo</button>`;
+    clearTimeout(toast.t);
+    toast.t = setTimeout(() => { el.classList.remove("is-on"); model.lastDeleted = null; }, 9000);
+  }
+  function onToastClick(event) {
+    const b = event.target.closest && event.target.closest('#gsToast [data-action="in-undo"]');
+    if (b) undoDelete();
+  }
+
   function onClick(event) {
     const a = event.target.closest("[data-action]");
     const pane = byId("gsPaneInbox");
@@ -234,6 +305,7 @@
     else if (act === "in-search" || act === "in-refresh") { model.details = {}; run(load(false)); }
     else if (act === "in-more") run(load(true));
     else if (act === "in-open") run(openMessage(a.dataset.id));
+    else if (act === "in-delete") run(deleteMessage(a.dataset.id));
     else if (act === "in-optout") run(setBuyerStatus(a.dataset.campaign, a.dataset.target, "opted_out", "Add this buyer to your do-not-contact list? They will not be emailed again from Growth Studio."));
     else if (act === "in-meeting") run(setBuyerStatus(a.dataset.campaign, a.dataset.target, "meeting", null));
     else if (act === "outreach-check") run(loadStatus());
@@ -262,6 +334,7 @@
         pane.addEventListener("input", onInput);
         pane.addEventListener("keydown", onKeydown);
       }
+      document.addEventListener("click", onToastClick);
       loadStatus();
     } else if (model.info && model.info.ready) {
       model.details = {};
@@ -269,4 +342,9 @@
     }
   };
   api.close = function () { model.open = false; };
+  // The Connections window was closed after a change: ask again now if this tab is showing, else the next time it is shown
+  document.addEventListener("connections:changed", () => {
+    if (!model.opened) return;
+    if (model.open) loadStatus(); else model.opened = false;
+  });
 })(typeof window !== "undefined" ? window : globalThis);

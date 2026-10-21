@@ -32,7 +32,9 @@
   <link rel="stylesheet" href="/theme.css?v=36" />
   <link rel="stylesheet" href="/mobile.css?v=4" />
   <link rel="stylesheet" href="/responsive-fixes.css?v=8" />
-  <link rel="stylesheet" href="/growth-studio.css?v=5" />
+  <link rel="stylesheet" href="/growth-studio.css?v=12" />
+  <link rel="stylesheet" href="/tooltips.css?v=1" />
+  <link rel="stylesheet" href="/connections.css?v=2" />
   <script src="/translations.js?v=6"></script>
 </head>
 
@@ -60,6 +62,9 @@
     </div>
 
     <div class="tf-masthead__right">
+      <button id="btnConnections" class="topbar-btn topbar-btn--connections" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0V8zM12 17v4"/></svg><span>Connections</span>
+      </button>
       <button id="btnUploadCustomTender" class="topbar-btn topbar-btn--cta" type="button" data-i18n="btn_bid_custom">＋ Bid on custom tender</button>
       <button id="btnCredits" class="topbar-btn topbar-btn--credits topbar-btn--loading" type="button"
         title="Credits — click to view plans">
@@ -197,6 +202,9 @@
         <div class="tf-rail__group"><span class="tf-rail__group-text" data-i18n="group_account">Account</span></div>
         <button id="btnProfile" class="tf-nav" type="button" title="My Profile">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg><span data-i18n="menu_profile">My Profile</span>
+        </button>
+        <button id="btnConnectionsNav" class="tf-nav" type="button" title="Connected apps">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0V8zM12 17v4"/></svg><span>Connected apps</span>
         </button>
         <button id="navBilling" class="tf-nav" type="button" title="Billing &amp; credits" data-i18n-title="nav_billing">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="1"/><path d="M3 10h18M7 15h4"/></svg><span data-i18n="nav_billing">Billing &amp; credits</span>
@@ -2260,6 +2268,8 @@
           <style>
             #emailOutreachSection .eo-hint { margin:4px 0; font-size:12px; color:var(--muted); }
             #emailOutreachSection .eo-hint--warn, #emailOutreachSection .eo-warn { color:var(--danger, #b42318); font-size:12px; margin:6px 0 2px; }
+            #emailOutreachSection .eo-link { background:none; border:0; padding:0; font:inherit; font-size:12px; font-weight:600; color:var(--accent, #2563eb); cursor:pointer; }
+            #emailOutreachSection .eo-link:hover { text-decoration:underline; }
             #emailOutreachSection .eo-ok { color:var(--success, #067647); font-size:12px; margin:6px 0 2px; }
             #emailOutreachSection .eo-list { margin:2px 0 6px 18px; padding:0; font-size:12px; color:var(--muted); }
             #emailOutreachSection .eo-table { width:100%; border-collapse:collapse; font-size:12px; }
@@ -2709,10 +2719,11 @@
       <div class="gs-tabs" role="tablist" aria-label="Growth Studio sections">
         <button type="button" role="tab" id="gsTabSignals" class="gs-tab is-active" data-action="tab" data-tab="signals" aria-selected="true" aria-controls="gsPaneSignals">Signals <span class="gs-tab__count" id="gsCountSignals"></span></button>
         <button type="button" role="tab" id="gsTabCampaigns" class="gs-tab" data-action="tab" data-tab="campaigns" aria-selected="false" tabindex="-1" aria-controls="gsPaneCampaigns">Campaigns <span class="gs-tab__count" id="gsCountCampaigns"></span></button>
-        <button type="button" role="tab" id="gsTabBuilder" class="gs-tab" data-action="tab" data-tab="builder" aria-selected="false" tabindex="-1" aria-controls="gsPaneBuilder">Campaign builder</button>
+        <button type="button" role="tab" id="gsTabBuilder" class="gs-tab" data-action="tab" data-tab="builder" aria-selected="false" tabindex="-1" aria-controls="gsPaneBuilder">Email campaign builder</button>
+        <button type="button" role="tab" id="gsTabSocial" class="gs-tab" data-action="tab" data-tab="social" aria-selected="false" tabindex="-1" aria-controls="gsPaneSocial">Social</button>
+        <button type="button" role="tab" id="gsTabCalls" class="gs-tab" data-action="tab" data-tab="calls" aria-selected="false" tabindex="-1" aria-controls="gsPaneCalls">Calls</button>
         <button type="button" role="tab" id="gsTabInbox" class="gs-tab" data-action="tab" data-tab="inbox" aria-selected="false" tabindex="-1" aria-controls="gsPaneInbox">Inbox <span class="gs-tab__count" id="gsCountInbox"></span></button>
         <button type="button" role="tab" id="gsTabPerformance" class="gs-tab" data-action="tab" data-tab="performance" aria-selected="false" tabindex="-1" aria-controls="gsPanePerformance">Performance</button>
-        <button type="button" role="tab" id="gsTabChannels" class="gs-tab" data-action="tab" data-tab="channels" aria-selected="false" tabindex="-1" aria-controls="gsPaneChannels">Social &amp; calls</button>
       </div>
 
       <div class="gs-panes">
@@ -2721,7 +2732,8 @@
         <div id="gsPaneBuilder" class="gs-pane hidden" role="tabpanel" aria-labelledby="gsTabBuilder"></div>
         <div id="gsPaneInbox" class="gs-pane hidden" role="tabpanel" aria-labelledby="gsTabInbox"></div>
         <div id="gsPanePerformance" class="gs-pane hidden" role="tabpanel" aria-labelledby="gsTabPerformance"></div>
-        <div id="gsPaneChannels" class="gs-pane hidden" role="tabpanel" aria-labelledby="gsTabChannels"></div>
+        <div id="gsPaneSocial" class="gs-pane hidden" role="tabpanel" aria-labelledby="gsTabSocial"></div>
+        <div id="gsPaneCalls" class="gs-pane hidden" role="tabpanel" aria-labelledby="gsTabCalls"></div>
       </div>
     </div>
   </div>
@@ -3257,11 +3269,13 @@
   <script src="/app.js?v=224"></script>
   <script src="/planning.js?v=17"></script>
   <script src="/responsive-fixes.js?v=1" defer></script>
-  <script src="/growth-view.js?v=17"></script>
-  <script src="/growth-channels.js?v=1"></script>
-  <script src="/growth-inbox.js?v=1"></script>
-  <script src="/growth-studio.js?v=14"></script>
-  <script src="/email-outreach.js?v=3"></script>
+  <script src="/tooltips.js?v=1"></script>
+  <script src="/connections.js?v=2"></script>
+  <script src="/growth-view.js?v=20"></script>
+  <script src="/growth-channels.js?v=6"></script>
+  <script src="/growth-inbox.js?v=4"></script>
+  <script src="/growth-studio.js?v=18"></script>
+  <script src="/email-outreach.js?v=5"></script>
   <script src="/shell.js?v=4"></script>
   <script src="/search-filters.js?v=10"></script>
   <script>

@@ -141,6 +141,14 @@ OUTREACH_API_KEY = os.environ.get("OUTREACH_API_KEY", "")
 OUTREACH_API_BASE = os.environ.get("OUTREACH_API_BASE", "https://outreach.aivhub.com")
 OUTREACH_ALLOW_LIVE = os.environ.get("OUTREACH_ALLOW_LIVE", "0") == "1"
 OUTREACH_TIMEOUT_SECONDS = float(os.environ.get("OUTREACH_TIMEOUT_SECONDS", "15"))
+# Outreach partner programme: TenderFlow signs each user in to (or creates) their own Outreach account from the
+# Connections window, with no redirect. CLIENT_ID is from Outreach's Developer API -> Partner programme tab; CONSENT_VERSION
+# is the terms version shown in that tab's example call. ORIGIN and RETURN_URL must be among the web addresses and return
+# URLs registered there (blank = this app's own address and /outreach/connected).
+OUTREACH_CLIENT_ID = os.environ.get("OUTREACH_CLIENT_ID", "").strip()
+OUTREACH_CONSENT_VERSION = os.environ.get("OUTREACH_CONSENT_VERSION", "").strip()
+OUTREACH_ORIGIN = os.environ.get("OUTREACH_ORIGIN", "").strip().rstrip("/")
+OUTREACH_RETURN_URL = os.environ.get("OUTREACH_RETURN_URL", "").strip()
 # Choosing which connected mailbox sends. Outreach's public API reference does not document a field for it yet, so
 # the request field names live here and can be changed without a code change once Outreach publishes them. A single
 # email (/v1/email/send) gets the value as a string, a campaign gets it as a one-item list.
@@ -149,11 +157,6 @@ OUTREACH_TIMEOUT_SECONDS = float(os.environ.get("OUTREACH_TIMEOUT_SECONDS", "15"
 OUTREACH_MAILBOX_IDS = os.environ.get("OUTREACH_MAILBOX_IDS", "")
 OUTREACH_SEND_MAILBOX_FIELD = os.environ.get("OUTREACH_SEND_MAILBOX_FIELD", "mailbox_id")
 OUTREACH_CAMPAIGN_MAILBOX_FIELD = os.environ.get("OUTREACH_CAMPAIGN_MAILBOX_FIELD", "mailbox_ids")
-# Where "Connect Outreach" / "Manage in Outreach" send the user (a web page, not the API): they sign in or sign up
-# there, choose a plan and connect a mailbox. Blank means the Outreach site root. Only https:// links are used.
-OUTREACH_WEB_URL = os.environ.get("OUTREACH_WEB_URL", "https://outreach.aivhub.com")
-OUTREACH_CONNECT_URL = os.environ.get("OUTREACH_CONNECT_URL", "")   # e.g. its sign-up / plans page
-OUTREACH_MANAGE_URL = os.environ.get("OUTREACH_MANAGE_URL", "")     # e.g. its Mailboxes page
 
 # Email through Outreach (tender_app/blueprints/email_bp.py, email_send.py): one recipient goes through the
 # immediate /v1/email/send (a company may send 25 of those a day), two or more with the same message through one

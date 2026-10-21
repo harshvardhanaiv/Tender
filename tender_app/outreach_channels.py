@@ -94,6 +94,13 @@ def post_problems(prompt: Any, channels: Any, allowed: Iterable[str] | None) -> 
     elif len(text) > MAX_PROMPT:
         problems.append(f"The prompt is too long (the limit is {MAX_PROMPT} characters).")
         text = text[:MAX_PROMPT]
+    more, picked = channel_problems(channels, allowed)
+    return problems + more, picked, text
+
+
+def channel_problems(channels: Any, allowed: Iterable[str] | None) -> tuple[list[str], list[str]]:
+    """(problems, channels) for the channels a post goes to; the rules post_problems applies, alone."""
+    problems: list[str] = []
     picked: list[str] = []
     if not isinstance(channels, list):
         channels = []
@@ -110,7 +117,66 @@ def post_problems(prompt: Any, channels: Any, allowed: Iterable[str] | None) -> 
         bad = [c for c in picked if c not in ok]
         if bad:
             problems.append("Not connected in Outreach: " + ", ".join(bad) + ". Connect it there, or choose another channel.")
-    return problems, picked, text
+    return problems, picked
+
+
+MAX_ABOUT = 600
+_SITE_RE = re.compile(r"^(https?://)?([a-z0-9-]+\.)+[a-z]{2,}(/[^\s\"'<>]*)?$", re.IGNORECASE)
+
+
+def _shorten(text: str, limit: int) -> str:
+    """`text` cut to `limit` characters at the end of a sentence if there is one in the last third, else at a word."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    if end >= limit * 2 // 3:
+        return cut[: end + 1]
+    return cut.rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+
+def company_brief(profile: Mapping[str, Any] | None) -> dict[str, str] | None:
+    """What a post may say about the user's company, taken from the company profile as they wrote it: its name, what it
+    does, where it is and its website. Nothing private goes in (no contact person, email, phone, VAT, turnover).
+    None when there is no profile or it has no name."""
+    if not profile:
+        return None
+    meta = profile.get("meta") if isinstance(profile.get("meta"), Mapping) else {}
+    name = _clean(meta.get("org_name") or profile.get("name"), MAX_NAME)
+    if not name:
+        return None
+    about = _shorten(_clean(profile.get("text"), 4000), MAX_ABOUT)
+    where = ", ".join(x for x in (_clean(meta.get("city"), 60), _clean(meta.get("county"), 60)) if x)
+    site = str(meta.get("website") or "").strip()
+    website = ""
+    if site and _SITE_RE.match(site):
+        website = site if site.lower().startswith("http") else "https://" + site
+    return {"name": name, "about": about, "where": where, "website": website[:200]}
+
+
+def brief_hints(profiles: list[Any], brief: Mapping[str, str] | None) -> list[str]:
+    """What the user could add to their company profile for better posts, in their words."""
+    if not profiles:
+        return ["No company is set up yet. Add one under Company profiles and posts are written as your company."]
+    out: list[str] = []
+    if brief is not None and not brief.get("about"):
+        out.append("This company profile has no description, so the AI only knows its name. Add a few sentences about what you do.")
+    if brief is not None and not brief.get("website"):
+        out.append("Add your website to the profile so a post can point people to it.")
+    return out
+
+
+def compose_post_prompt(prompt: str, brief: Mapping[str, str] | None) -> str:
+    """The prompt Outreach's AI gets: the user's idea, then who is posting and the facts it may use about them."""
+    if not brief:
+        return prompt
+    lines = [prompt.strip(), "", f"Write it as {brief['name']}" + (f", based in {brief['where']}" if brief.get("where") else "") + "."]
+    if brief.get("about"):
+        lines.append(f"About the company: {brief['about']}")
+    if brief.get("website"):
+        lines.append(f"Website: {brief['website']}")
+    lines.append("Use only these facts about the company. Do not invent contracts, awards, figures, people, clients or claims.")
+    return "\n".join(lines)
 
 
 def build_post_payload(prompt: str, channels: list[str], publish_at: str | None, picture: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -128,6 +194,110 @@ def build_post_payload(prompt: str, channels: list[str], publish_at: str | None,
     return body
 
 
+REGENERATE = {"text": "text", "picture": "picture", "both": "both"}  # what the AI may write again (Outreach: "the text, the picture or both")
+MAX_REWRITE_NOTE = 300
+
+# The user's own caption and picture ("write it myself"). The caption a user types is also the prompt of a new post
+# (the API only creates a post from a prompt), so it is held to the prompt limit; a caption edited by hand later may be longer.
+MAX_DRAFT_CAPTION = MAX_PROMPT
+MAX_CAPTION = 3000
+MIN_CAPTION = 3
+MAX_PICTURE_BYTES = 5 * 1024 * 1024  # Outreach's own editor allows 8 MB; a smaller cap keeps the request light
+# Outreach documents that a post can be edited "by hand" but not the field names. These are the ones its own post editor
+# uses ("caption", and the picture as an image URL, here a data URL); they are the only place the names appear.
+HAND_CAPTION_FIELD = "caption"
+HAND_PICTURE_FIELD = "image_url"
+_DATA_URL_RE = re.compile(r"^data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$")
+_PICTURE_MAGIC = {"image/png": (b"\x89PNG\r\n\x1a\n",), "image/jpeg": (b"\xff\xd8\xff",), "image/webp": (b"RIFF",)}
+
+
+def caption_problem(raw: Any, limit: int = MAX_CAPTION) -> tuple[str | None, str]:
+    """(problem or None, caption). A caption the user wrote: line breaks kept, control characters dropped."""
+    text = _clean_block(raw, limit + 1)
+    if len(text) < MIN_CAPTION:
+        return "Write the caption (at least a few words).", text
+    if len(text) > limit:
+        return f"The caption is too long (the limit is {limit:,} characters).", text[:limit]
+    return None, text
+
+
+def picture_problem(raw: Any) -> tuple[str | None, str | None]:
+    """(problem or None, the picture as a clean data URL). A PNG, JPG or WebP of at most MAX_PICTURE_BYTES whose bytes
+    really are that kind of picture: the label the browser put on it is not trusted."""
+    import base64
+    import binascii
+
+    m = _DATA_URL_RE.match("".join(str(raw or "").split()))
+    if not m:
+        return "Use a PNG, JPG or WebP picture.", None
+    mime, b64 = m.group(1), m.group(2)
+    if len(b64) > MAX_PICTURE_BYTES * 4 // 3 + 8:
+        return f"That picture is over {MAX_PICTURE_BYTES // (1024 * 1024)} MB. Pick a smaller one.", None
+    try:
+        data = base64.b64decode(b64, validate=True)
+    except (binascii.Error, ValueError):
+        return "That picture could not be read. Try another file.", None
+    if len(data) > MAX_PICTURE_BYTES:
+        return f"That picture is over {MAX_PICTURE_BYTES // (1024 * 1024)} MB. Pick a smaller one.", None
+    if not any(data.startswith(sig) for sig in _PICTURE_MAGIC[mime]) or (mime == "image/webp" and data[8:12] != b"WEBP"):
+        return "That file is not really a PNG, JPG or WebP picture.", None
+    return None, f"data:{mime};base64,{b64}"
+
+
+def polish_prompt(caption: str, channels: list[str]) -> str:
+    """What the AI is asked when the user wrote a caption and wants it improved, not replaced."""
+    where = ", ".join(channels) if channels else "social media"
+    return (f"Improve this draft post for {where}: clearer, better flow, the right tone and a short call to action if it fits. "
+            "Keep its meaning and every fact. Add no new facts, figures, names, offers or claims.\n\nDraft:\n" + caption)
+
+
+def exact_prompt(caption: str) -> str:
+    """What the AI is asked when the user's caption is to be used as it is (it is then also set by hand on the post)."""
+    return "Publish this post exactly as written. Do not change, add or remove any words.\n\nPost:\n" + caption
+
+
+def change_payload(publish_at_raw: Any, regenerate: Any, instruction: Any, now: datetime | None = None, *,
+                   caption: Any = None, picture: Any = None) -> tuple[list[str], dict[str, Any]]:
+    """(problems, PATCH body) for changing a post: a new publish time, a rewrite by the AI (with an optional note), or the
+    user's own caption and/or picture, one kind at a time. A change sends the post back for approval; it never publishes."""
+    problems: list[str] = []
+    body: dict[str, Any] = {}
+    if caption is not None:
+        bad_caption, text = caption_problem(caption)
+        if bad_caption:
+            problems.append(bad_caption)
+        else:
+            body[HAND_CAPTION_FIELD] = text
+    if picture is not None:
+        bad_picture, data_url = picture_problem(picture)
+        if bad_picture:
+            problems.append(bad_picture)
+        elif data_url:
+            body[HAND_PICTURE_FIELD] = data_url
+    hand = caption is not None or picture is not None
+    when, bad = parse_publish_at(publish_at_raw, now)
+    if bad:
+        problems.append(bad)
+    if when:
+        body["publish_at"] = when
+    kind = str(regenerate or "").strip().lower()
+    if kind:
+        if kind not in REGENERATE:
+            problems.append("Choose what to write again: the text, the picture or both.")
+        else:
+            body["regenerate"] = REGENERATE[kind]
+            note = _clean(instruction, MAX_REWRITE_NOTE)
+            if note:
+                body["instruction"] = note
+    if not body and not problems:
+        problems.append("Choose a new time, or what the AI should write again.")
+    if "publish_at" in body and "regenerate" in body:
+        problems.append("Change the time and rewrite in two steps, not together.")
+    if hand and ("publish_at" in body or "regenerate" in body):
+        problems.append("Change your own caption or picture on its own, not together with the time or an AI rewrite.")
+    return problems, body
+
+
 # A post that can still be approved; once it is anything else, approving cannot work and is refused before the request.
 APPROVABLE = {"needs_approval", "pending_approval", "awaiting_approval", "draft", "ready", "scheduled_pending"}
 FINAL_POST_STATES = {"published", "rejected", "cancelled", "canceled", "failed", "expired"}
@@ -140,6 +310,8 @@ def can_decide(status: str | None, decision: str) -> str | None:
         return f"This post is already {s}. Nothing more can be done with it."
     if decision == "approve" and s == "writing":
         return "The AI is still writing this post. Press Refresh, read the preview, then approve it."
+    if decision == "edit" and s == "writing":
+        return "The AI is still writing this post, and would overwrite a change made now. Press Refresh, then edit it."
     return None
 
 

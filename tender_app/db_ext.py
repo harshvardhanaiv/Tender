@@ -553,6 +553,10 @@ def create_growth_tables(cursor) -> None:
         )
         """
     )
+    cursor.execute("ALTER TABLE growth_social_posts ADD COLUMN IF NOT EXISTS image_url TEXT")
+    cursor.execute("ALTER TABLE growth_social_posts ADD COLUMN IF NOT EXISTS variants_json TEXT")
+    cursor.execute("ALTER TABLE growth_social_posts ADD COLUMN IF NOT EXISTS profile_id INTEGER")
+    cursor.execute("ALTER TABLE growth_social_posts ADD COLUMN IF NOT EXISTS company_name TEXT")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_growth_social_posts_user ON growth_social_posts (username, created_at DESC)")
     cursor.execute(
         """
@@ -587,7 +591,13 @@ def create_growth_tables(cursor) -> None:
         )
         """
     )
-    # The user's own sending mailbox (tender_app/user_mailer.py). password_enc is Fernet ciphertext, never returned.
+    create_growth_inbox_hidden(cursor)
+    create_user_mail_accounts(cursor)
+
+
+def create_user_mail_accounts(cursor) -> None:
+    """The user's own sending mailbox (tender_app/mail_account.py, sending in tender_app/user_mailer.py). password_enc is
+    Fernet ciphertext, never returned."""
     # A send through it is recorded in growth_outreach_drafts with mode 'smtp' and outreach_id = the Message-ID.
     cursor.execute(
         """
@@ -651,6 +661,21 @@ def create_entity_watchlist(cursor) -> None:
     cursor.execute("ALTER TABLE IF EXISTS pipeline ADD COLUMN IF NOT EXISTS added_from VARCHAR(40)")
 
 
+def create_growth_inbox_hidden(cursor) -> None:
+    """Emails the user deleted from their Growth Studio inbox. Outreach's API has no way to erase a sent email or a reply,
+    so deleting hides it here, for this user only, and can be undone (the row is removed)."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS growth_inbox_hidden (
+            username   VARCHAR(255) NOT NULL,
+            message_id VARCHAR(64) NOT NULL,
+            hidden_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (username, message_id)
+        )
+        """
+    )
+
+
 def create_buyer_contact_cache(cursor) -> None:
     """Buyer inboxes found by tender_app/buyer_contacts.py, kept per buyer (growth_campaign_targets.buyer_key) so the
     same buyer is looked up once, not once per campaign. candidates is JSON text."""
@@ -668,6 +693,11 @@ def create_buyer_contact_cache(cursor) -> None:
         )
         """
     )
+    # an answer found by an older, weaker lookup (version 1) is looked up again instead of being believed for days
+    # (checked first, so the usual request does not take the table lock an ALTER needs)
+    cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'buyer_contact_cache' AND column_name = 'lookup_version'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE buyer_contact_cache ADD COLUMN IF NOT EXISTS lookup_version INTEGER NOT NULL DEFAULT 1")
 
 
 def create_email_send_tables(cursor) -> None:

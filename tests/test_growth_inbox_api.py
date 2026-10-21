@@ -26,6 +26,8 @@ def cleanup():
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM growth_inbox_seen WHERE username = ANY(%s)", (base.USERS,))
+            cur.execute("CREATE TABLE IF NOT EXISTS growth_inbox_hidden (username VARCHAR(255) NOT NULL, message_id VARCHAR(64) NOT NULL, hidden_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (username, message_id))")
+            cur.execute("DELETE FROM growth_inbox_hidden WHERE username = ANY(%s)", (base.USERS,))
         conn.commit()
     finally:
         conn.close()
@@ -190,6 +192,64 @@ def test_another_users_message_is_not_found_and_odd_ids_are_refused():
     assert code == 404 and "secret" not in text
     assert call(a, "get", "/api/growth/inbox/no_such_id")[0] == 404
     assert call(a, "get", "/api/growth/inbox/bad%20id!")[0] in (400, 404)
+
+
+def _own_reply_detail():
+    return {OWN_MSG: {"id": OWN_MSG, "to": "contracts@alpha.example", "subject": "Gas servicing", "status": "replied", "kind": "one_to_one",
+                      "reply": {"from": "sam@alpha.example", "body": "Thanks"}}}
+
+
+def test_a_deleted_email_leaves_the_users_list_but_outreach_is_never_asked_to_erase_it():
+    sent_to(USER_A, "Alpha Council", "contracts@alpha.example", OWN_MSG, "sent_now")
+    sent_to(USER_A, "Beta Council", "procurement@beta.example", "msg_own0002", "sent_now")
+    use(pages={None: ([msg(OWN_MSG, "contracts@alpha.example", kind="one_to_one"), msg("msg_own0002", "procurement@beta.example", kind="one_to_one")], None)},
+        detail=_own_reply_detail())
+    c = client(USER_A)
+    assert {m["id"] for m in listed(c)["items"]} == {OWN_MSG, "msg_own0002"}
+    FAKE.calls.clear()
+    code, body, _ = call(c, "delete", f"/api/growth/inbox/{OWN_MSG}")
+    assert code == 200 and body == {"deleted": OWN_MSG}
+    assert [x["method"] for x in FAKE.calls] == ["GET"], "nothing is sent to Outreach that could erase anything"
+    assert {m["id"] for m in listed(c)["items"]} == {"msg_own0002"}
+    assert {m["id"] for m in listed(c, "?filter=all")["items"]} == {"msg_own0002"}, "gone from every filter"
+    assert call(c, "delete", f"/api/growth/inbox/{OWN_MSG}")[0] == 200, "deleting twice is harmless"
+
+
+def test_a_delete_can_be_undone():
+    sent_to(USER_A, "Alpha Council", "contracts@alpha.example", OWN_MSG, "sent_now")
+    use(pages={None: ([msg(OWN_MSG, "contracts@alpha.example", kind="one_to_one")], None)}, detail=_own_reply_detail())
+    c = client(USER_A)
+    call(c, "delete", f"/api/growth/inbox/{OWN_MSG}")
+    assert listed(c)["items"] == []
+    code, body, _ = call(c, "post", f"/api/growth/inbox/{OWN_MSG}/restore", {})
+    assert code == 200 and body == {"restored": OWN_MSG}
+    assert [m["id"] for m in listed(c)["items"]] == [OWN_MSG]
+    assert call(c, "post", f"/api/growth/inbox/{OWN_MSG}/restore", {})[0] == 200
+
+
+def test_deleting_is_for_this_user_only_and_only_for_their_own_emails():
+    sent_to(USER_A, "Alpha Council", "contracts@alpha.example", OWN_MSG, "sent_now")
+    use(pages={None: ([msg(OWN_MSG, "contracts@alpha.example", kind="one_to_one")], None)},
+        detail={**_own_reply_detail(), "m_foreign": {"id": "m_foreign", "to": "x@else.example", "status": "replied", "kind": "one_to_one", "reply": "secret"}})
+    a, b = client(USER_A), client(USER_B)
+    assert call(b, "delete", f"/api/growth/inbox/{OWN_MSG}")[0] == 404, "another user cannot hide it"
+    assert call(a, "delete", "/api/growth/inbox/m_foreign")[0] == 404, "an email that is not theirs cannot be hidden either"
+    assert call(a, "delete", "/api/growth/inbox/no_such_id")[0] == 404
+    assert call(a, "delete", "/api/growth/inbox/bad%20id!")[0] in (400, 404)
+    assert [m["id"] for m in listed(a)["items"]] == [OWN_MSG]
+    # A's delete does not touch what B (or anyone) is shown
+    sent_to(USER_B, "Alpha Council", "contracts@alpha.example", "msg_b0001", "sent_now")
+    call(a, "delete", f"/api/growth/inbox/{OWN_MSG}")
+    assert listed(a)["items"] == []
+
+
+def test_deleting_needs_the_csrf_token_and_a_connected_outreach():
+    use(detail=_own_reply_detail())
+    c = client(USER_A)
+    r = c.delete(f"/api/growth/inbox/{OWN_MSG}")  # no CSRF header
+    assert r.status_code in (400, 403)
+    install(key="")
+    assert call(client(USER_A), "delete", f"/api/growth/inbox/{OWN_MSG}")[0] == 409
 
 
 def test_not_connected_is_a_409_and_no_key_appears_in_an_answer():

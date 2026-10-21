@@ -1,0 +1,68 @@
+/* Connections window (connections.js): the apps TenderFlow works with, one card each. Uses the app's theme tokens. */
+.cx-overlay { position: fixed; inset: 0; z-index: 1400; display: flex; align-items: flex-start; justify-content: center; padding: 56px 16px 16px; overflow-y: auto; background: rgba(15, 23, 42, 0.55); }
+.cx-overlay.hidden { display: none; }
+.cx-panel { width: 100%; max-width: 620px; padding: 18px 20px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); }
+.cx-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.cx-title { margin: 0 0 2px; font-size: 18px; font-weight: 600; outline: none; }
+.cx-x { appearance: none; border: 0; background: transparent; color: var(--slate); font-size: 24px; line-height: 1; padding: 2px 8px; border-radius: 6px; cursor: pointer; }
+.cx-x:hover { background: var(--paper); color: var(--ink); }
+.cx-sub { color: var(--slate); font-size: 13px; line-height: 1.45; margin: 0; }
+.cx-card { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 14px 16px; }
+.cx-card--ok { border-color: color-mix(in srgb, var(--pos, #1b7a4b) 45%, var(--line)); }
+.cx-card--attention, .cx-card--error { border-color: color-mix(in srgb, var(--gold, #b0800a) 55%, var(--line)); }
+.cx-card__head { display: flex; gap: 12px; align-items: flex-start; }
+.cx-ico { flex: none; width: 40px; height: 40px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; font-size: 22px; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); color: var(--accent); }
+.cx-name { font-weight: 600; font-size: 15px; margin-right: 6px; }
+.cx-pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; background: var(--paper); color: var(--slate); }
+.cx-pill--good { background: color-mix(in srgb, var(--pos, #1b7a4b) 14%, var(--panel)); color: var(--pos, #1b7a4b); }
+.cx-pill--warn { background: color-mix(in srgb, var(--gold, #b0800a) 16%, var(--panel)); color: var(--gold, #b0800a); }
+.cx-card__body { margin-top: 10px; }
+.cx-label { margin: 12px 0 2px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--slate); }
+.cx-line { margin: 4px 0; font-size: 13px; }
+.cx-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.cx-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 5px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.cx-list li:first-child { border-top: 0; }
+.cx-mail { font-weight: 600; }
+.cx-warn { margin: 6px 0; font-size: 13px; color: var(--gold, #b0800a); }
+.cx-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.cx-btn { appearance: none; display: inline-flex; align-items: center; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; text-decoration: none; cursor: pointer; }
+.cx-btn:hover { background: var(--paper); }
+.cx-btn:disabled { opacity: 0.55; cursor: default; }
+.cx-btn--primary { background: var(--accent); border-color: transparent; color: #fff; }
+.cx-btn--primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+.cx-btn:focus-visible, .cx-x:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px; }
+.cx-foot { margin: 14px 0 0; font-size: 12px; color: var(--slate); }
+.topbar-btn--connections .ti { font-size: 15px; }
+@media (max-width: 560px) { .cx-overlay { padding-top: 16px; } .cx-actions .cx-btn { flex: 1 1 auto; justify-content: center; } }
+
+/* Connect form, disconnect */
+.cx-form { margin-top: 10px; }
+.cx-input { display: block; width: 100%; box-sizing: border-box; margin: 4px 0 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font: inherit; font-size: 14px; }
+.cx-input:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 1px; }
+.cx-actions--flush { margin-top: 10px; padding-top: 0; border-top: 0; }
+.cx-btn--danger { color: var(--neg, #ae3a2e); }
+.cx-btn--danger:hover { background: color-mix(in srgb, var(--neg, #ae3a2e) 10%, var(--panel)); border-color: var(--neg, #ae3a2e); }
+.cx-hint { margin-top: 12px; }
+.cx-card code { font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--paper); }
+
+/* Sign in / create account / key */
+.cx-modes { display: inline-flex; flex-wrap: wrap; margin: 0 0 10px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.cx-mode { appearance: none; border: 0; border-right: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; padding: 6px 14px; cursor: pointer; }
+.cx-mode:last-child { border-right: 0; }
+.cx-mode:hover { background: var(--paper); }
+.cx-mode.is-active { background: var(--accent); color: #fff; font-weight: 600; }
+.cx-mode:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: -2px; }
+.cx-label--field { margin-top: 10px; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--ink); font-weight: 500; display: block; }
+.cx-note { margin: 6px 0; padding: 8px 10px; border-radius: 6px; font-size: 13px; background: color-mix(in srgb, var(--pos, #1b7a4b) 12%, var(--panel)); color: var(--ink); }
+.cx-check { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0 4px; font-size: 13px; line-height: 1.4; }
+.cx-check input { margin-top: 3px; }
+.cx-link { appearance: none; border: 0; background: none; padding: 0; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; text-decoration: underline; }
+.cx-link:disabled { opacity: 0.5; cursor: default; }
+
+/* Email account card */
+.cx-card + .cx-card, section[data-card] + section[data-card] { margin-top: 12px; }
+.cx-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 10px; }
+select.cx-input { appearance: auto; }
+.cx-card--unavailable, .cx-card--none, .cx-card--loading { border-color: var(--line); }
+@media (max-width: 560px) { .cx-row { grid-template-columns: 1fr; } }
+.cx-cell { min-width: 0; }

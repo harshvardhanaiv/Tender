@@ -39,7 +39,7 @@ test("the builder note says what Send mail does and shows the Outreach panel wit
   };
   const html = V.builderPane({ status: "ok", detail, draft: { subject: "S", body: "B" }, dirty: false, options: { channels: [], merge_fields: [] } });
   assert.match(html, /use Send mail to send through Outreach/);
-  assert.match(html, /Send to Outreach/);
+  assert.match(html, /Send to buyers/);
   assert.ok(!/TenderFlow sends nothing/.test(html), "the old claim is gone");
   assert.ok(!html.includes("outreach-push"), "there is no create-draft button any more");
   assert.ok(!/Create drafts/.test(html));

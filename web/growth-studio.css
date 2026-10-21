@@ -289,3 +289,85 @@ body.tf-shell #growthFilterBar select.tf-chip--select { flex: none; width: auto;
   .gs-in-subject, .gs-in-meta { grid-column: 2; white-space: normal; }
   .gs-in-detail { padding-left: 14px; }
 }
+
+/* Social tab: composer and posts on the left, the post as Outreach made it on the right */
+.gs-sp-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.gs-sp-preview { position: sticky; top: 8px; }
+.gs-sp-image { margin: 8px 0 0; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-2); overflow: hidden; }
+.gs-sp-image img { display: block; width: 100%; max-height: 420px; object-fit: cover; }
+.gs-sp-image--empty { padding: 36px 18px; text-align: center; color: var(--slate); font-size: 13px; line-height: 1.5; }
+.gs-sp-section { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+.gs-sp-when { margin: 4px 0 8px; font-size: 14px; }
+.gs-sp-variant { margin-top: 10px; }
+.gs-sp-item { padding: 0; }
+.gs-sp-pick { display: block; width: 100%; padding: 10px 6px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 3px; }
+.gs-sp-pick:hover { background: var(--panel-2); }
+.gs-sp-pick:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: -2px; }
+.gs-sp-item.is-selected .gs-sp-pick { background: var(--gs-accent-soft, var(--panel-2)); box-shadow: inset 3px 0 0 var(--accent); }
+.gs-sp-pick__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.gs-sp-pick__text { display: block; margin-top: 4px; font-size: 13px; color: var(--slate); line-height: 1.4; }
+.gs-actions--tight { margin-top: 0; }
+@media (max-width: 900px) {
+  .gs-sp-grid { grid-template-columns: 1fr; }
+  .gs-sp-preview { position: static; }
+}
+
+/* Social tab: the company the post is written as */
+.gs-sp-company { margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.gs-sp-company .gs-label { margin-top: 0; }
+.gs-sp-company .gs-notes { margin-top: 8px; }
+
+/* Social tab: write the caption by hand, own picture */
+.gs-sp-how { gap: 6px 18px; }
+.gs-label--sub { margin-top: 10px; font-weight: 600; }
+.gs-sp-own { margin: 6px 0 4px; }
+.gs-sp-thumb { display: block; max-width: 100%; max-height: 180px; margin: 0 0 8px; border: 1px solid var(--line); border-radius: 4px; object-fit: contain; background: var(--panel-2); }
+.gs-sp-file { position: relative; display: inline-block; cursor: pointer; overflow: hidden; }
+.gs-sp-file__input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+
+/* Social tab: tidier composer and preview */
+.gs-seg { display: inline-flex; flex-wrap: wrap; margin: 2px 0 8px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); }
+.gs-seg__opt { position: relative; display: inline-flex; align-items: center; padding: 6px 14px; font-size: 13px; cursor: pointer; color: var(--ink); border-right: 1px solid var(--line); }
+.gs-seg__opt:last-child { border-right: 0; }
+.gs-seg__opt input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.gs-seg__opt:hover { background: var(--panel-2); }
+.gs-seg__opt:has(input:checked) { background: var(--accent); color: #fff; font-weight: 600; }
+.gs-seg__opt:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.gs-picks { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 8px; }
+.gs-pick { position: relative; display: inline-flex; align-items: center; padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; cursor: pointer; background: var(--panel); }
+.gs-pick input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.gs-pick:hover { background: var(--panel-2); }
+.gs-pick:has(input:checked) { background: var(--gs-accent-soft); border-color: var(--accent); font-weight: 600; }
+.gs-pick:has(input:checked)::before { content: "\2713"; margin-right: 6px; }
+.gs-pick:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.gs-sp-caption { margin: 10px 0 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); max-height: 280px; overflow-y: auto; }
+.gs-sp-caption .gs-ch-caption { margin: 0; white-space: pre-wrap; }
+.gs-sp-tabs { display: flex; gap: 4px; margin: 14px 0 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.gs-sp-tab { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; margin-bottom: -1px; font: inherit; font-size: 13px; color: var(--slate); cursor: pointer; white-space: nowrap; }
+.gs-sp-tab:hover { color: var(--ink); }
+.gs-sp-tab.is-active { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.gs-sp-panel { padding: 4px 0 8px; }
+.gs-sp-panel > .gs-sp-section { border-top: 0; margin-top: 8px; padding-top: 0; }
+.gs-sp-panel > .gs-sp-section > .gs-label:first-child { display: none; }
+/* Inbox: delete */
+.gs-in-line { display: flex; align-items: center; }
+.gs-in-line .gs-in-row { flex: 1; min-width: 0; width: auto; }
+.gs-in-del { appearance: none; margin: 0 12px 0 0; padding: 4px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--gs-neg, #b42318); font: inherit; font-size: 12px; cursor: pointer; }
+.gs-in-del:hover { background: var(--gs-neg-soft, #fdecea); border-color: var(--gs-neg, #b42318); }
+.gs-in-del:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px; }
+.gs-btn--danger { color: var(--gs-neg, #b42318); }
+.gs-btn--danger:hover { background: var(--gs-neg-soft, #fdecea); border-color: var(--gs-neg, #b42318); }
+@media (max-width: 720px) { .gs-in-line { align-items: flex-start; } .gs-in-del { margin-top: 10px; } }
+
+/* Inbox: email accounts */
+.gs-in-accounts { margin: 0 0 14px; }
+.gs-in-accounts__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
+.gs-in-accounts__head .gs-card__title { margin: 0; }
+.gs-in-acc { list-style: none; margin: 10px 0 4px; padding: 0; }
+.gs-in-acc__row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.gs-in-acc__row:first-child { border-top: 0; }
+.gs-in-acc__email { font-weight: 600; }
+
+.gs-in-mailform .gs-ch-row { align-items: flex-start; gap: 0 14px; }
+.gs-in-mailform .gs-ch-row > div { flex: 1 1 200px; min-width: 0; }
+.gs-in-mailform .gs-input, .gs-in-mailform .gs-select { width: 100%; box-sizing: border-box; }

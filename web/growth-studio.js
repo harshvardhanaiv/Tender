@@ -9,19 +9,19 @@
   if (!V) return; // growth-view.js did not load: leave the rest of the app alone
 
   const byId = (id) => document.getElementById(id);
-  const TABS = { signals: "gsTabSignals", campaigns: "gsTabCampaigns", builder: "gsTabBuilder", performance: "gsTabPerformance", channels: "gsTabChannels", inbox: "gsTabInbox" };
+  const TABS = { signals: "gsTabSignals", campaigns: "gsTabCampaigns", builder: "gsTabBuilder", social: "gsTabSocial", calls: "gsTabCalls", inbox: "gsTabInbox", performance: "gsTabPerformance" };
   const TYPE_CHOICES = { renewal: "Contract renewals", development: "New developments", engagement: "Market engagements" };
   const STALE_MS = 5 * 60 * 1000;
-  const PANES = { signals: "gsPaneSignals", campaigns: "gsPaneCampaigns", builder: "gsPaneBuilder", performance: "gsPanePerformance", channels: "gsPaneChannels", inbox: "gsPaneInbox" };
+  const PANES = { signals: "gsPaneSignals", campaigns: "gsPaneCampaigns", builder: "gsPaneBuilder", performance: "gsPanePerformance", social: "gsPaneSocial", calls: "gsPaneCalls", inbox: "gsPaneInbox" };
 
   function freshBuilder() {
     return {
       status: "idle", id: null, detail: null, draft: null, dirty: false, preview: null, previewTarget: null, previewSeq: 0,
       warnings: null, drafting: false, error: null, lastField: "body", aiNote: "",
       lookups: {}, // target id -> "looking" | "found" | "not_found" | "personal_only": buyer contact lookups
+      suggest: {}, // target id -> {email, source, url}: a named person's address the notice gives, offered but never filled in
       outreach: {
         status: "idle", info: null, drafts: null, last: null, pushing: false, refreshing: false, personal: false, error: null,
-        mail: { status: "idle", info: null, open: false, form: null, saving: false, testing: false, error: null, notice: null },
       },
     };
   }
@@ -203,6 +203,7 @@
   // The client-only state of a contact lookup rides on each target for the view to read.
   function withLookup(t) {
     t._lookup = state.builder.lookups[t.id];
+    t._suggest = (state.builder.suggest || {})[t.id];
     return t;
   }
 
@@ -513,6 +514,7 @@
           const res = await api("POST", `/api/growth/campaigns/${id}/targets/${t.id}/find-contact`, {});
           if (state.builder !== b) return;
           const outcome = (res.find_contact || {}).status;
+          if (outcome === "personal_only" && (res.find_contact || {}).suggestion) b.suggest[t.id] = res.find_contact.suggestion;
           b.lookups[t.id] = outcome === "found" ? "found" : outcome === "personal_only" ? "personal_only" : outcome === "already" ? "found" : "not_found";
           keepTypedEmails(() => {
             if (outcome === "found") applyDetail(res, false);
@@ -534,20 +536,22 @@
     if (!id || o.status === "loading" || (o.status === "ok" && !force)) return;
     o.status = "loading";
     try {
-      const [info, drafts, mail] = await Promise.all([
+      const [info, drafts] = await Promise.all([
         api("GET", "/api/growth/outreach/status"),
         api("GET", `/api/growth/campaigns/${id}/outreach`),
-        api("GET", "/api/growth/email-account").catch(() => null),
       ]);
       if (state.builder.outreach !== o) return; // another campaign was opened meanwhile
-      if (mail) setMailInfo(o.mail, mail);
       o.info = info;
       if (o.mailbox == null) {
-        // the last mailbox chosen on this browser, if Outreach still lists it and it can send
-        let saved = "";
-        try { saved = localStorage.getItem("tf_outreach_mailbox") || ""; } catch (e) { saved = ""; }
+        // what this browser used last, if it can still be used; else the user's own email account when they have one
+        let saved = null;
+        try { saved = localStorage.getItem("tf_outreach_mailbox"); } catch (e) { saved = null; }
+        const own = !!(info.mail_account && info.mail_account.verified);
         const list = (info.wallet && info.wallet.mailboxes) || [];
-        o.mailbox = list.some((m) => String(m.id || m.email) === saved && m.can_send !== false) ? saved : "";
+        if (saved === "smtp" && own) o.mailbox = "smtp";
+        else if (saved && list.some((m) => String(m.id || m.email) === saved && m.can_send !== false)) o.mailbox = saved;
+        else if (saved === "" && info.ready) o.mailbox = "";
+        else o.mailbox = own ? "smtp" : "";
       }
       o.drafts = drafts.drafts;
       o.status = "ok";
@@ -559,38 +563,6 @@
       o.info = { ready: false, problem: err.message };
     }
     renderBuilder();
-  }
-
-  // The sender mailbox card: what the server knows about the user's mailbox, and the form's working values.
-  function mailFormFrom(info) {
-    const a = info.account;
-    const p = (info.presets || []).find((x) => x.id === "gmail") || {};
-    return a
-      ? { provider: a.provider, from_name: a.from_name, from_email: a.from_email, host: a.host, port: a.port,
-          security: a.security, username: a.username, reply_to: a.reply_to || "", daily_cap: a.daily_cap }
-      : { provider: "gmail", from_name: "", from_email: "", host: p.host || "", port: p.port || 465,
-          security: p.security || "ssl", username: "", reply_to: "", daily_cap: 100 };
-  }
-
-  function setMailInfo(mail, info) {
-    mail.info = info;
-    mail.status = "ok";
-    mail.form = mail.form && mail.open ? mail.form : mailFormFrom(info);
-  }
-
-  async function mailCall(fn) {
-    const mail = state.builder.outreach.mail;
-    mail.error = null;
-    mail.notice = null;
-    try {
-      await fn(mail);
-    } catch (err) {
-      mail.error = err.message;
-    } finally {
-      mail.saving = false;
-      mail.testing = false;
-      renderBuilder();
-    }
   }
 
   async function openCampaign(id) {
@@ -774,12 +746,15 @@
     if (tab === "signals" && !state.signals.data && V.hasCategory(state.filters)) loadSignals();
     if (tab === "campaigns") loadCampaigns();
     if (tab === "performance") loadPerformance();
-    // Social & calls and Inbox have their own modules (growth-channels.js, growth-inbox.js): each loads when its tab opens
-    [["channels", window.GrowthChannels], ["inbox", window.GrowthInbox]].forEach(([name, mod]) => {
-      if (!mod) return;
-      if (tab === name) mod.open();
-      else mod.close();
-    });
+    // Social, Calls and Inbox have their own modules (growth-channels.js, growth-inbox.js): each loads when its tab opens
+    if (window.GrowthChannels) {
+      if (tab === "social" || tab === "calls") window.GrowthChannels.open(tab);
+      else window.GrowthChannels.close();
+    }
+    if (window.GrowthInbox) {
+      if (tab === "inbox") window.GrowthInbox.open();
+      else window.GrowthInbox.close();
+    }
   }
 
   // ── events ────────────────────────────────────────────────────────────────────────────────────
@@ -856,67 +831,28 @@
       input.scrollIntoView({ block: "center", behavior: "smooth" });
       input.focus();
     },
-    "mail-edit": () => {
-      const mail = state.builder.outreach.mail;
-      mail.open = true;
-      mail.form = mailFormFrom(mail.info);
-      mail.error = mail.notice = null;
-      renderBuilder();
-    },
-    "mail-cancel": () => {
-      const mail = state.builder.outreach.mail;
-      mail.open = false;
-      mail.error = mail.notice = null;
-      renderBuilder();
-    },
-    "mail-save": () =>
-      mailCall(async (mail) => {
-        mail.saving = true;
-        renderBuilder();
-        const f = mail.form;
-        const res = await api("PUT", "/api/growth/email-account", {
-          provider: f.provider, from_name: f.from_name, from_email: f.from_email, host: f.host, port: f.port,
-          security: f.security, username: f.username, reply_to: f.reply_to, daily_cap: f.daily_cap, password: f.password || "",
-        });
-        f.password = "";
-        mail.info = { ...mail.info, account: res.account };
-        mail.open = false;
-        mail.form = mailFormFrom(mail.info);
-        mail.notice = "Mailbox connected. Send yourself a test email to confirm it lands.";
-      }),
-    "mail-test": () =>
-      mailCall(async (mail) => {
-        mail.testing = true;
-        renderBuilder();
-        const res = await api("POST", "/api/growth/email-account/test", {});
-        mail.notice = `Test email sent to ${res.sent_to}. Check that inbox (and spam).`;
-      }),
-    "mail-disconnect": () =>
-      mailCall(async (mail) => {
-        if (!(await confirmDialog("Disconnect this mailbox? Growth Studio will go back to sending through Outreach."))) return;
-        await api("DELETE", "/api/growth/email-account");
-        mail.info = { ...mail.info, account: null };
-        mail.open = false;
-        mail.form = mailFormFrom(mail.info);
-      }),
+    // a named person's address from the notice, accepted by the user: saved like one they typed
+    "use-suggestion": (a) => run(() => patchQuietly({ contact_email: a.dataset.email }, Number(a.dataset.id))),
     "outreach-send": () =>
       run(async () => {
         const b = state.builder;
         const o = b.outreach;
         const n = b.detail ? b.detail.eligible : 0;
-        const acct = o.mail && o.mail.info && o.mail.info.account;
-        const picked = o.mailbox && o.info && o.info.wallet && (o.info.wallet.mailboxes || []).find((m) => String(m.id || m.email) === o.mailbox);
-        const via = acct && acct.verified ? `from ${acct.from_email}` : picked ? `from ${picked.email}` : "from your connected Outreach mailbox";
+        const choice = V.senderChoice(o.info, o.mailbox);
+        const own = V.ownAccount(o.info);
+        const picked = choice && choice !== "smtp" && o.info && o.info.wallet && (o.info.wallet.mailboxes || []).find((m) => String(m.id || m.email) === choice);
+        const via = choice === "smtp" ? `from ${own.from_email}` : picked ? `from ${picked.email}` : "from your connected Outreach mailbox";
         if (!(await confirmDialog(`Send this email now to up to ${V.plural(n, "buyer")}, ${via}? Real emails will go out and this cannot be undone.`))) return;
         o.pushing = true;
         renderBuilder();
         try {
-          const res = await api("POST", `/api/growth/campaigns/${b.id}/outreach`, { allow_personal: !!o.personal, mailbox: o.mailbox || undefined });
+          const res = await api("POST", `/api/growth/campaigns/${b.id}/outreach`, { allow_personal: !!o.personal, mailbox: choice || undefined });
           o.last = res;
           o.drafts = res.drafts;
           toast(res.sent.length ? `${V.plural(res.sent.length, "email")} ${res.mode === "smtp" ? "sent from your mailbox." : "handed to Outreach to send."}` : "Nothing was sent.", { error: !res.sent.length });
           if (res.mode === "smtp") {
-            api("GET", "/api/growth/email-account").then((m) => { setMailInfo(o.mail, m); renderBuilder(); }).catch(() => {});
+            o.status = "idle"; // read the count of emails sent today again
+            loadOutreach(true);
           }
           if (res.sent.length) {
             // the buyers are now recorded as sent: show that in the Buyers table and refresh the campaign list
@@ -1029,18 +965,6 @@
       try { localStorage.setItem("tf_outreach_mailbox", t.value); } catch (e) { /* a remembered choice is only a convenience */ }
       return;
     }
-    if (d.field === "mail-provider") {
-      const mail = state.builder.outreach.mail;
-      const preset = ((mail.info && mail.info.presets) || []).find((x) => x.id === t.value);
-      mail.form.provider = t.value;
-      mail.form.password = ""; // the box is blank after the re-render, so the held value must be too
-      if (preset && t.value !== "custom") Object.assign(mail.form, { host: preset.host, port: preset.port, security: preset.security });
-      return renderBuilder();
-    }
-    if (d.field === "mail-security") {
-      state.builder.outreach.mail.form.security = t.value;
-      return;
-    }
     if (d.action === "target-include") return void run(() => patchTarget(Number(d.id), { included: t.checked }));
     if (d.field === "contact_email") return void run(() => patchQuietly({ contact_email: t.value.trim() }, Number(d.id)));
     if (d.field === "status") {
@@ -1077,11 +1001,6 @@
       return;
     }
     const field = t.dataset && t.dataset.field;
-    if (field && field.startsWith("mail-") && field !== "mail-provider") {
-      const mail = state.builder.outreach.mail;
-      if (mail.form) mail.form[field.slice(5)] = t.value; // no re-render: it would take focus from the box
-      return;
-    }
     if (field === "subject" || field === "body") {
       state.builder.draft[field] = t.value;
       state.builder.lastField = field;
@@ -1183,6 +1102,14 @@
     byId("growthStudioClose")?.addEventListener("click", closeGrowthStudio);
     byId("btnGrowthStudio")?.addEventListener("click", openGrowthStudio);
   }
+
+  // The Connections window (web/connections.js) was closed after a change: how emails can be sent may be different now.
+  document.addEventListener("connections:changed", () => {
+    const o = state.builder.outreach;
+    o.status = "idle";
+    o.mailbox = null; // the sender is chosen afresh (the user's own email account when there is one)
+    if (state.builder.id && !byId("growthStudioModal")?.classList.contains("hidden") && state.tab === "builder") run(() => loadOutreach(true));
+  });
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bind);
   else bind();

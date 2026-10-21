@@ -61,14 +61,6 @@ def _https_url(value: str | None) -> str | None:
     return text if host and "@" not in host else None
 
 
-def web_links(web_url: str | None, connect_url: str | None = None, manage_url: str | None = None) -> dict[str, str | None]:
-    """The two pages a user is sent to in Outreach's own web app: `connect` (sign in or sign up, choose a plan,
-    connect a mailbox) and `manage` (mailboxes and settings). Each falls back to the site root; a value that is not
-    an https link is dropped, so a mistake in the environment can never make the button point somewhere odd."""
-    root = _https_url(web_url) or _https_url(DEFAULT_BASE_URL)
-    return {"connect_url": _https_url(connect_url) or root, "manage_url": _https_url(manage_url) or root}
-
-
 def mask_key(key: str | None) -> str:
     """Enough to recognise which key is configured, never enough to use it."""
     text = (key or "").strip()
@@ -137,6 +129,52 @@ def _requests_transport(method: str, url: str, headers: Mapping[str, str], body:
 
     resp = requests.request(method, url, headers=dict(headers), data=body, timeout=timeout)
     return resp.status_code, resp.headers, resp.text
+
+
+PARTNER_AUTH_ACTIONS = ("signup", "login", "resend_verification", "forgot_password")
+
+
+def partner_auth(action: str, data: Mapping[str, Any], *, base_url: str = DEFAULT_BASE_URL, origin: str | None = None,
+                 timeout: float = DEFAULT_TIMEOUT, transport: Transport | None = None) -> dict[str, Any]:
+    """One of Outreach's partner `auth` actions (no key needed): POST /v1/run {"plugin": "auth", "action": ..., "data": ...}.
+    `signup` and `login` answer with the account's `api_key`, shown once; `signup` answers `verify_email: true` with no key
+    when the user must confirm their email first. The caller's `data` (which holds a password) is sent and then forgotten:
+    it is never logged, and an Outreach error text is scrubbed before it can reach the user."""
+    if action not in PARTNER_AUTH_ACTIONS:
+        raise OutreachError("That is not an Outreach sign-in action.", 400, "invalid_request")
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if origin:
+        headers["Origin"] = origin
+    body = json.dumps({"plugin": "auth", "action": action, "data": dict(data)}).encode("utf-8")
+    try:
+        status, resp_headers, text = (transport or _requests_transport)("POST", f"{(base_url or DEFAULT_BASE_URL).rstrip('/')}/v1/run", headers, body, timeout)
+    except Exception as exc:  # network down, DNS, timeout: say so without echoing the request
+        raise OutreachError(f"Outreach could not be reached ({type(exc).__name__}).", 502, "unreachable") from None
+    payload: Any = None
+    if text:
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            payload = None
+    if 200 <= status < 300:
+        if not isinstance(payload, dict):
+            raise OutreachError("Outreach answered with something that was not a JSON object.", 502, "bad_response")
+        return payload
+    raise _error_for(status, resp_headers, payload)
+
+
+def partner_key(answer: Mapping[str, Any]) -> str | None:
+    """The `api_key` of a signup / login answer (at the top, or under `data`), only when it is a well-formed Outreach key."""
+    for src in (answer, answer.get("data") if isinstance(answer.get("data"), Mapping) else None):
+        if isinstance(src, Mapping):
+            key = str(src.get("api_key") or "").strip()
+            if key_mode(key):
+                return key
+    return None
+
+
+def partner_needs_verification(answer: Mapping[str, Any]) -> bool:
+    return any(isinstance(s, Mapping) and s.get("verify_email") is True for s in (answer, answer.get("data")))
 
 
 class OutreachClient:
@@ -221,6 +259,11 @@ class OutreachClient:
     def wallets(self) -> dict[str, Any]:
         return self._call("GET", "/v1/wallets")
 
+    def disconnect_partner(self) -> dict[str, Any]:
+        """Tell Outreach this app is no longer connected to the account (`auth` `disconnect`, with the account's key), so the key
+        stops working there as well as being forgotten here."""
+        return self._call("POST", "/v1/run", {"plugin": "auth", "action": "disconnect"})
+
     def create_email_campaign(self, payload: Mapping[str, Any], idempotency_key: str) -> dict[str, Any]:
         if not idempotency_key:
             raise OutreachError("An idempotency key is required to create a campaign.", 400, "invalid_request")
@@ -284,15 +327,31 @@ class OutreachClient:
             raise OutreachError("That is not an Outreach post id.", 400, "invalid_request")
         return self._call("GET", f"/v1/social/posts/{post_id}")
 
-    def decide_social_post(self, post_id: str, decision: str, idempotency_key: str) -> dict[str, Any]:
-        """Approve ("approve", the only way a post goes live), reject or cancel it. Needs `social:approve`."""
+    def update_social_post(self, post_id: str, payload: Mapping[str, Any], idempotency_key: str) -> dict[str, Any]:
+        """Change a post: its publish time, or ask the AI to write the text, the picture or both again. Outreach sends a
+        changed post back for approval, so this never publishes anything."""
+        if not _ID_RE.match(post_id or ""):
+            raise OutreachError("That is not an Outreach post id.", 400, "invalid_request")
+        if not payload:
+            raise OutreachError("Nothing to change.", 400, "invalid_request")
+        if not idempotency_key:
+            raise OutreachError("An idempotency key is required to change a post.", 400, "invalid_request")
+        return self._call("PATCH", f"/v1/social/posts/{post_id}", payload, idempotency_key)
+
+    def decide_social_post(self, post_id: str, decision: str, idempotency_key: str, publish_at: str | None = None) -> dict[str, Any]:
+        """Approve ("approve", the only way a post goes live), reject or cancel it. Needs `social:approve`. An approval
+        may carry a new `publish_at`: approval closes at the publish time, so a post whose time has passed is approved
+        for a later one."""
         if decision not in ("approve", "reject", "cancel"):
             raise OutreachError("decision must be approve, reject or cancel.", 400, "invalid_request")
         if not _ID_RE.match(post_id or ""):
             raise OutreachError("That is not an Outreach post id.", 400, "invalid_request")
         if not idempotency_key:
             raise OutreachError("An idempotency key is required to decide a post.", 400, "invalid_request")
-        return self._call("POST", f"/v1/social/posts/{post_id}/decision", {"decision": decision}, idempotency_key)
+        body: dict[str, Any] = {"decision": decision}
+        if publish_at and decision == "approve":
+            body["publish_at"] = publish_at
+        return self._call("POST", f"/v1/social/posts/{post_id}/decision", body, idempotency_key)
 
     # ── phone calls ──────────────────────────────────────────────────────────────────────────────
 
@@ -514,8 +573,40 @@ def phone_number_count(raw: Mapping[str, Any]) -> int | None:
     return None
 
 
+def _image_link(raw: Mapping[str, Any]) -> str | None:
+    """The post's picture as a plain https link, whether Outreach gives it as a string, an object or a list."""
+    v = _find(raw, ("image_url", "picture_url", "image", "picture", "thumbnail", "media", "images"))
+    if isinstance(v, list):
+        v = v[0] if v else None
+    if isinstance(v, dict):
+        v = _find(v, ("url", "src", "href", "image_url", "link"))
+    return _https_url(_text(v, 500))
+
+
+def _variants(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """How the post reads on each channel ("how it looks on each channel"): [{channel, text}], text as plain text."""
+    src = _find(raw, ("previews", "per_channel", "by_channel", "variants", "channel_previews"))
+    items: list[tuple[Any, Any]] = []
+    if isinstance(src, dict):
+        items = list(src.items())
+    else:
+        entries = src if isinstance(src, list) else _find(raw, ("channels",))
+        for e in (entries if isinstance(entries, list) else []):
+            if isinstance(e, dict):
+                items.append((_find(e, ("channel", "platform", "network", "name")), e))
+    out: list[dict[str, Any]] = []
+    for name, v in items[:8]:
+        text = v if isinstance(v, str) else (_find(v, ("text", "caption", "body", "preview", "content")) if isinstance(v, dict) else None)
+        label = _names([name])
+        t = plain_text(text, 3000)
+        if label and t:
+            out.append({"channel": label[0], "text": t})
+    return out
+
+
 def post_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
-    """A social post: id, status, caption, channels, preview link (https only) and the published link if there is one."""
+    """A social post: id, status, caption, picture, how it reads per channel, channels, preview link (https only) and
+    the published link if there is one."""
     channels = _find(raw, ("channels",))
     result = _find(raw, ("result", "published", "publication"))
     link = _find(result, ("url", "link", "permalink")) if isinstance(result, dict) else _find(raw, ("published_url", "post_url"))
@@ -525,6 +616,8 @@ def post_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
         "caption": _text(_find(raw, ("caption", "text", "body")), 3000),
         "channels": _names(channels),
         "preview_url": _https_url(_text(_find(raw, ("preview_url", "preview")), 500)),
+        "image_url": _image_link(raw),
+        "variants": _variants(raw),
         "published_url": _https_url(_text(link, 500)),
         "publish_at": _text(_find(raw, ("publish_at", "scheduled_for")), 40),
         "reason": _text(_find(raw, ("error", "reason", "failure_reason")), 300),
@@ -666,3 +759,7 @@ def reply_detail(raw: Mapping[str, Any]) -> dict[str, Any]:
         "original": plain_text(_find(raw, ("body", "text", "html", "content", "message")), 4000),
         "bounce_reason": _text(_find(raw, ("bounce_reason", "reason", "error")), 300),
     }
+
+
+# the real class's error builder, kept apart so partner_auth keeps working when a test swaps the OutreachClient name
+_error_for = OutreachClient._error
