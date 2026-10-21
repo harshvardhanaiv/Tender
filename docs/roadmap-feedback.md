@@ -24,7 +24,7 @@ Hover or focus the match badge: four weighted factors with a sentence each, plus
 ## 5. Scoring and AI
 **Built**
 - "AI Score" renamed **Keyword Score** (English, French, Dutch). The AI deep score keeps its name.
-- One set of fit bands everywhere in the browser: 80+ strong, 50 to 79 possible, below 50 weak. The pipeline and some badges used 70/40 while the list and the AI prompt used 80/50, so one score could show two colours. The deadline emails now use the same bands.
+- One set of fit bands everywhere in the browser: 80+ strong, 50 to 79 possible, below 50 weak. The pipeline and some badges used 70/40 while the list and the AI prompt used 80/50, so one score could show two colours. The recommendation emails use the same bands.
 
 **What exists today (so decisions are about facts)**
 | Score | Where | Cost | Inputs |
