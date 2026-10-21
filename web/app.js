@@ -120,6 +120,7 @@ async function seedOriginFromProfile() {
     const meta = getActiveProfileMeta();
     const pc = String((meta && meta.postcode) || "").trim();
     if (!pc || _originSeededFor === pc || typeof resolveLocationAsync !== "function") return;
+    if (window.TFLocation && window.TFLocation.recall()) return; // the reader's last chosen place wins over the profile postcode
     _originSeededFor = pc;
     const found = await resolveLocationAsync(pc);
     if (!found) return;
@@ -168,7 +169,7 @@ function clearUserBrowserData() {
     const doomed = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k.startsWith(prefix) && /swr_|recent|saved|credit|plan|profile/i.test(k)) doomed.push(k);
+      if (k && k.startsWith(prefix) && /swr_|recent|saved|credit|plan|profile|location/i.test(k)) doomed.push(k);
     }
     doomed.forEach((k) => localStorage.removeItem(k));
   } catch (e) { /* storage blocked: nothing to clear */ }
@@ -634,6 +635,7 @@ async function loadCurrentUser() {
     if (!res.ok) return;
     const data = await res.json();
     state.username = data.username || "";
+    if (window.TFLocation) { window.TFLocation.configure({ storageKey: () => storageKey("last_location") }); window.TFLocation.init(); }
     state.email = data.email || "";
 
     // Update AIV dashboard link with logged-in user's username
