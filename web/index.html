@@ -29,7 +29,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
   <link rel="stylesheet" href="/styles.css?v=146" />
-  <link rel="stylesheet" href="/theme.css?v=41" />
+  <link rel="stylesheet" href="/theme.css?v=42" />
   <link rel="stylesheet" href="/mobile.css?v=4" />
   <link rel="stylesheet" href="/responsive-fixes.css?v=10" />
   <link rel="stylesheet" href="/growth-studio.css?v=13" />
@@ -1659,8 +1659,14 @@
       <div id="pipelineFilterBar" class="tf-filterbar tf-filterbar--page">
         <label class="tf-search">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
-          <input type="text" id="pipelineSearchInput" placeholder="Search tracked tenders by title, buyer or notes" aria-label="Search pipeline" autocomplete="off" />
+          <input type="text" id="pipelineSearchInput" placeholder="Search tenders, buyers or suppliers" aria-label="Search pipeline" autocomplete="off" />
         </label>
+        <div id="pipelineKindPills" class="tf-chip-group" role="group" aria-label="Show">
+          <button type="button" class="pill active" data-kind="all" aria-pressed="true" title="Show tenders, buyers and suppliers">All</button>
+          <button type="button" class="pill" data-kind="tender" aria-pressed="false" title="Show only tracked tenders">Tenders</button>
+          <button type="button" class="pill" data-kind="buyer" aria-pressed="false" title="Show only watched buyers">Buyers</button>
+          <button type="button" class="pill" data-kind="supplier" aria-pressed="false" title="Show only watched suppliers">Suppliers</button>
+        </div>
         <select id="pipelinePortalFilter" class="tf-chip tf-chip--select" aria-label="Portal">
           <option value="">All portals</option>
         </select>
@@ -3293,7 +3299,7 @@
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=1"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=232"></script>
+  <script src="/app.js?v=233"></script>
   <script src="/planning.js?v=18"></script>
   <script src="/responsive-fixes.js?v=1" defer></script>
   <script src="/tooltips.js?v=2"></script>

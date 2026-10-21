@@ -2191,3 +2191,19 @@ i.planning-pin__key { display: inline-block; width: 10px; height: 10px; border-r
 .tf-pin-modal__radius { display: flex; align-items: center; gap: 12px; padding: 0 16px 10px; font-size: 12.5px; }
 .tf-pin-modal__radius .tf-pin-range { flex: 1; min-width: 0; }
 .tf-pin-any { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--muted, #64748b); }
+
+/* ── Pipeline: one accordion for the lists, watched buyers and suppliers on the board ─────── */
+.dash-acc-wrap { padding-bottom: 4px; }
+.dash-acc { border: 1px solid var(--border, #e2e8f0); border-radius: 8px; background: var(--surface, #fff); margin-bottom: 6px; }
+.dash-acc__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; cursor: pointer; font-weight: 700; font-size: 12.5px; list-style: none; }
+.dash-acc__head::-webkit-details-marker { display: none; }
+.dash-acc__head::before { content: "▸"; margin-right: 6px; color: var(--muted, #64748b); transition: transform .12s; }
+.dash-acc[open] > .dash-acc__head::before { transform: rotate(90deg); }
+.dash-acc__head > span:first-child { flex: 1; }
+.dash-acc__count { font-size: 10.5px; font-weight: 800; padding: 1px 7px; border-radius: 999px; background: var(--surface-2, #e2e8f0); color: var(--text, #334155); }
+.dash-acc__body { padding: 0 12px 10px; }
+.dash-acc__note { margin: 0 0 6px; font-size: 11.5px; color: var(--muted, #64748b); }
+.dash-card--entity { border-left: 3px solid #f59e0b; }
+.dash-card__kind { font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+.dash-kanban--single { grid-template-columns: minmax(0, 1fr) !important; }
+body.tf-shell #pipelineKindPills { display: inline-flex; gap: 4px; }

@@ -7464,20 +7464,42 @@ function pipelineItemDeep(item) {
 
 let _pipelineShowAllHighFit = false;
 
-// Buyers and suppliers on the global watchlist (web/watchlist.js), each tagged with the section it was added from.
-function watchedEntitiesHtml() {
-  const list = window.TFWatch ? window.TFWatch.items() : [];
-  if (!list.length) return "";
-  const rows = list.map((w) => {
-    const icon = w.kind === "buyer" ? "🏛️" : "🏢";
-    return `<div class="dash-watched" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}">
-      <span class="dash-watched__icon" aria-hidden="true">${icon}</span>
-      <button type="button" class="dash-watched__name" data-open-watched="1" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}" data-name="${esc(w.name)}" title="Open ${w.kind === "buyer" ? "Buyer" : "Supplier"} Intelligence">${esc(displayName(w.name))}</button>
-      <span class="dash-watched__from" title="Where you added it">${esc(w.added_from_label)}</span>
-      <button type="button" class="dash-watched__remove" data-unwatch="1" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}" aria-label="Remove ${esc(w.name)} from the watchlist" title="Remove from watchlist">×</button>
-    </div>`;
-  }).join("");
-  return `<div class="dash-section"><div class="dash-section__title">⭐ Watched buyers &amp; suppliers (${list.length})</div><div class="dash-watched-list">${rows}</div></div>`;
+let _pipelineKind = "all";            // all | tender | buyer | supplier
+const _pipelineAccOpen = { deadlines: null, highfit: null };   // null = not chosen yet: the first section with something in it opens
+
+// Buyers and suppliers on the global watchlist (web/watchlist.js) that the board's search and kind filter let through.
+function pipelineEntities(searchQuery, portalFilter) {
+  if (portalFilter || !window.TFWatch || !["all", "buyer", "supplier"].includes(_pipelineKind)) return [];
+  return window.TFWatch.items().filter((w) => (_pipelineKind === "all" || w.kind === _pipelineKind)
+    && (!searchQuery || `${w.name} ${w.added_from_label}`.toLowerCase().includes(searchQuery)));
+}
+
+// A watched buyer or supplier as a card in the Watching column, tagged with the section it was added from.
+function pipelineEntityCardHtml(w) {
+  const isBuyer = w.kind === "buyer";
+  return `<div class="dash-card dash-card--entity" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}">
+    <div class="dash-card__top" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+      <span class="dash-card__kind dash-card__kind--${esc(w.kind)}">${isBuyer ? "🏛️ Buyer" : "🏢 Supplier"}</span>
+      <span class="dash-card__from" title="Where you added it">+ ${esc(w.added_from_label)}</span>
+      <button class="dash-card__remove dash-card__remove--top" data-unwatch="1" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}" aria-label="Remove ${esc(w.name)} from the watchlist" title="Remove from watchlist">×</button>
+    </div>
+    <div class="dash-card__title">${esc(displayName(w.name))}</div>
+    <div class="dash-card__actions"><button type="button" class="btn btn--xs" data-open-watched="1" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}" data-name="${esc(w.name)}" title="Open ${isBuyer ? "Buyer" : "Supplier"} Intelligence">View</button></div>
+  </div>`;
+}
+
+// One accordion for the lists above the board. Each part opens and closes on its own and remembers its state while the page is open.
+function pipelineAccordionHtml(parts) {
+  const shown = parts.filter((p) => p.count > 0);
+  if (!shown.length) return "";
+  const firstId = shown[0].id;
+  return `<div class="dash-section dash-acc-wrap">` + shown.map((p) => {
+    const chosen = _pipelineAccOpen[p.id];
+    const open = chosen == null ? p.id === firstId : chosen;
+    return `<details class="dash-acc" data-acc="${p.id}"${open ? " open" : ""}>
+      <summary class="dash-acc__head"><span>${p.title}</span><span class="dash-acc__count">${p.count}</span></summary>
+      <div class="dash-acc__body">${p.html}</div></details>`;
+  }).join("") + `</div>`;
 }
 
 function renderPipelineBoard() {
@@ -7489,11 +7511,12 @@ function renderPipelineBoard() {
   const searchQuery = ($("pipelineSearchInput")?.value || "").toLowerCase().trim();
   const portalFilter = ($("pipelinePortalFilter")?.value || "").trim();
 
-  let items = Object.values(state.pipeline).map((item) => {
+  let items = (_pipelineKind === "all" || _pipelineKind === "tender" ? Object.values(state.pipeline) : []).map((item) => {
     const fit = pipelineItemFit(item);
     const deep = pipelineItemDeep(item);
     return { ...item, ...(fit ? { fit_score: fit.score, fit_band: fit.band } : {}), ai_score: deep ? deep.score : null, ai_band: deep ? deep.band : null };
   });
+  const entities = pipelineEntities(searchQuery, portalFilter);
 
   if (portalFilter) {
     items = items.filter(item => (item.source || "") === portalFilter);
@@ -7513,11 +7536,11 @@ function renderPipelineBoard() {
   // Fit scores need a company profile; the High fit tile and the empty pipeline offer to set one up
   const profilePromptHtml = hasProfiles ? "" : `<button type="button" class="dash-profile-link" id="dashBtnCreateProfile">Set up a company profile to get fit scores</button>`;
 
-  if (!items.length) {
-    const emptyMessage = searchQuery 
+  if (!items.length && !entities.length) {
+    const emptyMessage = searchQuery || _pipelineKind !== "all"
       ? `<div class="dashboard-empty">
           <div class="dashboard-empty__icon">🔍</div>
-          <div class="dashboard-empty__title">No matching tenders found</div>
+          <div class="dashboard-empty__title">${_pipelineKind === "buyer" ? "No watched buyers" : _pipelineKind === "supplier" ? "No watched suppliers" : "No matching tenders found"}</div>
           <div class="dashboard-empty__msg">Try refining your search keyword.</div>
          </div>`
       : `<div class="dashboard-empty">
@@ -7527,7 +7550,7 @@ function renderPipelineBoard() {
           ${profilePromptHtml}
          </div>`;
 
-    body.innerHTML = watchedEntitiesHtml() + emptyMessage;
+    body.innerHTML = emptyMessage;
     wireDashboardActions(body);
     return;
   }
@@ -7550,8 +7573,6 @@ function renderPipelineBoard() {
     </div>`;
 
   const urgentHtml = urgent.length ? `
-    <div class="dash-section">
-      <div class="dash-section__title">⏰ Upcoming deadlines</div>
       <div class="dash-list">
         ${urgent.slice(0, 5).map(item => `
           <button type="button" class="dash-list__item" data-key="${esc(item.tender_key)}">
@@ -7561,16 +7582,14 @@ function renderPipelineBoard() {
               <span class="dash-list__meta">${STAGE_LABEL[item.stage] || item.stage}${item.submission_deadline ? " · " + esc(item.submission_deadline) : ""}</span>
             </span>
           </button>`).join("")}
-      </div>
-    </div>` : "";
+      </div>` : "";
 
   const highFitShown = _pipelineShowAllHighFit ? highFit : highFit.slice(0, 5);
   const highFitMore = highFit.length > 5
     ? ` <button type="button" class="dash-profile-link" id="dashToggleHighFit">${_pipelineShowAllHighFit ? "Show top 5" : `Show all ${highFit.length}`}</button>`
     : "";
   const highFitHtml = highFit.length ? `
-    <div class="dash-section">
-      <div class="dash-section__title">🎯 High-fit tracked tenders (${highFitShown.length} of ${highFit.length})${highFitMore}</div>
+      <div class="dash-acc__note">Showing ${highFitShown.length} of ${highFit.length}${highFitMore}</div>
       <div class="dash-list">
         ${highFitShown.map(item => `
           <button type="button" class="dash-list__item" data-key="${esc(item.tender_key)}">
@@ -7580,8 +7599,11 @@ function renderPipelineBoard() {
               <span class="dash-list__meta">${STAGE_LABEL[item.stage] || item.stage}</span>
             </span>
           </button>`).join("")}
-      </div>
-    </div>` : "";
+      </div>` : "";
+  const accordionHtml = pipelineAccordionHtml([
+    { id: "deadlines", title: "⏰ Upcoming deadlines", count: urgent.length, html: urgentHtml },
+    { id: "highfit", title: `🎯 High-fit tracked tenders`, count: highFit.length, html: highFitHtml },
+  ]);
 
   const colsHtml = PIPELINE_STAGES.map(stage => {
     const stageItems = items.filter(i => i.stage === stage);
@@ -7619,24 +7641,28 @@ function renderPipelineBoard() {
         </div>`;
     }).join("");
 
+    const entityCards = stage === "watching" ? entities.map(pipelineEntityCardHtml).join("") : "";
+    const count = stageItems.length + (stage === "watching" ? entities.length : 0);
     return `
       <div class="dash-col" data-stage="${esc(stage)}">
         <div class="dash-col__head ${STAGE_COLOR[stage]}">
           <span>${STAGE_LABEL[stage]}</span>
-          <span class="dash-col__count">${stageItems.length}</span>
+          <span class="dash-col__count">${count}</span>
         </div>
-        <div class="dash-col__body">${cardsHtml || `<div class="dash-col__empty">No tenders</div>`}</div>
+        <div class="dash-col__body">${(cardsHtml + entityCards) || `<div class="dash-col__empty">No tenders</div>`}</div>
       </div>`;
-  }).join("");
+  }).filter((html, idx) => _pipelineKind === "buyer" || _pipelineKind === "supplier" ? PIPELINE_STAGES[idx] === "watching" : true).join("");
 
-  body.innerHTML = statsHtml + watchedEntitiesHtml() + urgentHtml + highFitHtml +
-    `<div class="dash-section"><div class="dash-section__title">Pipeline board</div></div>` +
-    `<div class="dash-kanban">${colsHtml}</div>`;
+  const entityOnly = _pipelineKind === "buyer" || _pipelineKind === "supplier";
+  body.innerHTML = statsHtml + accordionHtml +
+    `<div class="dash-section"><div class="dash-section__title">Pipeline board${entities.length ? ` <span class="dash-acc__count" title="Watched buyers and suppliers are in the Watching column">${entities.length} watched</span>` : ""}</div></div>` +
+    `<div class="dash-kanban${entityOnly ? " dash-kanban--single" : ""}">${colsHtml}</div>`;
 
   wireDashboardActions(body);
 }
 
 function wireDashboardActions(body) {
+  body.querySelectorAll("details.dash-acc").forEach((d) => d.addEventListener("toggle", () => { _pipelineAccOpen[d.dataset.acc] = d.open; }));
   body.querySelectorAll("[data-open-watched]").forEach((btn) => {
     btn.addEventListener("click", () => {
       closeDashboard();
@@ -7736,6 +7762,8 @@ function wireDashboardActions(body) {
 }
 
 function openDashboard() {
+  _pipelineKind = "all";
+  $("pipelineKindPills")?.querySelectorAll("button").forEach((x) => { const on = x.dataset.kind === "all"; x.classList.toggle("active", on); x.setAttribute("aria-pressed", String(on)); });
   if ($("pipelineSearchInput")) $("pipelineSearchInput").value = "";
   if ($("pipelinePortalFilter")) $("pipelinePortalFilter").value = "";
   renderPipelineBoard();
@@ -7751,6 +7779,13 @@ $("btnDashboard")?.addEventListener("click", openDashboard);
 if (window.TFWatch) window.TFWatch.onChange(() => { if (!$("dashboardModal")?.classList.contains("hidden")) renderPipelineBoard(); });
 $("btnCloseDashboard")?.addEventListener("click", closeDashboard);
 $("pipelineSearchInput")?.addEventListener("input", renderPipelineBoard);
+$("pipelineKindPills")?.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-kind]");
+  if (!b) return;
+  _pipelineKind = b.dataset.kind;
+  $("pipelineKindPills").querySelectorAll("button").forEach((x) => { x.classList.toggle("active", x === b); x.setAttribute("aria-pressed", String(x === b)); });
+  renderPipelineBoard();
+});
 $("pipelinePortalFilter")?.addEventListener("change", renderPipelineBoard);
 $("dashboardModal")?.addEventListener("click", (e) => {
   if (e.target === $("dashboardModal")) closeDashboard();
@@ -21281,7 +21316,7 @@ function renderOpportunityFeed(data) {
           <div>
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
               <h4 style="margin:0; font-size:14px; font-weight:700; color:var(--text,#0f172a); cursor:pointer;" onclick="openBuyerProfileDrawer('${escapeHtml(c.authority_name)}')" title="Click to view comprehensive buyer spending profile and supplier analytics">${escapeHtml(displayName(c.authority_name))}</h4>
-              ${window.TFWatch ? window.TFWatch.buttonHtml("buyer", c.authority_name, c.authority_name, "buyer_intelligence") : ""}
+              ${window.TFWatch ? window.TFWatch.buttonHtml("buyer", c.authority_name, c.authority_name, "buyer_intelligence", { label: true }) : ""}
               <span style="background:var(--surface-2,#f1f5f9); color:var(--muted,#64748b); font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px;" title="Public sector classification">${escapeHtml(c.buyer_type)}</span>
             </div>
             <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
