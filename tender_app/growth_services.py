@@ -106,12 +106,17 @@ def search_cpv(labels: Mapping[str, str], counts: Mapping[str, int], query: str,
         return []
     digits = re.sub(r"\D", "", q)
     words = [w for w in re.split(r"\s+", q) if w]
-    out = []
+    # A CPV code is 8 digits padded with zeros, and the awards data keeps one entry per prefix length, so 50000000 appears as 500,
+    # 5000, 50000, 500000 and 5000000: the same branch five times. Only the shortest of them is offered.
+    found: dict[str, dict[str, Any]] = {}
     for code, label in labels.items():
         if len(code) < 3:
             continue
         text = label.lower()
         if (digits and code.startswith(digits)) or (not digits and all(w in text for w in words)):
-            out.append({"cpv": code, "label": label, "awards": int(counts.get(code, 0))})
+            key = code.rstrip("0") or code
+            if key not in found or len(code) < len(found[key]["cpv"]):
+                found[key] = {"cpv": code, "label": label, "awards": int(counts.get(code, 0))}
+    out = list(found.values())
     out.sort(key=lambda r: (-r["awards"], len(r["cpv"]), r["label"]))
     return out[:limit]

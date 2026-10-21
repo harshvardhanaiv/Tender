@@ -20,4 +20,24 @@ const W = require("../web/watchlist.js");
   assert.strictEqual(W.sourceLabel("whatever"), "Other");
 })();
 
-console.log("watchlist_test: ok");
+// Adding and removing both say so with a toast (window.showToast); it used to be undefined, so nothing ever appeared.
+(async function toasts() {
+  const said = [];
+  globalThis.showToast = (msg, type) => said.push([msg, type]);
+  globalThis.document = { querySelectorAll: () => [] }; // the buttons on a page; there are none here
+  globalThis.fetch = async (url, init) => (init && init.method === "POST"
+    ? { ok: true, json: async () => ({ item: { kind: "buyer", entity_key: "ACME", name: "Acme", added_from: "buyer_intelligence" } }) }
+    : { ok: true, json: async () => ({}) });
+  W._setItems([]);
+  assert.strictEqual(await W.add("buyer", "Acme", "Acme", "buyer_intelligence"), true);
+  assert.deepStrictEqual(said.pop(), ["Added Acme to your watchlist (Buyer Intelligence)", "success"]);
+  assert.strictEqual(await W.remove("buyer", "Acme"), true);
+  assert.deepStrictEqual(said.pop(), ["Removed Acme from your watchlist", undefined]);
+  assert(!W.has("buyer", "Acme"));
+  globalThis.fetch = async () => ({ ok: false, json: async () => ({}) });
+  W._setItems([{ kind: "buyer", entity_key: "ACME", name: "Acme", added_from: "x" }]);
+  assert.strictEqual(await W.remove("buyer", "Acme"), false);
+  assert.deepStrictEqual(said.pop(), ["Could not remove it from the watchlist", "error"]);
+  assert(W.has("buyer", "Acme"), "a failed removal keeps it");
+  console.log("watchlist_test: ok");
+})().catch((e) => { console.error(e); process.exit(1); });

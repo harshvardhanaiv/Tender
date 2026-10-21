@@ -1066,7 +1066,7 @@
       state.ready = true;
       if (!services && window.GrowthServices) {
         services = window.GrowthServices.init({
-          api, toast, options: () => state.options || { presets: [] }, filters: () => state.filters || {}, setPreset: setServices,
+          api, toast, confirm: confirmDialog, options: () => state.options || { presets: [] }, filters: () => state.filters || {}, setPreset: setServices,
           openCustom: () => { state.customOpen = true; syncFilterBar(); byId("gsCustomCpv").focus(); },
         });
       }

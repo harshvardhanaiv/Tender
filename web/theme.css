@@ -1460,7 +1460,8 @@ body.tf-shell :is(#dashboardModal, #historyModal, #pricingModal) .modal__body { 
 body.tf-shell #dashboardBody { display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; }
 /* The board is at least 60% of the window tall, so every column has room to scroll its own cards, and the whole page scrolls
    when the stats, watched entities and board together are taller than the window. */
-body.tf-shell #dashboardBody .dash-kanban { flex: 1 0 auto; min-height: max(320px, 60vh); height: max(320px, 60vh); grid-template-rows: minmax(0, 1fr); }
+body.tf-shell #dashboardBody .dash-kanban { flex: 1 0 auto; /* +2px: the board has a 1px border, so its columns are a full 60% of the window, not 59.8% */
+  min-height: max(322px, calc(60vh + 2px)); height: max(322px, calc(60vh + 2px)); grid-template-rows: minmax(0, 1fr); }
 body.tf-shell #dashboardBody .dash-col { min-height: 0; overflow: hidden; }
 body.tf-shell #dashboardBody .dash-col__body { min-height: 0; max-height: none; }
 body.tf-shell .dash-section { padding: 14px 20px 0; }
@@ -2187,12 +2188,6 @@ i.planning-pin__key { display: inline-block; width: 10px; height: 10px; border-r
 .fit-eng { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px; cursor: help; }
 .fit-eng--high { background: #ecfdf5; color: #047857; } .fit-eng--medium { background: #eff6ff; color: #1d4ed8; } .fit-eng--low { background: #fffbeb; color: #b45309; }
 
-/* ── Date filter in the left panel (Tender search) ───────────────────────────────────────── */
-body.tf-shell .tf-rail__filter { margin: 2px 10px 8px 14px; padding: 8px 10px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; background: var(--surface, #fff); }
-body.tf-shell .tf-rail__filter-label { display: block; margin-bottom: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted, #64748b); }
-body.tf-shell .tf-rail__pills { display: flex; flex-wrap: wrap; gap: 4px; }
-body.tf-shell .tf-rail__pills .rm-pill { flex: 0 0 auto; padding: 2px 8px; font-size: 11px; }
-body.tf-section-open .tf-rail__filter, body.tf-rail-collapsed .tf-rail__filter { display: none; }
 .tf-pin-modal__radius { display: flex; align-items: center; gap: 12px; padding: 0 16px 10px; font-size: 12.5px; }
 .tf-pin-modal__radius .tf-pin-range { flex: 1; min-width: 0; }
 .tf-pin-any { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--muted, #64748b); }

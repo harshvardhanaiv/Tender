@@ -125,7 +125,9 @@
       if (del) {
         e.preventDefault();
         const id = del.dataset.del;
-        if (!root.confirm("Remove this service?")) return;
+        // the app's own dialog (the browser's native box is blocked in some embedded views and looks out of place)
+        const ask = ctx.confirm || ((m) => root.confirm(m));
+        if (!(await ask("Remove this service? It is also removed from your selection."))) return;
         try {
           await ctx.api("DELETE", "/api/growth/services/" + id.split(":")[1]);
           if (idsOf(ctx.filters().preset).includes(id)) pick(idsOf(ctx.filters().preset).filter((x) => x !== id));

@@ -57,10 +57,60 @@ test("tracking stores the score the list shows for the row", () => {
   assert.ok(cut("async function trackTender(").includes("getRowFit(row)"));
 });
 
-(() => {
+// Moving a card on the board (stage dropdown, drag) used to save it under a second, title-based key: a pipeline item has no
+// resource id, so rowKey(item) differed from its real key. The original stayed put, a copy appeared in the new stage and the
+// copy lost the original's "+ Open opportunity" tag.
+function boardPage(pipeline) {
+  const posts = [];
+  const ctx = vm.createContext({
+    state: { pipeline, fitCache: {}, activeKey: null }, posts,
+    fetch: async (url, init) => { posts.push(JSON.parse(init.body)); return { ok: true }; },
+    renderRows() {}, renderPipelineBoard() {}, refreshTrackPanel() {}, window: {},
+    getRowFit: () => ({ score: 5, band: "weak" }),
+  });
+  vm.runInContext([cut("function rowKey("), cut("async function trackTender("), "this.trackTender = trackTender;"].join("\n"), ctx);
+  return ctx;
+}
+const item = { tender_key: "procontract:DN827866", stage: "bidding", title: "PR-2026-00150 Cleaning Services", source: "procontract",
+  contracting_authority: "High Peak BC", submission_deadline: "", estimated_value: "", fit_score: 77, fit_band: "possible", added_from: "open_opportunity", notes: "n" };
+
+test("moving a card keeps its own key, its tag and its score, and makes no second card", async () => {
+  const p = boardPage({ [item.tender_key]: { ...item } });
+  await p.trackTender(p.state.pipeline[item.tender_key], "submitted", item.tender_key);
+  assert.equal(p.posts.length, 1);
+  assert.equal(p.posts[0].tender_key, "procontract:DN827866");
+  assert.equal(p.posts[0].added_from, "open_opportunity");
+  assert.equal(p.posts[0].fit_score, 77);
+  assert.equal(p.posts[0].fit_band, "possible");
+  assert.deepEqual(Object.keys(p.state.pipeline), ["procontract:DN827866"]);
+  assert.equal(p.state.pipeline["procontract:DN827866"].stage, "submitted");
+});
+
+test("a pipeline item opened in the details panel is also saved under its own key", async () => {
+  const p = boardPage({ [item.tender_key]: { ...item } });
+  await p.trackTender(p.state.pipeline[item.tender_key], "won");
+  assert.equal(p.posts[0].tender_key, "procontract:DN827866");
+  assert.equal(p.posts[0].added_from, "open_opportunity");
+  assert.deepEqual(Object.keys(p.state.pipeline), ["procontract:DN827866"]);
+});
+
+test("a search result is still tracked under its resource id and takes the score the list shows", async () => {
+  const p = boardPage({});
+  await p.trackTender({ source: "procontract", resource_id: "DN1", title: "T" }, "watching");
+  assert.equal(p.posts[0].tender_key, "procontract:DN1");
+  assert.equal(p.posts[0].added_from, "tender_search");
+  assert.equal(p.posts[0].fit_score, 5);
+});
+
+test("the board passes the card's key when a stage is chosen or a card is dropped", () => {
+  const wire = cut("function wireDashboardActions(");
+  assert.equal((wire.match(/trackTender\(item, (newStage|targetStage), key\)/g) || []).length, 2);
+});
+
+(async () => {
   let failed = 0;
   for (const [name, fn] of tests) {
-    try { fn(); console.log(`ok    ${name}`); } catch (err) { failed += 1; console.log(`FAIL  ${name}`); console.log(err && err.stack ? err.stack : err); }
+    try { await fn(); console.log(`ok    ${name}`); } catch (err) { failed += 1; console.log(`FAIL  ${name}`); console.log(err && err.stack ? err.stack : err); }
   }
   console.log(`\n${tests.length - failed} of ${tests.length} passed`);
   process.exitCode = failed ? 1 : 0;

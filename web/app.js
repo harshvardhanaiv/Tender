@@ -1588,10 +1588,14 @@ async function loadPipeline() {
   } catch {/* ignore */ }
 }
 
-async function trackTender(row, stage) {
-  const key = rowKey(row);
-  // the score the list is showing for this row (computed now if the row was never scored), not whatever happened to be cached
-  const fit = state.fitCache[key]?.deep || getRowFit(row) || null;
+// `existingKey` is the key a tracked tender already has (moving a card on the board): a pipeline item carries no resource id, so
+// rowKey(item) would make a different, title-based key and the move would save a second card and lose the original's tag.
+async function trackTender(row, stage, existingKey) {
+  const key = existingKey || row.tender_key || rowKey(row); // a pipeline item opened in the details panel has its key too
+  const known = existingKey || row.tender_key ? state.pipeline[key] : null;
+  // the score the list is showing for this row (computed now if the row was never scored), not whatever happened to be cached;
+  // a card that is only being moved keeps the score it was saved with
+  const fit = known ? { score: known.fit_score, band: known.fit_band } : state.fitCache[key]?.deep || getRowFit(row) || null;
   const body = {
     tender_key: key,
     stage,
@@ -5325,7 +5329,7 @@ const TABLE_COLUMNS = {
   all: [
     { id: "watchlist", label: "", width: "32px", className: "col-watchlist", type: "watchlist" },
     { id: "source", label: "Source", labelKey: "th_source", width: "130px", className: "col-source", type: "source" },
-    { id: "fit", label: "Keyword Score", labelKey: "th_ai_fit", width: "104px", className: "col-fit", type: "fit", sortable: true },
+    { id: "fit", label: "Keyword Score", labelKey: "th_ai_fit", width: "112px", className: "col-fit", type: "fit", sortable: true },
     { id: "ai_score", label: "AI Deep Score", labelKey: "th_ai_score", width: "76px", className: "col-ai-score", type: "ai_score" },
     { id: "title", label: "Title", labelKey: "th_title", width: "320px", className: "col-title", type: "title", sortable: true },
     { id: "authority", label: "Authority", labelKey: "th_authority", width: "210px", className: "col-authority", type: "authority" },
@@ -7658,7 +7662,7 @@ function wireDashboardActions(body) {
       const newStage = sel.value;
       const item = state.pipeline[key] || state.rows.find(r => rowKey(r) === key);
       if (item && newStage && newStage !== item.stage) {
-        trackTender(item, newStage);
+        trackTender(item, newStage, key);
       }
     });
   });
@@ -7695,7 +7699,7 @@ function wireDashboardActions(body) {
       if (!key || !targetStage) return;
       const item = state.pipeline[key] || state.rows.find(r => rowKey(r) === key);
       if (item && item.stage !== targetStage) {
-        trackTender(item, targetStage);
+        trackTender(item, targetStage, key);
       }
     });
   });
@@ -8845,7 +8849,12 @@ function updateSearchProgressUI() {
   fill.style.width = `${pct}%`;
   if (pctEl) pctEl.textContent = `${pct}%`;
 
-  const tenderCount = typeof filteredAndSortedRows === "function" ? filteredAndSortedRows().length : state.rows.length;
+  // "found so far" only ever goes up while a search runs: the merged list is rebuilt on every poll (duplicates between portals are
+  // dropped as more arrive), so the raw count wobbled 100, 99, 105, 103, 100. The final line shows the true count.
+  const liveCount = typeof filteredAndSortedRows === "function" ? filteredAndSortedRows().length : state.rows.length;
+  if (!state._foundPeak || state._foundPeak.job !== state.jobId) state._foundPeak = { job: state.jobId, n: 0 };
+  state._foundPeak.n = Math.max(state._foundPeak.n, liveCount);
+  const tenderCount = state._foundPeak.n;
   const kwNote = state.q ? ` for "${esc(state.q)}"` : "";
 
   if (state.searchPhase === "stopped") {
@@ -8911,6 +8920,14 @@ async function pollSearchProgress() {
     _showToast("Lost contact with the server. Search stopped.", "error");
   }
 }
+
+// Browsers slow a hidden tab's timers to about one a minute, so a search left in another tab looked stuck on its last portal
+// ("waiting on Find a Tender") long after the server had finished. Coming back asks for the answer straight away.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !state.jobId || state.searchPhase !== "loading" || state.searchPaused) return;
+  stopSearchPoll();
+  pollSearchProgress();
+});
 
 $("btnCloseDetails")?.addEventListener("click", closeDetailsPanel);
 
@@ -10175,7 +10192,7 @@ $("btnReadyBid")?.addEventListener("click", () => {
 
 function syncAllDatePills(preset) {
   state.dateFilterPreset = preset || "all";
-  const containers = [$("datePillsContainer"), $("rmDatePills"), $("railDatePills")].filter(Boolean);
+  const containers = [$("datePillsContainer"), $("rmDatePills")].filter(Boolean);
   containers.forEach(container => {
     const pills = container.querySelectorAll(".pill, .rm-pill");
     pills.forEach(p => {
@@ -10214,7 +10231,7 @@ function syncAllDatePills(preset) {
 }
 
 function initDatePills() {
-  const containers = [$("datePillsContainer"), $("rmDatePills"), $("railDatePills")].filter(Boolean);
+  const containers = [$("datePillsContainer"), $("rmDatePills")].filter(Boolean);
   if (containers.length === 0) return;
 
   containers.forEach(container => {
@@ -10225,7 +10242,6 @@ function initDatePills() {
         const isAlreadyActive = pill.classList.contains("active") && days !== "all";
         const newPreset = isAlreadyActive ? "all" : days;
         syncAllDatePills(newPreset);
-        if (newPreset === "custom" && container.id === "railDatePills") $("chipPublished")?.click();
       });
     });
   });
@@ -12823,7 +12839,8 @@ function _showToast(message, type = "info") {
   toast.id = "appEnrichToast";
   const bg = type === "success" ? "linear-gradient(135deg,#059669,#10b981)"
     : type === "error" ? "linear-gradient(135deg,#dc2626,#ef4444)"
-      : "linear-gradient(135deg,#2563eb,#3b82f6)";
+      : type === "warning" ? "linear-gradient(135deg,#d97706,#f59e0b)"
+        : "linear-gradient(135deg,#2563eb,#3b82f6)";
   toast.style.cssText = `
     position:fixed; top:20px; right:20px; z-index:999999;
     background:${bg}; color:#fff; padding:12px 20px;
@@ -12831,9 +12848,13 @@ function _showToast(message, type = "info") {
     box-shadow:0 8px 24px rgba(0,0,0,0.25); max-width:320px;
   `;
   toast.textContent = message;
+  toast.setAttribute("role", "status");
   document.body.appendChild(toast);
   setTimeout(() => toast.remove(), 3500);
 }
+// The watchlist, the location pin and the geolocation button call window.showToast(message, type); it was never defined, so
+// none of their messages ever appeared.
+window.showToast = _showToast;
 
 
 function wireTabNavigation() {
@@ -16415,10 +16436,10 @@ function abGetAllCategories() {
   return merged.sort((a, b) => a.localeCompare(b));
 }
 
+// The category as it is stored and as the editor shows it ("Insurance & Certificates"). Tabs and cards used to rewrite it to
+// "Insurance and certificates", so one category had two spellings on one screen.
 function formatCatLabel(c) {
-  if (!c) return "";
-  let label = c.replace(/&/g, "and");
-  return label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();
+  return c ? String(c).trim() : "";
 }
 
 function abRenderCategoryFilters() {
@@ -16847,10 +16868,14 @@ function renderAnswerBank() {
 }
 
 // Says which category an uploaded document was sorted into and why, so the user can change it.
-function abNoteSuggestedCategory(sugg) {
+// `kept` is the category the user had already chosen and the upload left alone: the note then says so instead of claiming the
+// document was sorted somewhere it was not.
+function abNoteSuggestedCategory(sugg, kept) {
   const el = $("abFileUploadStatus");
   if (!el || !sugg || sugg.confidence === "none") return;
-  el.dataset.suggestion = `Sorted into "${sugg.category}" (${sugg.reason}). Change it above if that is wrong.`;
+  el.dataset.suggestion = kept
+    ? `This looks like "${sugg.category}" (${sugg.reason}), but your choice of "${kept}" was kept.`
+    : `Sorted into "${sugg.category}" (${sugg.reason}). Change it above if that is wrong.`;
 }
 
 async function abHandleFileUpload(files, isQuickUpload = false) {
@@ -16896,10 +16921,13 @@ async function abHandleFileUpload(files, isQuickUpload = false) {
       } else {
         // Sort the document into a category unless the user has already chosen one other than the default
         const catSel = $("abFldCat");
+        let kept = null;
         if (sugg && sugg.confidence !== "none" && catSel && (!catSel.value || catSel.value === "General" || catSel.value === "Company Overview") && [...catSel.options].some(o => o.value === sugg.category)) {
           catSel.value = sugg.category;
+        } else if (sugg && sugg.confidence !== "none" && catSel && catSel.value && catSel.value !== sugg.category) {
+          kept = catSel.value; // the user had chosen another category: it stays
         }
-        abNoteSuggestedCategory(sugg);
+        abNoteSuggestedCategory(sugg, kept);
         if ($("abFldQ") && !$("abFldQ").value.trim() && data.suggested_question) {
           $("abFldQ").value = data.suggested_question;
         }
@@ -21065,8 +21093,10 @@ function refreshBuyerIntelligenceView() {
   const radarKey = `buyer_radar:${qs}`;
   const cachedFeed = swrRead(feedKey);
   const cachedRadar = swrRead(radarKey);
-  if (cachedFeed) renderOpportunityFeed(cachedFeed); else renderBuyerFeedSkeleton();
-  if (cachedRadar) renderOpportunityRadar(cachedRadar); else renderBuyerRadarSkeleton();
+  // With nothing stored for these filters, cards already on screen stay (dimmed while the answer loads) instead of being
+  // swapped for blank skeletons, which read as an empty feed for a second after every filter change.
+  if (cachedFeed) renderOpportunityFeed(cachedFeed); else if (!feedEl?.querySelector(".feed-card")) renderBuyerFeedSkeleton();
+  if (cachedRadar) renderOpportunityRadar(cachedRadar); else if (!radarTable?.querySelector("tbody tr td:nth-child(2)")) renderBuyerRadarSkeleton();
   if (!cachedFeed && _activeBuyerTab === "map") showBuyerMapLoading(true);
   setRefreshing(feedEl, true);
   setRefreshing(radarTable, true);

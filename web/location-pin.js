@@ -15,6 +15,9 @@
     { name: "planning", form: "planningFilterBar", sel: "selPlanningLocationCity", txt: "txtPlanningLocationCustom", lbl: "lblPlanningLocationStatus", gps: "btnPlanningUseBrowserLocation", radius: "rngPlanningRadiusFilter" }
   ];
   var keyFn = function () { return "tf_last_location"; };
+  var clearBtns = [];   // every panel's ✕, shown together while a place is remembered
+  var touched = {};     // panel name -> the reader changed that panel's place themselves (only then is the place remembered)
+  var quietUntil = 0;   // after ✕, the panels rewrite their own status lines; none of that is the reader choosing a place
 
   function valid(loc) {
     return !!loc && isFinite(loc.lat) && isFinite(loc.lon) && Math.abs(loc.lat) <= 90 && Math.abs(loc.lon) <= 180 && String(loc.label || "").length > 0;
@@ -27,7 +30,9 @@
     try { localStorage.setItem(keyFn(), JSON.stringify({ lat: +loc.lat, lon: +loc.lon, label: String(loc.label).slice(0, 120) })); return true; } catch (e) { return false; }
   }
   function forget() { try { localStorage.removeItem(keyFn()); } catch (e) { /* storage blocked */ } }
-  function configure(opts) { if (opts && opts.storageKey) keyFn = opts.storageKey; }
+  // The ✕ beside each pin shows while a place is remembered (also called once the user's own storage key is known).
+  function syncClears() { var on = !!recall(); clearBtns.forEach(function (b) { b.classList.toggle("hidden", !on); }); }
+  function configure(opts) { if (opts && opts.storageKey) { keyFn = opts.storageKey; syncClears(); } }
 
   function byId(id) { return document.getElementById(id); }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
@@ -81,7 +86,9 @@
   function openPicker(start, done, opts) {
     opts = opts || {};
     var maxMiles = opts.maxMiles > 0 ? opts.maxMiles : 100;
-    var miles = opts.radiusMiles > 0 ? Math.min(opts.radiusMiles, maxMiles) : 25;
+    var step = opts.stepMiles > 0 ? opts.stepMiles : 1;
+    var miles = opts.radiusMiles > 0 ? Math.min(opts.radiusMiles, maxMiles) : Math.min(25, maxMiles);
+    miles = Math.max(step, Math.min(maxMiles, Math.round(miles / step) * step));
     if (!root.L) { if (root.showToast) root.showToast("The map is still loading. Try again in a moment.", "error"); return; }
     var from = valid(start) ? start : LONDON;
     var chosen = null;
@@ -91,7 +98,7 @@
       '<div class="tf-pin-modal__head"><b>Pin your location</b><button type="button" class="tf-pin-modal__x" aria-label="Close">×</button></div>' +
       '<div class="tf-pin-modal__search"><input type="text" class="input" placeholder="Find a postcode or town, or click the map to drop a pin" aria-label="Find a postcode or town">' +
       '<button type="button" class="btn btn--secondary tf-pin-find">Find</button></div>' +
-      '<div class="tf-pin-modal__radius"><label>Distance <b class="tf-pin-miles"></b></label><input type="range" class="tf-pin-range" min="1" max="' + maxMiles + '" step="1" aria-label="Distance from the pin in miles"><label class="tf-pin-any"><input type="checkbox" class="tf-pin-anyd"> Any distance</label></div>' +
+      '<div class="tf-pin-modal__radius"><label>Distance <b class="tf-pin-miles"></b></label><input type="range" class="tf-pin-range" min="' + step + '" max="' + maxMiles + '" step="' + step + '" aria-label="Distance from the pin in miles"><label class="tf-pin-any"><input type="checkbox" class="tf-pin-anyd"> Any distance</label></div>' +
       '<div class="tf-pin-modal__map" tabindex="-1"></div>' +
       '<div class="tf-pin-modal__foot"><span class="tf-pin-modal__hint">Click anywhere to drop a pin. Drag it to adjust.</span>' +
       '<button type="button" class="btn btn--secondary tf-pin-cancel">Cancel</button><button type="button" class="btn btn--primary tf-pin-use" disabled>Use this location</button></div></div>';
@@ -111,7 +118,7 @@
         try { map.fitBounds(circle.getBounds(), { maxZoom: 13, padding: [20, 20] }); } catch (e) { /* the map has no size yet */ }
       }
     }
-    range.addEventListener("input", function () { miles = parseInt(range.value, 10) || 25; if (circle) circle.setRadius(miles * 1609.344); milesEl.textContent = miles + " mi"; });
+    range.addEventListener("input", function () { miles = parseInt(range.value, 10) || step; if (circle) circle.setRadius(miles * 1609.344); milesEl.textContent = miles + " mi"; });
     range.addEventListener("change", drawCircle);
     anyD.addEventListener("change", drawCircle);
     function drop(lat, lon, label) {
@@ -163,17 +170,26 @@
     var clear = document.createElement("button");
     clear.type = "button"; clear.className = "btn btn--secondary btn--icon tf-pin-clear hidden"; clear.title = "Forget my saved location"; clear.setAttribute("aria-label", "Forget my saved location"); clear.textContent = "✕";
     pin.insertAdjacentElement("afterend", clear);
-    function showClear() { clear.classList.toggle("hidden", !recall()); }
+    clearBtns.push(clear);
+    function showClear() { syncClears(); }
+    // the place is only remembered when the reader changed it in this panel (a city, a postcode, GPS), not when the page or
+    // another panel wrote it
+    function mark() { touched[p.name] = true; }
+    sel.addEventListener("change", mark);
+    var txtEl = byId(p.txt);
+    if (txtEl) { txtEl.addEventListener("change", mark); txtEl.addEventListener("keydown", function (e) { if (e.key === "Enter") mark(); }); }
+    gps.addEventListener("click", mark);
 
     pin.addEventListener("click", function () {
       var cur = read(p), r = byId(p.radius);
       var startAt = valid(Object.assign({ label: "x" }, cur)) ? { lat: cur.lat, lon: cur.lon, label: (cur && cur.label) || "Current location" } : recall();
       openPicker(startAt, function (loc) {
-        remember(loc); apply(p, loc, true, loc.radiusMiles); applyEverywhere(loc, p); showClear();
+        remember(loc); touched[p.name] = true; apply(p, loc, true, loc.radiusMiles); applyEverywhere(loc, p); showClear();
         if (root.showToast) root.showToast("Location saved. Searches start from here until you change or clear it.", "success");
-      }, { radiusMiles: r ? parseFloat(r.value) : 25, maxMiles: r ? parseFloat(r.max) : 100 });
+      }, { radiusMiles: r ? parseFloat(r.value) : 25, maxMiles: r ? parseFloat(r.max) : 100, stepMiles: r && parseFloat(r.step) > 0 ? parseFloat(r.step) : 1 });
     });
     clear.addEventListener("click", function () {
+      touched = {}; quietUntil = Date.now() + 2000;
       forget(); showClear();
       var london = Object.assign({}, LONDON);
       PANELS.forEach(function (q) {
@@ -192,8 +208,9 @@
     new MutationObserver(function () {
       clearTimeout(timer);
       timer = setTimeout(function () {
+        if (Date.now() < quietUntil || !touched[p.name]) return;   // the page, another panel or ✕ wrote it: not a choice
         var v = sel.value;
-        if (v === "custom") return;                       // still typing
+        if (v === "custom" || v === "pin") return;       // still typing, or the place is already remembered
         if (v === "profile") { forget(); showClear(); return; }   // went back to the profile default
         var loc = read(p); var label = (loc && loc.label) || (v === "pin" ? "" : sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : "");
         var txt = byId(p.txt);
@@ -210,6 +227,7 @@
     PANELS.forEach(function (p) {
       try { bind(p); if (saved && byId(p.sel)) apply(p, saved, false); } catch (e) { /* a panel that is not on this page */ }
     });
+    syncClears();
   }
 
   if (typeof document !== "undefined") {

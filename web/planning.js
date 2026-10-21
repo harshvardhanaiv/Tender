@@ -148,9 +148,9 @@
       // keep those rather than guessing again (and never fall back to London).
       const found = txt && !(lat && lng) ? resolveCustomBuyerLocation(txt) : null;
       if (found) { lat = found.lat; lng = found.lon; }
-    } else if (cityVal && cityVal !== "gps") {
-      // "gps" has no live source beyond what the Geolocation callback already wrote into the
-      // hidden fields, so it keeps using those (lat/lng above).
+    } else if (cityVal && cityVal !== "gps" && cityVal !== "pin") {
+      // "gps" and "pin" have no live source beyond what the Geolocation callback or the map pin already wrote into the
+      // hidden fields, so they keep using those (lat/lng above); a pin used to fall back to London here.
       const preset = UK_BUYER_CITY_COORDS[cityVal.toLowerCase()] || UK_BUYER_CITY_COORDS["london"];
       lat = preset.lat;
       lng = preset.lon;
@@ -900,6 +900,10 @@
         } else if (val === "gps") {
           if (txtCustom) txtCustom.classList.add("hidden");
           if (lblStatus) lblStatus.innerHTML = `📍 Active: <strong>Your GPS</strong> (${parseFloat(hidLat.value).toFixed(2)}, ${parseFloat(hidLng.value).toFixed(2)})`;
+        } else if (val === "pin") {
+          if (txtCustom) txtCustom.classList.add("hidden");
+          const name = (selCity.selectedOptions[0]?.textContent || "").replace("📌", "").trim() || "your pin";
+          if (lblStatus) lblStatus.innerHTML = `📌 Measuring distance from <strong>${esc(name)}</strong> (${parseFloat(hidLat.value).toFixed(2)}, ${parseFloat(hidLng.value).toFixed(2)})`;
         } else {
           if (txtCustom) txtCustom.classList.add("hidden");
           const preset = UK_BUYER_CITY_COORDS[val.toLowerCase()] || UK_BUYER_CITY_COORDS["london"];
