@@ -636,6 +636,7 @@ async function loadCurrentUser() {
     const data = await res.json();
     state.username = data.username || "";
     if (window.TFLocation) { window.TFLocation.configure({ storageKey: () => storageKey("last_location") }); window.TFLocation.init(); }
+    if (window.RecentViews) window.RecentViews.configure({ storageKey: () => storageKey("recent_views") });
     state.email = data.email || "";
 
     // Update AIV dashboard link with logged-in user's username
@@ -7206,6 +7207,7 @@ async function loadDetails(row) {
   const rid = String(row.resource_id || "");
   const key = rowKey(row);
   state.activeKey = key;
+  if (window.RecentViews && key && row.title) window.RecentViews.record("tender", key, row.title, row.contracting_authority || "", window.RecentViews.slimRow(row));
   renderRows();
 
   // Reset the new-tab button to hidden until we know the URL.
@@ -15791,11 +15793,55 @@ async function loadHistory() {
   }
 }
 
+// The "Recently viewed" tab of History: tenders, buyers and suppliers opened in this browser, newest first.
+function renderRecentViews(container, emptyState, countLabel) {
+  const q = ($("historySearchInput")?.value || "").toLowerCase().trim();
+  const KIND = { tender: ["📄", "Tender"], buyer: ["🏛️", "Buyer"], supplier: ["🏢", "Supplier"] };
+  const items = (window.RecentViews ? window.RecentViews.list() : []).filter(e => !q || `${e.title} ${e.sub}`.toLowerCase().includes(q));
+  if (countLabel) countLabel.textContent = `${items.length} ${items.length === 1 ? "item" : "items"}`;
+  if (!items.length) {
+    emptyState.innerHTML = `<span style="font-size: 36px; display: block; margin-bottom: 10px;">🕘</span>${q ? "Nothing viewed matches that." : "Tenders, buyers and suppliers you open will be listed here so you can get back to them."}`;
+    emptyState.style.display = "block";
+    return;
+  }
+  emptyState.style.display = "none";
+  container.innerHTML = `<div class="rv-bar"><span>Kept in this browser only.</span> <button type="button" class="rv-clear" id="rvClear">Clear</button></div>` + items.map((e, i) => `
+    <div class="history-card rv-card" data-rv="${i}" tabindex="0" role="button" style="cursor:pointer;">
+      <div class="history-card__icon-wrapper icon--summary" aria-hidden="true">${KIND[e.kind][0]}</div>
+      <div class="history-card__info">
+        <h4 class="history-card__title" title="${esc(e.title)}">${esc(e.title)}</h4>
+        <div class="history-card__meta">
+          <span class="history-card__badge badge--summary">${KIND[e.kind][1]}</span>
+          ${e.sub ? `<span>${esc(e.sub)}</span>` : ""}
+          <span class="history-card__date">🕘 ${esc(window.RecentViews.ago(e.ts))}${e.views > 1 ? ` · viewed ${e.views}×` : ""}</span>
+        </div>
+      </div>
+      <div class="history-card__actions"><button type="button" class="btn-history-view" tabindex="-1">Open</button></div>
+    </div>`).join("");
+  const open = (e) => {
+    closeHistoryModal();
+    if (e.kind === "buyer") openBuyerProfileDrawer(e.title);
+    else if (e.kind === "supplier") { openSupplierIntelligenceModal(); loadSupplierDetail(e.key); }
+    else if (e.payload) { state.autoExpandDetails = true; loadDetails({ ...e.payload }); }
+  };
+  container.querySelectorAll(".rv-card").forEach(card => {
+    const e = items[Number(card.dataset.rv)];
+    card.addEventListener("click", () => open(e));
+    card.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(e); } });
+  });
+  $("rvClear")?.addEventListener("click", () => { window.RecentViews.clear(); renderHistoryList(); });
+}
+
 function renderHistoryList() {
   const container = $("historyCardList");
   const emptyState = $("historyEmptyState");
   const countLabel = $("historyCountLabel");
   if (!container) return;
+  if (state.historyFilterType === "viewed") {
+    container.innerHTML = "";
+    renderRecentViews(container, emptyState, countLabel);
+    return;
+  }
 
   container.innerHTML = "";
 
@@ -19002,6 +19048,7 @@ async function loadSupplierDetail(supplierId) {
     const s = data.supplier;
     const m = data.metrics;
     const awards = data.awards || [];
+    if (window.RecentViews && s && s.name) window.RecentViews.record("supplier", String(supplierId), s.name, s.location || s.company_number || "");
 
     const smeBadge = s.sme_status === "SME"
       ? '<span class="badge-sme" title="🌱 Small &amp; Medium Enterprise (SME): Business verified with <250 employees and turnover ≤ €50M.">🌱 SME Verified</span>'
@@ -20758,6 +20805,7 @@ function openBuyerProfileDrawer(authorityName) {
   if (!drawerModal) return;
 
   $("drawerBuyerName").textContent = authorityName;
+  if (window.RecentViews) window.RecentViews.record("buyer", String(authorityName).toUpperCase(), authorityName, "");
   const watchSlot = $("drawerBuyerWatch");
   if (watchSlot && window.TFWatch) watchSlot.innerHTML = window.TFWatch.buttonHtml("buyer", authorityName, authorityName, "buyer_intelligence", { label: true });
   drawerModal.classList.remove("hidden");
