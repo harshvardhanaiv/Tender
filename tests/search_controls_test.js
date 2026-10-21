@@ -17,7 +17,7 @@ function cutFunction(name) {
   while (end < appLines.length && !/^\}\s*;?\s*$/.test(appLines[end])) end += 1;
   return appLines.slice(start, end + 1).join("\n");
 }
-const CODE = ["setSearchControlsHidden", "updateSearchProgressUI"].map(cutFunction).join("\n\n");
+const CODE = ["setSearchControlsHidden", "searchProgressDetailHtml", "updateSearchProgressUI"].map(cutFunction).join("\n\n");
 new vm.Script(CODE);
 
 const SearchStatus = require(path.join(WEB, "search-status.js"));
@@ -38,10 +38,11 @@ function fakePage(phase, extra = {}) {
   const ids = ["searchProgressTrack", "searchProgressBar", "searchProgressText", "searchProgressPct", "btnPauseSearch", "btnResumeSearch", "btnStopSearchBanner"];
   const els = Object.fromEntries(ids.map((id) => [id, make()]));
   els.searchProgressTrack.attrs["data-active"] = "true";
-  const state = { searchPhase: phase, jobId: "j1", q: "plumbing", rows: [], meta: {}, searchPaused: false, ...extra };
+  const { __portals, ...stateExtra } = extra;
+  const state = { searchPhase: phase, jobId: "j1", q: "plumbing", rows: [], meta: {}, searchPaused: false, ...stateExtra };
   const ctx = vm.createContext({
     $: (id) => els[id] || null, state, SearchStatus, esc: (s) => String(s), SOURCES_LABEL: {}, setTimeout: () => 0,
-    currentPortalList: () => [], filteredAndSortedRows: () => [], getActiveSelectedPortalsCount: () => 3,
+    currentPortalList: () => extra.__portals || [], filteredAndSortedRows: () => [], getActiveSelectedPortalsCount: () => 3,
     updateActiveSearchKeywordBadge: () => {},
   });
   vm.runInContext(CODE, ctx);
@@ -77,6 +78,16 @@ test("starting a new search brings the controls back", () => {
   p.state.searchPhase = "loading";
   p.run();
   assert.ok(visible(p.els).includes("btnPauseSearch") && visible(p.els).includes("btnStopSearchBanner"));
+});
+
+test("a running search says which portals answered and which are still working", () => {
+  const portals = [{ id: "a", label: "Find a Tender", status: "ok", count: 120 }, { id: "b", label: "Contracts Finder", status: "running", count: 0 },
+    { id: "c", label: "Sell2Wales", status: "timeout", count: 0 }];
+  const p = fakePage("loading", { __portals: portals });
+  p.run();
+  const html = p.els.searchProgressText.innerHTML;
+  assert.ok(html.includes("✓ Find a Tender (120)") && html.includes("⏳ Contracts Finder") && html.includes("⚠ Sell2Wales"), html);
+  assert.ok(!html.includes("taking longer"), "no slow note in the first seconds");
 });
 
 (async () => {

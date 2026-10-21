@@ -8729,8 +8729,8 @@ function setSearchControlsHidden(hidden) {
 
 // Which portals have answered, which are still working, and a plain note when the wait is long. The rows from the
 // portals that answered are already in the table, so the note says to start reading them.
-const SLOW_SEARCH_MS = 20000;
 function searchProgressDetailHtml(portalList) {
+  const SLOW_SEARCH_MS = 20000;
   if (!portalList || !portalList.length) return "";
   const waiting = portalList.filter((p) => p.status === "pending" || p.status === "running");
   const done = portalList.filter((p) => p.status === "ok" || p.status === "empty");
@@ -8739,7 +8739,8 @@ function searchProgressDetailHtml(portalList) {
   if (done.length) parts.push(`<span class="sp-done" title="Answered">✓ ${done.map((p) => `${esc(p.label)}${p.count ? " (" + p.count.toLocaleString() + ")" : ""}`).join(", ")}</span>`);
   if (waiting.length) parts.push(`<span class="sp-wait" title="Still working">⏳ ${waiting.map((p) => esc(p.label)).join(", ")}</span>`);
   if (failed.length) parts.push(`<span class="sp-fail" title="No answer">⚠ ${failed.map((p) => esc(p.label)).join(", ")}</span>`);
-  const slow = waiting.length && _searchStartedAt > 0 && Date.now() - _searchStartedAt >= SLOW_SEARCH_MS;
+  const startedAt = typeof _searchStartedAt === "number" ? _searchStartedAt : 0;
+  const slow = waiting.length && startedAt > 0 && Date.now() - startedAt >= SLOW_SEARCH_MS;
   const slowNote = slow ? `<span class="sp-slow">${waiting.length === 1 ? esc(waiting[0].label) + " is" : waiting.length + " portals are"} taking longer than usual. Results from the faster portals are already listed below; the rest will be added as they arrive.</span>` : "";
   return `<span class="sp-sources">${parts.join(" · ")}</span>${slowNote}`;
 }
