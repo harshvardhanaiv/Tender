@@ -523,7 +523,7 @@
     return `<label class="bw-filters__field"><span>${esc(label)}</span><select class="bw-select" id="${id}">${options.map((o) => `<option value="${esc(o.id)}" ${o.id === value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select></label>`;
   }
 
-  function radarHeaderHtml(opts) {
+  function radarHeaderHtml(opts, hasCategory) {
     const chips = [...S.watchlist.map((c) => ({ spec: specOf(c), label: c.label, star: true })), ...opts.presets.map((p) => ({ spec: { preset: p.preset }, label: p.label }))];
     const seen = new Set();
     const unique = chips.filter((c) => { const k = JSON.stringify(c.spec); if (seen.has(k)) return false; seen.add(k); return true; });
@@ -532,7 +532,8 @@
       <div class="bw-card"><h2 class="bw-card__title">What are you researching?</h2>
         <p class="bw-card__sub">Pick a category, or search for one: “CRM system”, “grounds maintenance”, or a CPV code such as 50720000.</p>
         ${pickerHtml("radarPicker", "Search a category or CPV code…")}
-        <div class="bw-chips" style="margin-top:12px">${unique.map((c) => `<button type="button" class="bw-chip" data-action="radar-pick" data-spec='${esc(JSON.stringify(c.spec))}'>${c.star ? "★ " : ""}${esc(c.label)}</button>`).join("")}</div></div>
+        <details class="bw-chipwall"${hasCategory ? "" : " open"}><summary class="bw-link">${hasCategory ? "Show all categories" : "Popular categories"}</summary>
+        <div class="bw-chips" style="margin-top:12px">${unique.map((c) => `<button type="button" class="bw-chip" data-action="radar-pick" data-spec='${esc(JSON.stringify(c.spec))}'>${c.star ? "★ " : ""}${esc(c.label)}</button>`).join("")}</div></details></div>
       <div id="radarResults"></div></div>`;
   }
 
@@ -598,9 +599,9 @@
   async function renderRadar(ctx) {
     const opts = await ensureOptions();
     if (!ctx.isCurrent()) return;
-    ctx.main.innerHTML = radarHeaderHtml(opts);
-    bindPicker(ctx.main, (spec) => navigate(buildHash(["radar"], radarParams(spec, radarFilters(new URLSearchParams()), "peers"))));
     radar.spec = specFromParams(ctx.params);
+    ctx.main.innerHTML = radarHeaderHtml(opts, Boolean(radar.spec));
+    bindPicker(ctx.main, (spec) => navigate(buildHash(["radar"], radarParams(spec, radarFilters(new URLSearchParams()), "peers"))));
     S.lastCategory = radar.spec;   // a new engagement started afterwards begins on this category
     if (!radar.spec) { radar.data = null; return; }
     radar.filters = radarFilters(ctx.params);
@@ -863,6 +864,14 @@
   }
 
   // ── dashboard ───────────────────────────────────────────────────────────────────────────────
+  // Contract length in years, to the nearest half year (blank when the notice gives no usable dates).
+  function termYears(started, ends) {
+    const a = Date.parse(started), b = Date.parse(ends);
+    if (!(b > a)) return "";
+    const years = Math.round(((b - a) / 31557600000) * 2) / 2;
+    return years >= 0.5 && years <= 30 ? String(years) : "";
+  }
+
   function renewalsTableHtml(items) {
     const rows = items.map((r) => `<tr>
       <td class="bw-cell-main" data-label="Contract"><span class="bw-name">${safeUrl(r.url) ? `<a class="bw-link" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title || "Notice")}</a>` : esc(r.title || "Notice")}</span>
@@ -870,7 +879,7 @@
       <td class="num" data-label="Value">${valueCell(r.value, r.value_is_ceiling)}</td>
       <td data-label="Ends">${fmtDate(r.ends)}<span class="bw-sub">${r.days_left == null ? "" : `in ${plural(r.days_left, "day")}`}</span></td>
       <td data-label="Route"><span class="bw-badge">${esc(r.route || "Not stated")}</span></td>
-      <td class="num"><button class="bw-btn bw-btn--sm" type="button" data-action="plan-from" data-title="${esc("Re-procurement: " + (r.title || ""))}" data-cpv="${esc(r.cpv || "")}">Plan engagement</button></td></tr>`).join("");
+      <td class="num"><button class="bw-btn bw-btn--sm" type="button" data-action="plan-from" data-title="${esc("Re-procurement: " + (r.title || ""))}" data-cpv="${esc(r.cpv || "")}" data-value="${r.value && !r.value_is_ceiling ? Math.round(r.value) : ""}" data-term="${esc(termYears(r.started, r.ends))}" data-incumbent="${esc(r.supplier || "")}">Plan engagement</button></td></tr>`).join("");
     return `<div class="bw-table-wrap"><table class="bw-table bw-table--stack"><thead><tr><th>Contract</th><th class="num">Value</th><th>Ends</th><th>Route</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
   function activityTableHtml(items) {
@@ -1006,7 +1015,7 @@
         case "unfollow": await saveWatchlist(S.watchlist.filter((c) => c.key !== target.dataset.key)); toast("Stopped following"); if (parseHash().parts[0] === "watchlist") renderWatchlist({ main: document.getElementById("bwMain"), isCurrent: () => true }); break;
         case "org-use": await setOrganisation(target.dataset.name); navigate("#/dashboard"); break;
         case "org-clear": await setOrganisation(null); renderSettings({ main: document.getElementById("bwMain") }); break;
-        case "plan-from": if (BW.openNewEngagement) BW.openNewEngagement({ title: target.dataset.title, cpv: target.dataset.cpv }); break;
+        case "plan-from": if (BW.openNewEngagement) BW.openNewEngagement({ title: target.dataset.title, cpv: target.dataset.cpv, value: target.dataset.value, term: target.dataset.term, incumbent: target.dataset.incumbent }); break;
         default: break;
       }
     } catch (err) {

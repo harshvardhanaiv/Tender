@@ -106,7 +106,7 @@ test("disconnected: says Growth Studio is off, and offers the key box and, when 
 
 test("when the server cannot store keys, the form says why instead of offering a box that cannot work", () => {
   const html = C.outreachCard(notConnected({ can_store_key: false, shared_available: true }));
-  assert.match(html, /Connecting your own Outreach account is not switched on for this server\. Ask your administrator to set OUTREACH_CLIENT_ID \(sign in\) or MAIL_CRED_KEY \(paste a key\), or use your organisation's connection/);
+  assert.match(html, /Connecting Outreach isn't available on your plan yet\. You can still build campaigns and export the list to send from your own email, or use your organisation's connection/);
   assert.ok(!html.includes("<input") && !html.includes('data-cx="connect"'));
   assert.match(html, /data-cx="use-shared"/);
   const none = C.outreachCard(notConnected({ can_store_key: false, shared_available: false }));
@@ -137,10 +137,10 @@ test("with the partner programme on, the user can sign in, create an account or 
   assert.match(html, /data-mode="signin" autocomplete="off"/);
 });
 
-test("without OUTREACH_CONSENT_VERSION the sign-in and sign-up forms say what to set and cannot be sent", () => {
+test("without OUTREACH_CONSENT_VERSION the sign-in and sign-up forms show a plain message and cannot be sent", () => {
   for (const mode of ["signin", "signup"]) {
     const html = C.outreachCard(partner({ partner_consent_version: false }, { mode }));
-    assert.match(html, /role="alert">Outreach needs the version of the consent text with every sign-in\. Ask your administrator to set OUTREACH_CONSENT_VERSION/);
+    assert.match(html, /role=\"alert\">Signing in to Outreach isn't available just now/);
     assert.match(html, /data-cx="connect" disabled>/);
   }
   assert.ok(!C.outreachCard(partner({ partner_consent_version: true }, { mode: "signin" })).includes("OUTREACH_CONSENT_VERSION"));
@@ -339,7 +339,7 @@ test("editing keeps the saved password unless a new one is typed, and can be can
 
 test("when the server cannot keep an account, or cannot be reached, the card says so", () => {
   const off = C.mailCard(mailModel({ info: { available: false, account: null, presets } }));
-  assert.match(off, /not switched on for this server\. Ask your administrator to set MAIL_CRED_KEY/);
+  assert.match(off, /Connecting an email account isn't available yet/);
   assert.ok(!off.includes("<input") && !off.includes("<form"));
   const err = C.mailCard({ status: "error", info: null, error: "Could not reach the server." });
   assert.match(err, /role="alert">Could not reach the server\./);

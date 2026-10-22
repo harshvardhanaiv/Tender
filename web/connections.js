@@ -93,7 +93,7 @@
       ? `<button type="button" class="cx-btn" data-cx="use-shared"${busy ? " disabled" : ""} data-tip="Use the Outreach connection your organisation set up, instead of an account or key of your own.">Use my organisation's connection</button>`
       : "";
     if (!modes.length) {
-      return `<form class="cx-form" data-cx="connect-form" autocomplete="off"><p class="cx-warn">Connecting your own Outreach account is not switched on for this server. Ask your administrator to set OUTREACH_CLIENT_ID (sign in) or MAIL_CRED_KEY (paste a key)${info.shared_available ? ", or use your organisation's connection" : ""}.</p>` +
+      return `<form class="cx-form" data-cx="connect-form" autocomplete="off"><p class="cx-warn">Connecting Outreach isn't available on your plan yet. You can still build campaigns and export the list to send from your own email${info.shared_available ? ", or use your organisation's connection" : ""}.</p>` +
         (shared ? `<div class="cx-actions cx-actions--flush">${shared}</div>` : "") + `</form>`;
     }
     const tabs = modes.length > 1
@@ -128,7 +128,7 @@
     }
     return (
       `<form class="cx-form" data-cx="connect-form" data-mode="${mode}" autocomplete="off">` + tabs + note + fields + err +
-      (needVersion ? `<p class="cx-warn" role="alert">Outreach needs the version of the consent text with every sign-in. Ask your administrator to set OUTREACH_CONSENT_VERSION (shown in the example call on Outreach's Partner programme tab).</p>` : "") +
+      (needVersion ? `<p class="cx-warn" role="alert">Signing in to Outreach isn't available just now. Try pasting an API key instead, or export your campaign list and send it yourself.</p>` : "") +
       `<div class="cx-actions cx-actions--flush"><button type="submit" class="cx-btn cx-btn--primary" data-cx="connect"${busy || needVersion ? " disabled" : ""}>${submit}</button>${shared}</div></form>`
     );
   }
@@ -231,7 +231,7 @@
       body = `<p class="cx-warn" role="alert">${esc(mm.error || "Could not reach the server.")}</p>`;
       actions = `<button type="button" class="cx-btn" data-cx="mail-reload">Try again</button>`;
     } else if (state === "unavailable") {
-      body = `<p class="cx-sub">Connecting an email account is not switched on for this server. Ask your administrator to set MAIL_CRED_KEY.</p>`;
+      body = `<p class="cx-sub">Connecting an email account isn't available yet. Export your campaign list and send it from your own mailbox in the meantime.</p>`;
     } else if (state === "none") {
       body = `<p class="cx-sub">Send Growth Studio email from your own address. Outreach does not need to have a mailbox for this.</p>` + mailForm(info, mm.form || {}, false);
     } else if (mm.form) {

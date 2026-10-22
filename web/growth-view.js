@@ -251,19 +251,15 @@
     const chips = [badge(`${ICONS[s.type] || ""}${esc(t.label)}`, t.tone)];
     if (state.opted_out) chips.push(badge("Do not contact", "bad"));
     if (state.dismissed) chips.push(badge("Dismissed", "muted"));
-    // campaigns with the same name collapse into one tag ("In: Name ×3") instead of repeating it
-    const byName = new Map();
-    (state.campaigns || []).forEach((c) => {
-      const k = String(c.name || "").trim().toLowerCase();
-      if (!byName.has(k)) byName.set(k, { first: c, n: 0, ids: new Set() });
-      const g = byName.get(k);
-      if (!g.ids.has(c.id)) { g.ids.add(c.id); g.n += 1; }
-    });
-    byName.forEach((g) =>
+    // one tag per card: the most recent campaign, with "+N" when the signal is in others too
+    const inCampaigns = (state.campaigns || []).filter((c, i, all) => all.findIndex((x) => x.id === c.id) === i);
+    if (inCampaigns.length) {
+      const first = inCampaigns[0];
+      const more = inCampaigns.length - 1;
       chips.push(
-        `<button type="button" class="gs-badge gs-badge--accent gs-badge--link" data-action="open-campaign" data-id="${esc(g.first.id)}" title="${g.n > 1 ? g.n + " campaigns share this name: " : ""}Open this campaign">In: ${esc(g.first.name)}${g.n > 1 ? " ×" + g.n : ""}</button>`
-      )
-    );
+        `<button type="button" class="gs-badge gs-badge--accent gs-badge--link" data-action="open-campaign" data-id="${esc(first.id)}" title="${more ? "Also in " + more + " other campaign" + (more > 1 ? "s" : "") + ". " : ""}Open this campaign">In: ${esc(first.name)}${more ? " +" + more : ""}</button>`
+      );
+    }
     const select = target.targetable
       ? `<label class="gs-signal__select"><input type="checkbox" data-action="toggle-select" data-key="${esc(s.key)}"${selected ? " checked" : ""}><span class="visually-hidden">Select ${esc(s.buyer)}</span></label>`
       : `<span class="gs-signal__select gs-signal__select--off" aria-hidden="true"></span>`;
