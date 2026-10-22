@@ -339,7 +339,7 @@
   // etenders_scraper/sources/registry.py and REGION_PORTAL_IDS in app.js.
   const UK_IE_SOURCE_IDS = new Set([
     "etenders_ie", "etenders_ni", "sell2wales", "pcs",
-    "find_tender", "contracts_finder", "procontract", "gca_agreements",
+    "find_tender", "contracts_finder", "procontract", "yortender", "nepo_open", "gca_agreements",
   ]);
 
   // A notice's own location often names only a nation or region, never a county: Find a Tender writes

@@ -67,6 +67,21 @@ SOURCES: dict[str, dict[str, str]] = {
         "confidence": "high",
         "source_type_label": "Direct Portal API",
     },
+    "yortender": {
+        "label": "YORtender (Yorkshire)",
+        "type": "eu_supply_ctm",
+        "site_root": "https://yortender.eu-supply.com",
+        "branding": "YORTENDER",
+        "confidence": "high",
+        "source_type_label": "Direct Portal API",
+    },
+    "nepo_open": {
+        "label": "NEPO Open (North East)",
+        "type": "nepo_open",
+        "site_root": "https://www.open-uk.org",
+        "confidence": "high",
+        "source_type_label": "Direct Portal API",
+    },
     "gca_agreements": {
         "label": "GCA Frameworks (UK)",
         "type": "gca_agreements",
@@ -146,6 +161,8 @@ UK_IE_SOURCE_IDS = frozenset(
         "find_tender",
         "contracts_finder",
         "procontract",
+        "yortender",
+        "nepo_open",
         "gca_agreements",
     }
 )
@@ -362,6 +379,26 @@ def _fetch_source_batch_one(
         from .procontract import search_procontract
         batch = search_procontract(
             keyword=keyword,
+            source_id=source_id,
+            source_label=cfg["label"],
+            max_results=None,
+        )
+        return source_id, batch, None
+    elif cfg["type"] == "nepo_open":
+        from .nepo_open import search_nepo_open
+        batch = search_nepo_open(
+            keyword=keyword,
+            source_id=source_id,
+            source_label=cfg["label"],
+            max_results=None,
+        )
+        return source_id, batch, None
+    elif cfg["type"] == "eu_supply_ctm":
+        from .eu_supply_ctm import search_eu_supply_ctm
+        batch = search_eu_supply_ctm(
+            keyword=keyword,
+            site_root=cfg["site_root"],
+            branding=cfg["branding"],
             source_id=source_id,
             source_label=cfg["label"],
             max_results=None,

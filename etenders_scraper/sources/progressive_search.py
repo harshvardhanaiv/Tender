@@ -272,6 +272,32 @@ def _fetch_source_first_page_one(
             return source_id, batch, None, None
         except Exception as exc:
             return source_id, [], str(exc), None
+    elif cfg["type"] == "nepo_open":
+        # One request for the whole public list, filtered here, so phase 2 is skipped for it below.
+        from .nepo_open import search_nepo_open
+        try:
+            batch = search_nepo_open(
+                keyword=keyword,
+                source_id=source_id,
+                source_label=cfg["label"],
+            )
+            return source_id, batch, None, None
+        except Exception as exc:
+            return source_id, [], str(exc), None
+    elif cfg["type"] == "eu_supply_ctm":
+        # A complete fetch (one to three pages of 100), so phase 2 is skipped for it below.
+        from .eu_supply_ctm import search_eu_supply_ctm
+        try:
+            batch = search_eu_supply_ctm(
+                keyword=keyword,
+                site_root=cfg["site_root"],
+                branding=cfg["branding"],
+                source_id=source_id,
+                source_label=cfg["label"],
+            )
+            return source_id, batch, None, None
+        except Exception as exc:
+            return source_id, [], str(exc), None
     elif cfg["type"] == "gca_agreements" or source_id == "gca_agreements":
         from .gca_agreements import search_gca_agreements_first_page
         batch = search_gca_agreements_first_page(
@@ -502,7 +528,7 @@ def _portal_worker(
         # NI, Meta and ProContract are each already a complete fetch in phase 1 above
         # (captcha/time/domain for NI and Meta; ProContract's own small page cap) -- skip a
         # second, duplicate full pass.
-        if source_id == "etenders_ni" or cfg.get("type") in ("meta", "procontract"):
+        if source_id == "etenders_ni" or cfg.get("type") in ("meta", "procontract", "eu_supply_ctm", "nepo_open"):
             with job.lock:
                 _set_state(job, source_id, "complete")
                 # loading_sources is derived from source_progress and only _finalize_job_meta

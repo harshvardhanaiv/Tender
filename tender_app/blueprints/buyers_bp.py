@@ -16,6 +16,7 @@ import re
 import math
 import time
 from tender_app import buyer_fit
+from tender_app.grants import grants_for_funder
 from datetime import datetime, timedelta
 
 from etenders_scraper.deadline import enrich_deadline_fields
@@ -625,7 +626,8 @@ def get_buyer_detail(authority_name: str):
                 "cpv_breakdown": [],
                 "upcoming_renewals": [],
                 "open_opportunities": _open_opportunities_or_empty(cursor, conn, authority_name),
-                "contact_info": _fetch_buyer_contact_info(cursor, conn, authority_name)
+                "contact_info": _fetch_buyer_contact_info(cursor, conn, authority_name),
+                "grants": grants_for_funder(cursor, authority_name),
             })
         
         stats = _row_to_dict(cursor, stats_row)
@@ -853,7 +855,8 @@ def get_buyer_detail(authority_name: str):
             "upcoming_renewals": upcoming_renewals,
             "contract_history": contract_history,
             "open_opportunities": open_opportunities,
-            "contact_info": contact_info
+            "contact_info": contact_info,
+            "grants": grants_for_funder(cursor, authority_name),
         })
 
     except Exception as e:

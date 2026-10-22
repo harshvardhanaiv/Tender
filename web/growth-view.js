@@ -150,11 +150,13 @@
     renewal: '<svg class="gs-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>',
     development: '<svg class="gs-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18M6 21V11l6-4 6 4v10M10 21v-5h4v5"/></svg>',
     engagement: '<svg class="gs-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4a1 1 0 0 0 1 1h2l5 4V5L7 9H5a1 1 0 0 0-1 1z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>',
+    funding: '<svg class="gs-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v10M9.5 9.5C9.5 8.5 10.7 8 12 8s2.5.6 2.5 1.6c0 2.3-5 1.3-5 3.8 0 1 1.2 1.6 2.5 1.6s2.5-.6 2.5-1.6"/></svg>',
   };
   const TYPES = {
     renewal: { label: "Contract renewal", tone: "warn", cta: "Start campaign" },
     development: { label: "New development", tone: "good", cta: "Start campaign" },
     engagement: { label: "Market engagement open", tone: "info", cta: "Respond to engagement" },
+    funding: { label: "Recently funded", tone: "good", cta: "Start campaign" },
   };
   const TARGET_STATUS = {
     not_sent: "Not sent",
@@ -299,7 +301,7 @@
     };
     const hidden = data.below_min_fit && data.filters && data.filters.min_fit
       ? `${plural(data.below_min_fit, "signal")} hidden below ${data.filters.min_fit}% fit` : null;
-    return [bit("renewal", "renewal", "renewals"), bit("development", "new development", "new developments"), bit("engagement", "market engagement", "market engagements"), hidden]
+    return [bit("renewal", "renewal", "renewals"), bit("development", "new development", "new developments"), bit("engagement", "market engagement", "market engagements"), bit("funding", "recently funded company", "recently funded companies"), hidden]
       .filter(Boolean)
       .join(" · ");
   }
@@ -362,6 +364,7 @@
     }
     parts.push('<div id="gsSelBar">' + selectionBar(m) + "</div>");
     if (d.notes && d.notes.development && (f.types || []).indexOf("development") >= 0) parts.push(note(esc(d.notes.development), "info"));
+    if (d.notes && d.notes.funding && (f.types || []).indexOf("funding") >= 0) parts.push(note(esc(d.notes.funding), "info"));
     if (d.notes && d.notes.truncated) parts.push(note(esc(d.notes.truncated), "warn"));
     if (!d.signals.length) {
       parts.push(

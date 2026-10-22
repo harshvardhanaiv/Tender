@@ -29,10 +29,11 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
   <link rel="stylesheet" href="/styles.css?v=146" />
-  <link rel="stylesheet" href="/theme.css?v=44" />
+  <link rel="stylesheet" href="/theme.css?v=48" />
   <link rel="stylesheet" href="/mobile.css?v=4" />
-  <link rel="stylesheet" href="/responsive-fixes.css?v=10" />
+  <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=13" />
+  <link rel="stylesheet" href="/funding.css?v=1" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=2" />
   <script src="/translations.js?v=6"></script>
@@ -173,6 +174,9 @@
         </button>
         <button id="btnPlanningLeads" class="tf-nav" type="button" title="Planning leads: private-sector schemes before they reach tender">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18M6 21V11l6-4 6 4v10M10 21v-5h4v5M12 3v4"/></svg><span data-i18n="nav_planning_leads">Planning leads</span>
+        </button>
+        <button id="btnFunding" class="tf-nav" type="button" title="Funding: open government grants you can apply for">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M14.5 9.5c-.6-.8-1.5-1.2-2.5-1.2-1.4 0-2.5.8-2.5 1.9 0 2.6 5 1.3 5 3.9 0 1.1-1.1 1.9-2.5 1.9-1.1 0-2-.5-2.6-1.3M12 6.5v1.8M12 15.7v1.8"/></svg><span>Funding</span><span class="tf-nav__new">New</span>
         </button>
         <a id="btnAivDashboard" class="tf-nav" title="AIV dashboard"
           href="https://aiv.test.oneaiv.com:8086/aiv/embed/external/5068476a6870253242536a73706d676f7a6976496c4462427467567675463870706b71356e6a6755545a377267253344/a_u__Admin&a_p__&a_t__eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJBZG1pbjo6RGVmYXVsdCIsImlhdCI6MTc4MTUyNzA1NH0.MegE9u4WF9VJkSl9h6w-NTP9jEanXlDgOMOqyWcKOvI&a_d__Default&a_af__false/noparam"
@@ -2679,6 +2683,54 @@
     </div>
   </div>
 
+  <!-- ══ FUNDING ══ (open government grants from Find a Grant; logic in funding.js) -->
+  <div id="fundingModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="fundingTitle">
+    <div class="profile-modal funding-page">
+      <div class="profile-header">
+        <div class="profile-header__left">
+          <div class="profile-header__title-row">
+            <h2 class="profile-header__title" id="fundingTitle">Funding</h2>
+            <span class="profile-header__scope">UK government grants open now</span>
+          </div>
+          <span class="profile-header__sub" id="fundingSub">Grants you can apply for. They are not tenders and never count towards contract totals.</span>
+        </div>
+        <button type="button" id="fundingClose" class="profile-header__close" aria-label="Close">×</button>
+      </div>
+      <form id="fundingFilterBar" class="tf-filterbar tf-filterbar--page" role="search" aria-label="Filter grants">
+        <label class="tf-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+          <input type="search" id="txtFundingSearch" name="q" placeholder="Keywords, e.g. net zero, farming, skills, innovation" aria-label="Search grants" autocomplete="off" />
+        </label>
+        <select id="selFundingApplicant" name="applicant" class="tf-chip tf-chip--select" aria-label="Who can apply">
+          <option value="Private Sector">Private sector</option>
+          <option value="Non-profit">Non-profit</option>
+          <option value="Public Sector">Public sector</option>
+          <option value="Personal / Individual">Individuals</option>
+          <option value="">Anyone</option>
+        </select>
+        <select id="selFundingLocation" name="location" class="tf-chip tf-chip--select" aria-label="Where the money is available"><option value="">Anywhere in the UK</option></select>
+        <select id="selFundingAward" name="min_award" class="tf-chip tf-chip--select" aria-label="Award size">
+          <option value="">Any award size</option>
+          <option value="10000">Up to £10k or more</option>
+          <option value="100000">Up to £100k or more</option>
+          <option value="1000000">Up to £1m or more</option>
+        </select>
+        <select id="selFundingSort" name="sort" class="tf-chip tf-chip--select" aria-label="Sort by">
+          <option value="relevance">Best match to my profile</option>
+          <option value="closing">Closing soonest</option>
+          <option value="award">Largest award</option>
+        </select>
+        <label class="tf-chip funding-soon"><input type="checkbox" id="chkFundingSoon" name="closing_soon" /> Closing within 30 days</label>
+      </form>
+      <div class="funding-body">
+        <p class="funding-meta" id="fundingMeta" aria-live="polite"></p>
+        <div id="fundingList" class="funding-list" aria-live="polite"></div>
+        <div id="fundingPager" class="funding-pager"></div>
+        <p class="funding-attribution">Source: <a href="https://find-government-grants.service.gov.uk/" target="_blank" rel="noopener noreferrer">Find a grant</a> on GOV.UK, published under the <a href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/" target="_blank" rel="noopener noreferrer">Open Government Licence v3.0</a>. Matching to your profile is by shared words, not a prediction of success. Check eligibility with the funder before applying.</p>
+      </div>
+    </div>
+  </div>
+
   <!-- ══ GROWTH STUDIO ══ (markup from growth-view.js, logic in growth-studio.js) -->
   <div id="growthStudioModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="growthStudioTitle">
     <div class="profile-modal growth-page">
@@ -3056,6 +3108,9 @@
           </div>
         </div>
 
+        <!-- Grants this buyer has funded (Innovate UK; JS populated, empty for other buyers) -->
+        <div id="drawerGrantsPanel"></div>
+
         <!-- Top Incumbent Suppliers -->
         <div>
           <h4 style="margin: 0 0 8px 0; font-size: 13px; font-weight: 700; color: var(--text);">Top Incumbent Suppliers</h4>
@@ -3299,16 +3354,17 @@
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=1"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=234"></script>
+  <script src="/app.js?v=237"></script>
   <script src="/planning.js?v=18"></script>
+  <script src="/funding.js?v=1"></script>
   <script src="/responsive-fixes.js?v=1" defer></script>
   <script src="/tooltips.js?v=2"></script>
   <script src="/connections.js?v=2"></script>
-  <script src="/growth-view.js?v=21"></script>
+  <script src="/growth-view.js?v=22"></script>
   <script src="/growth-services.js?v=3"></script>
   <script src="/growth-channels.js?v=6"></script>
   <script src="/growth-inbox.js?v=4"></script>
-  <script src="/growth-studio.js?v=20"></script>
+  <script src="/growth-studio.js?v=21"></script>
   <script src="/email-outreach.js?v=5"></script>
   <script src="/shell.js?v=4"></script>
   <script src="/search-filters.js?v=10"></script>

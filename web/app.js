@@ -1951,6 +1951,8 @@ const PORTALS = [
   { id: "pcs", label: "Public Contracts Scotland", country: "United Kingdom", flag: `<img src="/flags/scotland.svg" width="20" height="12" alt="Scotland" style="vertical-align: middle; margin-right: 6px; border-radius: 2px; box-shadow: 0 0 1px rgba(0,0,0,0.3); display: inline-block; object-fit: cover;">`, code: "GB", region: "EUROPE", url: "https://www.publiccontractsscotland.gov.uk/" },
   { id: "sell2wales", label: "Sell2Wales", country: "United Kingdom", flag: `<img src="/flags/wales.svg" width="20" height="12" alt="Wales" style="vertical-align: middle; margin-right: 6px; border-radius: 2px; box-shadow: 0 0 1px rgba(0,0,0,0.3); display: inline-block; object-fit: cover;">`, code: "GB", region: "EUROPE", url: "https://www.sell2wales.gov.wales/" },
   { id: "procontract", label: "ProContract (UK Councils)", country: "United Kingdom", flag: `<img src="/flags/england.svg" width="20" height="12" alt="England" style="vertical-align: middle; margin-right: 6px; border-radius: 2px; box-shadow: 0 0 1px rgba(0,0,0,0.3); display: inline-block; object-fit: cover;">`, code: "GB", region: "EUROPE", url: "https://procontract.due-north.com/" },
+  { id: "yortender", label: "YORtender (Yorkshire)", country: "United Kingdom", flag: `<img src="/flags/england.svg" width="20" height="12" alt="England" style="vertical-align: middle; margin-right: 6px; border-radius: 2px; box-shadow: 0 0 1px rgba(0,0,0,0.3); display: inline-block; object-fit: cover;">`, code: "GB", region: "EUROPE", url: "https://yortender.eu-supply.com/" },
+  { id: "nepo_open", label: "NEPO Open (North East)", country: "United Kingdom", flag: `<img src="/flags/england.svg" width="20" height="12" alt="England" style="vertical-align: middle; margin-right: 6px; border-radius: 2px; box-shadow: 0 0 1px rgba(0,0,0,0.3); display: inline-block; object-fit: cover;">`, code: "GB", region: "EUROPE", url: "https://www.open-uk.org/" },
   { id: "gca_agreements", label: "GCA Frameworks (UK)", country: "United Kingdom", flag: `<img src="/flags/uk.svg" width="20" height="12" alt="United Kingdom" style="vertical-align: middle; margin-right: 6px; border-radius: 2px; box-shadow: 0 0 1px rgba(0,0,0,0.3); display: inline-block; object-fit: cover;">`, code: "GB", region: "EUROPE", url: "https://www.gca.gov.uk/agreements", isNew: true },
 
   // France
@@ -1983,7 +1985,7 @@ const NEW_PORTAL_IDS = PORTALS.filter((p) => p.isNew).map((p) => p.id);
 let _selectedPortals = null; // null means ALL
 
 const BACKEND_PORTAL_IDS = [
-  "etenders_ie", "find_tender", "contracts_finder", "etenders_ni", "pcs", "sell2wales", "procontract", "gca_agreements",
+  "etenders_ie", "find_tender", "contracts_finder", "etenders_ni", "pcs", "sell2wales", "procontract", "yortender", "nepo_open", "gca_agreements",
   "sam_gov", "canadabuys", "eu_ted", "austender", "gebiz", "gets_nz", "boamp", "bund"
 ];
 
@@ -2111,7 +2113,7 @@ function getPortalFlagImgHtml(p) {
   if (p.id === "pcs") countryName = "Scotland";
   else if (p.id === "sell2wales") countryName = "Wales";
   else if (p.id === "etenders_ni") countryName = "Northern Ireland";
-  else if (p.id === "procontract") countryName = "England";
+  else if (p.id === "procontract" || p.id === "yortender" || p.id === "nepo_open") countryName = "England";
 
   return getFlagImgHtml(p.code, countryName);
 }
@@ -3025,7 +3027,7 @@ let _activeCountyRegionFilter = "all";
 // nation is actually in scope.
 const REGION_PORTAL_IDS = {
   "Ireland": ["etenders_ie"],
-  "England": ["find_tender", "contracts_finder", "gca_agreements", "procontract"],
+  "England": ["find_tender", "contracts_finder", "gca_agreements", "procontract", "yortender", "nepo_open"],
   "Scotland": ["find_tender", "contracts_finder", "gca_agreements", "pcs"],
   "Wales": ["find_tender", "contracts_finder", "gca_agreements", "sell2wales"],
   "Northern Ireland": ["find_tender", "contracts_finder", "gca_agreements", "etenders_ni"]
@@ -4703,7 +4705,7 @@ function getDeadlinePassedBannerHtml(row) {
 // The currency a portal quotes in, for a value that arrives as bare digits ("100,000" from Contracts Finder).
 const CURRENCY_BY_SOURCE = {
   etenders_ie: "€", boamp: "€", bund: "€", eu_ted: "€",
-  find_tender: "£", contracts_finder: "£", etenders_ni: "£", pcs: "£", sell2wales: "£", procontract: "£", gca_agreements: "£",
+  find_tender: "£", contracts_finder: "£", etenders_ni: "£", pcs: "£", sell2wales: "£", procontract: "£", yortender: "£", nepo_open: "£", gca_agreements: "£",
   sam_gov: "$", canadabuys: "$",
 };
 
@@ -19269,6 +19271,7 @@ async function loadSupplierDetail(supplierId) {
               <span>💼 <strong>LinkedIn:</strong> ${linkedinDisplay}</span>
             </div>
             ${s.address ? `<div style="font-size:11.5px; color:var(--muted, #475569); margin-top:6px;">🏠 <strong>Registered Address:</strong> ${esc(s.address)}</div>` : ''}
+            ${charityLineHtml(s.charity)}
           </div>
           <!-- Action Buttons: BD Playbook, AI Summary & Download -->
           <div class="supplier-detail-actions" style="display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap; min-width:0; max-width:100%;">
@@ -19374,10 +19377,55 @@ async function loadSupplierDetail(supplierId) {
           </table>
         </div>
       </div>
+      ${grantsPanelHtml(data.grants, "supplier")}
     `;
   } catch (err) {
     panel.innerHTML = `<div style="padding:20px; color:var(--critical-text, #ef4444);">Error loading supplier profile: ${esc(err.message)}</div>`;
   }
+}
+
+// Grants (UKRI Gateway to Research) are shown beside a supplier's contracts and on the funder's profile, but they
+// are never part of the contract figures: the server keeps them in their own table.
+// A supplier that is on the Charity Commission register: its charity number, latest income and the charity's own
+// contact details. Everything here comes from the public register, so it says so.
+function charityLineHtml(c) {
+  if (!c || !c.charity_number) return "";
+  const link = safeHttpUrl(c.url) ? `<a href="${esc(safeHttpUrl(c.url))}" target="_blank" rel="noopener noreferrer" style="color:var(--primary,#2563eb); font-weight:700; text-decoration:underline;">#${esc(c.charity_number)} ↗</a>` : `#${esc(c.charity_number)}`;
+  const income = c.income != null ? ` · latest income <strong>${esc(formatCurrencyVal(c.income))}</strong>${c.year_end ? ` (year to ${esc(c.year_end)})` : ""}` : "";
+  const site = safeHttpUrl(c.website) ? `<a href="${esc(safeHttpUrl(c.website))}" target="_blank" rel="noopener noreferrer">${esc(c.website.replace(/^https?:\/\//i, ""))}</a>` : "";
+  const contact = [site, c.email ? esc(c.email) : "", c.phone ? esc(c.phone) : ""].filter(Boolean).join(" · ");
+  const about = c.activities ? `<div style="margin-top:4px;">${esc(String(c.activities).slice(0, 260))}${String(c.activities).length > 260 ? "…" : ""}</div>` : "";
+  return `<div class="charity-line" style="font-size:11.5px; color:var(--muted,#475569); margin-top:6px;">🎗️ <strong>Registered charity</strong> ${link}${income}${contact ? `<div>Contact on the register: ${contact}</div>` : ""}${about}</div>`;
+}
+
+function grantsPanelHtml(g, mode) {
+  if (!g || !g.count) return "";
+  const money = (v) => (v == null ? "Value not stated" : formatCurrencyVal(v));
+  const when = (x) => esc(x.start_date || "") + (x.end_date ? " to " + esc(x.end_date) : "");
+  const rows = (g.items || []).map(x => {
+    const funder = mode === "supplier"
+      ? `<a href="#" data-authority-name="${esc(x.funder)}" onclick="event.preventDefault(); openBuyerProfileDrawer(this.dataset.authorityName);" title="Open the buyer profile for ${esc(x.funder)}">${esc(x.funder)}</a>`
+      : `<strong>${esc(x.supplier_name)}</strong>`;
+    const link = safeHttpUrl(x.url) ? `<a href="${esc(safeHttpUrl(x.url))}" target="_blank" rel="noopener noreferrer">${esc(x.title)} ↗</a>` : esc(x.title);
+    return `<div style="padding:10px 0; border-bottom:1px solid var(--border,#e2e8f0); font-size:12px;">
+      <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+        <div style="font-weight:700; line-height:1.3;">${link}</div>
+        <div style="font-weight:800; color:#059669; white-space:nowrap;">${money(x.value_gbp)}</div>
+      </div>
+      <div style="color:var(--muted,#64748b); margin-top:3px; display:flex; gap:10px; flex-wrap:wrap;">
+        <span>${funder}</span><span>${esc(x.programme || "")}</span><span>${when(x)}</span>${x.status ? `<span>${esc(x.status)}</span>` : ""}
+      </div></div>`;
+  }).join("");
+  const more = g.count > (g.items || []).length ? `<div style="font-size:11px; color:var(--muted,#64748b); margin-top:8px;">Showing the newest ${(g.items || []).length} of ${g.count} grants.</div>` : "";
+  const headline = mode === "supplier"
+    ? `${g.count} grant${g.count === 1 ? "" : "s"} · ${formatCurrencyVal(g.total_value)} awarded`
+    : `${g.count} grants to ${g.recipients} organisations · ${formatCurrencyVal(g.total_value)} awarded`;
+  const top = mode === "funder" && (g.top_recipients || []).length
+    ? `<div style="font-size:11.5px; margin:8px 0 4px;"><strong>Largest recipients:</strong> ${g.top_recipients.slice(0, 5).map(r => `${esc(r.supplier_name)} (${formatCurrencyVal(r.total_value)})`).join(" · ")}</div>` : "";
+  return `<div class="grants-panel" style="background:var(--surface,#ffffff); border:1px solid var(--border,#e2e8f0); border-radius:10px; padding:16px; margin-top:20px;">
+    <h4 style="margin:0 0 4px; font-size:14px; font-weight:700;">🔬 Grant funding <span style="font-weight:600; color:var(--muted,#64748b);">${headline}</span></h4>
+    <div style="font-size:11px; color:var(--muted,#64748b);">Innovate UK grants from UKRI Gateway to Research. Grants are not contracts and are not counted in the contract totals${mode === "supplier" ? " or the date filter" : ""}.</div>
+    ${top}${rows}${more}</div>`;
 }
 
 async function downloadSupplierReportDocx(supplierId, btnElem = null) {
@@ -20989,6 +21037,8 @@ function openBuyerOpportunity(row) {
 
 function populateBuyerProfileDrawer(data) {
   $("buyerDrawerLoading")?.classList.add("hidden");
+  const grantsSlot = $("drawerGrantsPanel");
+  if (grantsSlot) grantsSlot.innerHTML = grantsPanelHtml(data.grants, "funder");
   $("drawerBuyerName").textContent = displayName(data.authority_name) || "Buyer Profile";
   $("drawerBuyerTypePill").textContent = data.buyer_type || "Public Sector";
   $("drawerBuyerRegion").textContent = data.stats?.region || "UK Public Sector Authority";

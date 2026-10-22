@@ -17,7 +17,7 @@ body.tf-shell .profile-header__title-row { flex-wrap: wrap; }
 
 /* ── Cramped controls ── */
 /* the keyword box kept room for the field itself: "softw" was all that showed */
-body.tf-shell .tf-keyword { flex: 1 1 360px; min-width: min(100%, 320px); }
+body.tf-shell .tf-keyword { flex: 1 1 360px; min-width: min(100%, 190px); } /* shrinks first, so "Clear all" and the star stay on the first row */
 body.tf-shell .tf-keyword .sidebar-search-input { min-width: 0; text-overflow: ellipsis; }
 /* Summary / Clarifications / Bid Response: one even row that wraps instead of squeezing */
 .details-panel__btn-row { display: flex; flex-wrap: wrap; gap: 6px; }

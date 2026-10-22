@@ -395,6 +395,8 @@ SIGNAL_NOTES = {
               "supplier, so it is never shown, and planning approvals publish no value at all.",
     "where": "The place filter matches the buyer's name (or, for planning approvals, the authority, region and "
              "address): award notices carry no reliable buyer location.",
+    "funding": "Recently funded companies come from Innovate UK grants on UKRI Gateway to Research. A grant is not a "
+               "budget the company will spend with you, and the match is on the words in the grant description.",
 }
 
 
@@ -431,8 +433,10 @@ def growth_signals():
         "shown": len(shown),
         "shown_by_type": {t: shown_by_type.get(t, 0) for t in gs.SIGNAL_TYPES},
         "total": len(visible),
-        "notes": {k: v for k, v in SIGNAL_NOTES.items() if k != "renewal" or "renewal" in f.types} | {
+        "notes": {k: v for k, v in SIGNAL_NOTES.items()
+                  if (k != "renewal" or "renewal" in f.types) and (k != "funding" or "funding" in f.types)} | {
             "development": notes.get("development"),
+            "funding": notes.get("funding"),
             "truncated": "More contracts matched than could be read, so the soonest-ending are shown. Narrow the filters to see the rest."
             if notes.get("truncated") else None,
         },

@@ -8,7 +8,11 @@ A signal is a reason to approach one buyer now, found in data TenderFlow already
                 buyer of the subcontract packages is the developer, not the council, so the target
                 is the applicant company when the register names one;
   * engagement  a market engagement a public sector buyer has published through the buyer
-                workspace and recorded a public notice link for (`market_engagements`).
+                workspace and recorded a public notice link for (`market_engagements`);
+  * funding     a company that recently won Innovate UK grant funding for a project in the supplier's
+                category (`grant_awards`, from UKRI Gateway to Research). Unlike the others the target
+                is a company the supplier could sell to, not a buyer, and the match is on the words in
+                the grant (grants carry no CPV code). Off unless asked for.
 
 Data rules are Market Radar's (tender_app/market_radar.py), so a figure here agrees with Buyer
 Intelligence: recurring notices collapse to one (same supplier + buyer + date signed), a framework's
@@ -48,13 +52,17 @@ from etenders_scraper.awards import UK_IE_SOURCE_PORTALS
 from etenders_scraper.planning.scoring import lead_score
 from tender_app import market_radar as mr
 
-SIGNAL_TYPES = ("renewal", "development", "engagement")
+SIGNAL_TYPES = ("renewal", "development", "engagement", "funding")
+# "funding" is opt-in: a request that names no types gets the first three, so nobody's view changes until they tick it.
+DEFAULT_SIGNAL_TYPES = ("renewal", "development", "engagement")
 SIGNAL_LABELS = {
     "renewal": "Contract renewal",
     "development": "New development",
     "engagement": "Market engagement open",
+    "funding": "Recently funded",
 }
-SIGNAL_PLURALS = {"renewal": "renewals", "development": "new developments", "engagement": "market engagements"}
+SIGNAL_PLURALS = {"renewal": "renewals", "development": "new developments", "engagement": "market engagements",
+                  "funding": "recently funded companies"}
 DEFAULT_DAYS = 180
 MIN_DAYS, MAX_DAYS = 30, 730
 MAX_WHERE = 60
@@ -63,6 +71,7 @@ MAX_CONTRACTS_SHOWN = 8
 MAX_RENEWAL_ROWS = 4000
 MAX_PLANNING_ROWS = 400
 MAX_ENGAGEMENT_ROWS = 200
+MAX_FUNDING_ROWS = 800
 CACHE_TTL_SECONDS = 10 * 60
 
 CACHE = mr.AnalysisCache(ttl=CACHE_TTL_SECONDS, max_entries=24)
@@ -129,12 +138,13 @@ class Filters:
     """What a Signals request asks for. Built by filters_from; `key` is the cache key."""
 
     category: mr.Category
-    types: tuple[str, ...] = SIGNAL_TYPES
+    types: tuple[str, ...] = DEFAULT_SIGNAL_TYPES
     days: int = DEFAULT_DAYS
     authority: str = "all"
     where: str = ""
     frameworks: bool = True
     min_fit: int = 0   # hide signals scoring below this; applied after scoring, so it is not part of any cache key
+    public_bodies: bool = False   # funding signals: also list universities, councils and NHS bodies
 
     def to_public(self) -> dict[str, Any]:
         return {
@@ -146,6 +156,7 @@ class Filters:
             "where": self.where,
             "frameworks": self.frameworks,
             "min_fit": self.min_fit,
+            "public_bodies": self.public_bodies,
         }
 
     def to_request(self) -> dict[str, Any]:
@@ -157,6 +168,8 @@ class Filters:
                    frameworks=self.frameworks)
         if self.min_fit:
             out["min_fit"] = self.min_fit
+        if self.public_bodies:
+            out["public_bodies"] = True
         return out
 
 
@@ -179,7 +192,7 @@ def filters_from(source: Mapping[str, Any], cpv_labels: dict[str, str] | None = 
 
     raw_types = source.get("types")
     if raw_types in (None, "", []):
-        types = SIGNAL_TYPES
+        types = DEFAULT_SIGNAL_TYPES
     else:
         items = raw_types if isinstance(raw_types, (list, tuple)) else str(raw_types).split(",")
         wanted = {str(t).strip() for t in items if str(t).strip()}
@@ -216,6 +229,7 @@ def filters_from(source: Mapping[str, Any], cpv_labels: dict[str, str] | None = 
         authority=authority,
         where=_clean_where(source.get("where")),
         frameworks=_flag(source.get("frameworks"), True),
+        public_bodies=_flag(source.get("public_bodies"), False),
     )
 
 
@@ -709,6 +723,166 @@ def engagement_signals(rows: Iterable[Mapping[str, Any]], cat: mr.Category, toda
     return out
 
 
+# ───────────────────────────────────────── funding signals ────────────────────────────────────────
+
+# Recipients that are public bodies or research institutions: poor prospects for most suppliers, so they are
+# left out unless the caller asks for them (Filters.public_bodies).
+_PUBLIC_BODY_RE = re.compile(
+    r"\b(universit\w*|college|nhs|hospital|council|borough|combined authority|integrated care|icb|"
+    r"foundation trust|health board|academy|school|catapult|research council|institute of)\b",
+    re.IGNORECASE,
+)
+_UPPER_FIXES = {"Ltd": "Ltd", "Plc": "PLC", "Llp": "LLP", "Uk": "UK", "Cic": "CIC", "Llc": "LLC"}
+
+
+def is_public_body(name: str | None) -> bool:
+    return bool(_PUBLIC_BODY_RE.search(name or ""))
+
+
+def company_display(name: str) -> str:
+    """GtR stores "NATURAL NEGATIVE LTD" in capitals; show it as "Natural Negative Ltd"."""
+    name = re.sub(r"\s+", " ", (name or "").strip())
+    if not name or name != name.upper():
+        return name
+    return " ".join(_UPPER_FIXES.get(w, w) for w in name.title().split(" "))
+
+
+def funding_match(cat: mr.Category, text: str) -> tuple[int, list[str]]:
+    """How many of the category's own words the grant text uses, and which chosen services they belong to.
+    Grants carry no CPV code, so only a preset's keywords and a custom search's title words can match."""
+    low = (text or "").lower()
+    present = set(tokens(text))
+    hits = 0
+    services: list[str] = []
+    for leaf in cat.leaves():
+        matched = [kw for kw in leaf.keywords if re.search(r"\b" + re.escape(kw.lower()), low)]
+        # A lone short acronym ("crm" is also "critical raw material") is not evidence of the service.
+        found = 0 if len(matched) == 1 and len(matched[0]) <= 4 else len(matched)
+        stems = [stem(t) for t in leaf.text_tokens]
+        if stems and all(t in present for t in stems):
+            found += len(stems)
+        if found:
+            hits += found
+            services.append(leaf.label)
+    return hits, services
+
+
+def has_funding_words(cat: mr.Category) -> bool:
+    return any(leaf.keywords or leaf.text_tokens for leaf in cat.leaves())
+
+
+def score_funding(newest: date, total: float | None, hits: int, known_supplier: bool, has_website: bool,
+                  today: date) -> dict[str, Any]:
+    """Recency 30, size 25, category 30, reachable 15."""
+    age = max(0, (today - newest).days)
+    if age <= 30:
+        recency = 30
+    elif age <= 60:
+        recency = 26
+    elif age <= 90:
+        recency = 20
+    elif age <= 180:
+        recency = 12
+    else:
+        recency = 6
+    if total is None or total <= 0:
+        size, size_note = 5, "The grant value is not stated"
+    elif total < 50_000:
+        size, size_note = 8, f"Awarded {gbp(total)}: a small grant"
+    elif total < 250_000:
+        size, size_note = 14, f"Awarded {gbp(total)}"
+    elif total < 1_000_000:
+        size, size_note = 20, f"Awarded {gbp(total)}"
+    else:
+        size, size_note = 25, f"Awarded {gbp(total)}: a large grant"
+    category = 18 if hits <= 1 else 24 if hits == 2 else 30
+    reach = (10 if known_supplier else 0) + (5 if has_website else 0)
+    reach_note = ("Already sells to the public sector (it appears as a supplier in contract notices)" if known_supplier
+                  else "Not seen as a supplier in contract notices")
+    reach_note += "; a website is on record" if has_website else "; no website on record"
+    return _finish([
+        _part("recency", "Recency", recency, 30, f"The newest grant started {ago_text(age)}"),
+        _part("size", "Size", size, 25, size_note),
+        _part("category", "Category", category, 30,
+              f"{plural(hits, 'word')} from your category appear in the grant description"),
+        _part("reachable", "Reachable", reach, 15, reach_note),
+    ])
+
+
+def funding_signals(rows: Iterable[Mapping[str, Any]], cat: mr.Category, today: date,
+                    public_bodies: bool = False) -> tuple[list[dict[str, Any]], int]:
+    """One signal per funded company: its grants that match the category, newest first. Returns
+    (signals, number of public bodies left out)."""
+    by_company: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        name = (row.get("supplier_name") or "").strip()
+        start = mr.parse_iso_date(row.get("start_date"))
+        if not name or start is None or start > today:
+            continue
+        hits, services = funding_match(cat, f"{row.get('title') or ''} {row.get('abstract') or ''}")
+        if not hits:
+            continue
+        by_company[row.get("name_key") or name].append({**row, "_start": start, "_hits": hits, "_services": services})
+
+    out: list[dict[str, Any]] = []
+    left_out = 0
+    for name_key, grants in by_company.items():
+        name = grants[0]["supplier_name"].strip()
+        if not public_bodies and is_public_body(name):
+            left_out += 1
+            continue
+        grants.sort(key=lambda g: (g["_start"], g.get("value_gbp") or 0), reverse=True)
+        newest = grants[0]
+        values = [float(g["value_gbp"]) for g in grants if g.get("value_gbp") is not None]
+        total = sum(values) if values else None
+        hits = max(g["_hits"] for g in grants)
+        services = list(dict.fromkeys(s for g in grants for s in g["_services"]))
+        display = company_display(name)
+        fit = score_funding(newest["_start"], total, hits, any(g.get("has_awards") for g in grants),
+                            any(g.get("website") for g in grants), today)
+        days = (today - newest["_start"]).days
+        funder = newest.get("funder") or "Innovate UK"
+        if len(grants) == 1:
+            headline = (f"{display} won {gbp(total) if total else 'funding'} from {funder} for “{newest['title']}”, "
+                        f"starting {long_date(newest['_start'])}")
+        else:
+            headline = (f"{display} has won {plural(len(grants), 'grant')} from {funder}"
+                        + (f" worth {gbp(total)}" if total else "") + f", the newest starting {long_date(newest['_start'])}")
+        bits = []
+        for g in grants[:3]:
+            bits.append(f"“{g['title']}”" + (f" ({gbp(float(g['value_gbp']))})" if g.get("value_gbp") is not None else "")
+                        + (f", {g['programme']}" if g.get("programme") else "") + ".")
+        if len(grants) > 3:
+            bits.append(f"{len(grants) - 3} more not listed.")
+        links = [{"label": "Grant on UKRI Gateway to Research", "url": g["url"]} for g in grants[:1] if g.get("url")]
+        out.append({
+            "key": f"funding:{name_key}",
+            "type": "funding",
+            "badge": SIGNAL_LABELS["funding"],
+            "buyer": display,
+            "authority": " · ".join(x for x in (newest.get("region"), "Funded by " + funder) if x),
+            "headline": headline,
+            "detail": " ".join(bits),
+            "date": newest["_start"].isoformat(),
+            "days": days,
+            "fit": fit["score"],
+            "band": fit["band"],
+            "fit_parts": fit["parts"],
+            "services": services if len(cat.leaves()) > 1 else [],
+            "funding": {
+                "title": newest["title"],
+                "value": total,
+                "start": newest["_start"].isoformat(),
+                "funder": funder,
+                "programme": newest.get("programme"),
+                "grants": len(grants),
+            },
+            "target": {"name": display, "key": mr.canonical_supplier_key(name), "targetable": True, "reason": None},
+            "links": links,
+        })
+    return out, left_out
+
+
 # ───────────────────────────────────────── database access ────────────────────────────────────────
 
 _PORTALS = ", ".join("'" + p.replace("'", "''") + "'" for p in UK_IE_SOURCE_PORTALS)
@@ -804,6 +978,33 @@ def fetch_planning_rows(cursor: Any, f: Filters, today: date) -> list[dict[str, 
     return [dict(zip(columns, r)) for r in cursor.fetchall()]
 
 
+def fetch_funding_rows(cursor: Any, f: Filters, today: date) -> list[dict[str, Any]]:
+    """Grants that started in the last `days` days (grant_awards, newest first). Empty when the grants have
+    never been imported. The place filter matches the recipient's name, region and postcode."""
+    cursor.execute("SELECT to_regclass('public.grant_awards') IS NOT NULL")
+    if not cursor.fetchone()[0]:
+        return []
+    conds = ["g.start_date BETWEEN %s AND %s"]
+    params: list[Any] = [(today - timedelta(days=f.days)).isoformat(), today.isoformat()]
+    if f.where:
+        conds.append("(g.supplier_name ILIKE %s OR g.region ILIKE %s OR g.postcode ILIKE %s)")
+        params += [_like(f.where)] * 3
+    cursor.execute(
+        f"""
+        SELECT g.id, g.supplier_id, g.supplier_name, g.name_key, g.postcode, g.region, g.website, g.funder,
+               g.programme, g.title, g.abstract, g.status, g.value_gbp, g.start_date, g.end_date, g.url,
+               EXISTS (SELECT 1 FROM contract_awards a WHERE a.supplier_id = g.supplier_id) AS has_awards
+        FROM grant_awards g
+        WHERE {" AND ".join(conds)}
+        ORDER BY g.start_date DESC, g.id
+        LIMIT %s
+        """,
+        params + [MAX_FUNDING_ROWS],
+    )
+    columns = [c[0] for c in cursor.description]
+    return [dict(zip(columns, r)) for r in cursor.fetchall()]
+
+
 def fetch_engagement_rows(cursor: Any, today: date, exclude_username: str) -> list[dict[str, Any]]:
     """Engagements other users have published with a public notice link and not yet closed."""
     cursor.execute(
@@ -835,7 +1036,7 @@ def build_signals(
     today = today or date.today()
     cat = f.category
     signals: list[dict[str, Any]] = []
-    notes: dict[str, Any] = {"truncated": False, "development": None}
+    notes: dict[str, Any] = {"truncated": False, "development": None, "funding": None}
 
     if "renewal" in f.types:
         key = f"renewal#{cat.key}#{f.authority}#{f.days}#{f.where.lower()}#{int(f.frameworks)}#{today}"
@@ -880,6 +1081,30 @@ def build_signals(
         finally:
             conn.close()
         signals += engagement_signals(rows, cat, today, f.authority)
+
+    if "funding" in f.types:
+        if not has_funding_words(cat):
+            notes["funding"] = (
+                "Recently funded companies are matched on the words in the grant, so a category chosen only by "
+                "CPV code shows none. Pick a service from the list or add title words."
+            )
+        else:
+            key = f"funding#{f.days}#{f.where.lower()}#{today}"
+
+            def load_funding() -> list[dict[str, Any]]:
+                conn = connect()
+                try:
+                    with conn.cursor() as cur:
+                        return fetch_funding_rows(cur, f, today)
+                finally:
+                    conn.close()
+
+            found, left_out = funding_signals(CACHE.get_or_compute(key, load_funding), cat, today, f.public_bodies)
+            signals += found
+            if left_out:
+                what = "university or public body" if left_out == 1 else "universities or public bodies"
+                notes["funding"] = (f"{left_out} {what} left out of the recently funded companies: they are "
+                                    "rarely suppliers' customers.")
 
     # Equal fit: a buyer whose contracts fall under more of the chosen services comes first
     signals.sort(key=lambda s: (-s["fit"], -len(s.get("services") or ()), s["days"] if s["days"] is not None else 10**6, s["key"]))
@@ -929,6 +1154,10 @@ MERGE_FIELDS: tuple[dict[str, Any], ...] = (
     {"name": "planning_authority", "label": "Planning authority", "tag": "PLANAUTH", "per_recipient": True, "types": ("development",)},
     {"name": "engagement_title", "label": "Engagement title", "tag": "ENGAGEMENT", "per_recipient": True, "types": ("engagement",)},
     {"name": "response_deadline", "label": "Response deadline", "tag": "DEADLINE", "per_recipient": True, "types": ("engagement",)},
+    {"name": "grant_title", "label": "Grant project", "tag": "GRANT", "per_recipient": True, "types": ("funding",)},
+    {"name": "grant_value", "label": "Grant value", "tag": "GRANTVAL", "per_recipient": True, "types": ("funding",)},
+    {"name": "grant_start", "label": "Grant start date", "tag": "GRANTSTART", "per_recipient": True, "types": ("funding",)},
+    {"name": "funder", "label": "Funder", "tag": "FUNDER", "per_recipient": True, "types": ("funding",)},
     {"name": "category", "label": "Category", "tag": "CATEGORY", "per_recipient": True, "types": SIGNAL_TYPES},
     {"name": "company_name", "label": "Your company", "tag": "MYCOMPANY", "per_recipient": False, "types": SIGNAL_TYPES},
     {"name": "sender_name", "label": "Your name", "tag": "SENDER", "per_recipient": False, "types": SIGNAL_TYPES},
@@ -944,6 +1173,7 @@ _OPT_OUT_RE = re.compile(
 MAX_SUBJECT = 200
 MAX_BODY = 6000
 GREETING = "procurement team"
+GREETING_COMPANY = "team"   # a funded company is not a procurement team
 
 
 def has_opt_out(body: str | None) -> bool:
@@ -1016,6 +1246,12 @@ def default_message(signal_type: str, sender: Mapping[str, str]) -> dict[str, st
                    "({{planning_authority}}).")
         ask = ("We would welcome the chance to be considered for {{category}} packages as the project moves towards "
                "procurement, and can share references and accreditations on request.")
+    elif signal_type == "funding":
+        subject = "Congratulations on your {{funder}} grant: {{grant_title}}"
+        opening = ("We saw that {{buyer_name}} was awarded {{funder}} funding for “{{grant_title}}” "
+                   "({{grant_value}}, starting {{grant_start}}).")
+        ask = ("We help projects like this with {{category}}, and would welcome a short conversation about whether "
+               "we can support you as the work moves from plan to delivery. We can share references on request.")
     elif signal_type == "engagement":
         subject = "Our response to your market engagement: {{engagement_title}}"
         opening = "We saw {{buyer_name}}'s market engagement, “{{engagement_title}}”, which asks for responses by {{response_deadline}}."
@@ -1057,6 +1293,15 @@ def fields_for_target(target: Mapping[str, Any], sender: Mapping[str, str]) -> d
             approval_date=long_date(mr.parse_iso_date(scheme.get("approved") or snap.get("date"))) or "",
             planning_authority=scheme.get("authority") or "",
         )
+    elif kind == "funding":
+        grant = snap.get("funding") or {}
+        values.update(
+            buyer_contact=GREETING_COMPANY,
+            grant_title=grant.get("title") or "",
+            grant_value=gbp(grant.get("value")) or "funding",
+            grant_start=long_date(mr.parse_iso_date(grant.get("start") or snap.get("date"))) or "",
+            funder=grant.get("funder") or "Innovate UK",
+        )
     elif kind == "engagement":
         eng = snap.get("engagement") or {}
         values.update(
@@ -1085,13 +1330,18 @@ def ai_prompt(sender: Mapping[str, str], signal_types: Iterable[str], category_l
     types = [t for t in SIGNAL_TYPES if t in set(signal_types)] or ["renewal"]
     allowed = [m for m in MERGE_FIELDS if m["name"] != "incumbent" and any(t in m["types"] for t in types)]
     fields = ", ".join("{{" + m["name"] + "}}" for m in allowed)
+    to_companies = types == ["funding"]
+    audience = "companies that have just won grant funding" if to_companies else "public sector buyers"
+    rule3 = ("3. Address the company's team, never a named person. Do not claim to know how the company will spend its grant.\n"
+             if to_companies else
+             "3. Address the buyer's procurement team, never a named person. Do not mention the incumbent supplier by name.\n")
     system = (
-        "You write short, plain-English outreach emails for a UK supplier approaching public sector buyers.\n"
+        f"You write short, plain-English outreach emails for a UK supplier approaching {audience}.\n"
         "Rules:\n"
         "1. Use only the facts in the SUPPLIER FACTS block. Never invent accreditations, certifications, clients, contract "
         "values, years of experience, locations or dates. If a fact is not given, leave it out.\n"
         f"2. Use these merge fields exactly as written, with double curly braces, and no others: {fields}.\n"
-        "3. Address the buyer's procurement team, never a named person. Do not mention the incumbent supplier by name.\n"
+        f"{rule3}"
         "4. The body is 90 to 150 words: polite and specific, with no hype and no promises of savings.\n"
         f"5. End the body with this sentence, word for word: {OPT_OUT_LINE}\n"
         '6. Reply with only JSON: {"subject": "...", "body": "..."}.'
@@ -1104,7 +1354,8 @@ def ai_prompt(sender: Mapping[str, str], signal_types: Iterable[str], category_l
     for a in answers:
         facts.append(f"{a['category']}: {a['question']} {a['answer']}".strip()[:500])
     kinds = {"renewal": "a contract that is about to end", "development": "a planning approval for a new scheme",
-             "engagement": "a market engagement the buyer has opened"}
+             "engagement": "a market engagement the buyer has opened",
+             "funding": "a company that has just won Innovate UK funding for a project"}
     user = (
         f"Category the supplier sells into: {category_label}\n"
         f"The email is triggered by: {' and '.join(kinds[t] for t in types)}.\n\n"

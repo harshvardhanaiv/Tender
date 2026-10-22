@@ -7,6 +7,7 @@
   // [sidebar button id, section element id, close function in app.js]
   const SECTIONS = [
     ["btnDashboard", "dashboardModal", "closeDashboard"],
+    ["btnFunding", "fundingModal", "closeFunding"],
     ["btnPlanningLeads", "planningLeadsModal", "closePlanningLeads"],
     ["btnGrowthStudio", "growthStudioModal", "closeGrowthStudio"],
     ["btnBuyerIntelligence", "buyerIntelligenceModal", "closeBuyerIntelligenceModal"],
