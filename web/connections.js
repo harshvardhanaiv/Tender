@@ -261,17 +261,106 @@
     );
   }
 
-  function connectionsHtml(m) {
+  // ── the hub: one row per channel on the left, the chosen channel's panel on the right (one at a time on a phone) ───────────
+  // Outreach covers email, calls and social in one sign-in, so it is one banner, not a tile in every channel.
+  // Apps TenderFlow cannot connect yet are listed as "Coming soon" so nobody hunts for a button that does nothing.
+  const CHANNELS = [
+    { id: "email", name: "Email", icon: "ti-mail", needed: true, unlock: "Send campaign emails and read replies.", soon: [["Sign in with Google", "Gmail / Google Workspace"], ["Sign in with Microsoft", "Outlook / Microsoft 365"]] },
+    { id: "calls", name: "Calls", icon: "ti-phone", unlock: "Run call steps in campaigns and log the outcome.", soon: [["Sign in", "Aircall"], ["Account details", "Twilio"], ["Tasks in your Inbox", "I'll make calls myself"]] },
+    { id: "social", name: "Social", icon: "ti-share", unlock: "Schedule and publish company posts after you approve them.", soon: [["Sign in", "LinkedIn page"], ["Sign in", "Buffer"]] },
+    { id: "meetings", name: "Calendar", icon: "ti-calendar", unlock: "Add a booking link to messages and spot booked meetings.", soon: [["Sign in with Google", "Google Calendar"], ["Sign in", "Calendly"]], onlySoon: true },
+    { id: "crm", name: "CRM", icon: "ti-address-book", unlock: "Copy contacts, activity and deals to your CRM.", soon: [["Sign in", "HubSpot"], ["Sign in", "Pipedrive"]], onlySoon: true },
+  ];
+
+  // What each channel is connected through right now, from the answers the two status calls gave.
+  function channelStatus(c, m) {
+    if (c.onlySoon) return { on: false, soon: true, text: "Coming soon" };
+    const info = (m && m.info) || {};
+    const w = info.wallet || {};
+    const out = outreachState(m) === "ok";
+    if (c.id === "email") {
+      const mm = (m && m.mail) || {};
+      const a = mailState(mm) === "ok" ? mm.info.account : null;
+      if (a) return { on: true, text: a.from_email, attention: !!a.last_error };
+      const boxes = (Array.isArray(w.mailboxes) ? w.mailboxes : []).filter((x) => x && x.email);
+      if (out && boxes.length) return { on: true, text: "Outreach mailbox" };
+    } else if (c.id === "calls") {
+      if (out && Number.isFinite(w.phone_numbers) && w.phone_numbers > 0) return { on: true, text: `Outreach · ${plural(w.phone_numbers, "number")}` };
+    } else if (c.id === "social") {
+      const social = (Array.isArray(w.social_channels) ? w.social_channels : []).filter(Boolean);
+      if (out && social.length) return { on: true, text: `Outreach · ${social.map(channelName).join(", ")}` };
+    }
+    return { on: false, text: "Not connected" };
+  }
+
+  function chanRow(c, st, selected) {
+    const chip = st.on ? `<span class="cx-pill cx-pill--${st.attention ? "warn" : "good"}">${esc(st.attention ? "Needs attention" : st.text)}</span>`
+      : `<span class="cx-pill cx-pill--muted">${esc(st.text)}</span>`;
+    return `<button type="button" class="cx-chan${selected ? " is-on" : ""}" data-cx="row" data-view="${c.id}" aria-current="${selected ? "true" : "false"}">` +
+      `<span class="cx-ico" aria-hidden="true"><i class="ti ${c.icon}"></i></span>` +
+      `<span class="cx-chan__txt"><span class="cx-chan__name">${esc(c.name)} ${c.needed ? `<span class="cx-req">Needed to send</span>` : c.onlySoon ? "" : `<span class="cx-opt">Optional</span>`}</span>` +
+      `<span class="cx-sub">${esc(c.unlock)}</span>${st.on && st.text !== c.name ? `<span class="cx-chan__via">${esc(st.text)}</span>` : ""}</span>` +
+      `<span class="cx-chan__end">${st.on && !st.attention ? `<span class="cx-pill cx-pill--good">Connected</span>` : chip}</span></button>`;
+  }
+
+  function soonTiles(list) {
+    return `<div class="cx-label">Other apps</div><ul class="cx-list cx-soon">` + list.map(([how, name]) =>
+      `<li><span class="cx-mail">${esc(name)}</span> <span class="cx-sub">${esc(how)}</span> <span class="cx-pill cx-pill--muted">Coming soon</span></li>`).join("") + `</ul>`;
+  }
+
+  function viaOutreach(c, m) {
+    const out = outreachState(m) === "ok";
+    const what = { email: "its mailboxes", calls: "its phone numbers", social: "its social channels" }[c.id];
+    return out
+      ? `<p class="cx-line">Outreach is connected, so this channel uses ${what}.</p><div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn" data-cx="goto" data-view="outreach">Manage Outreach</button></div>`
+      : `<p class="cx-line">Outreach covers this channel as well as email, calls and social posts, with one sign-in.</p><div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn cx-btn--primary" data-cx="goto" data-view="outreach">Connect Outreach</button></div>`;
+  }
+
+  function pane(view, selected, title, inner) {
+    return `<div class="cx-pane" data-pane="${view}"${selected ? "" : " hidden"}>` +
+      `<button type="button" class="cx-back" data-cx="back"><i class="ti ti-arrow-left" aria-hidden="true"></i> All connections</button>` +
+      `<h3 class="cx-pane__title" tabindex="-1">${esc(title)}</h3>${inner}</div>`;
+  }
+
+  function hubHtml(m, view) {
+    const sel = view || null;
+    const statuses = CHANNELS.map((c) => [c, channelStatus(c, m)]);
+    const sendable = statuses.filter(([c]) => !c.onlySoon);
+    const done = sendable.filter(([, st]) => st.on).length;
+    const emailOn = statuses[0][1].on;
+    const outOk = outreachState(m) === "ok";
+    const progress =
+      `<div class="cx-progress"><div class="cx-progress__top"><strong>${done} of ${sendable.length} channels connected</strong>` +
+      `<span class="cx-sub">${emailOn ? (done === sendable.length ? "Everything you can connect is connected." : "Email is ready. Calls and social are optional.") : "Connect email first so campaigns can be sent."}</span></div>` +
+      `<div class="cx-bar"><i style="width:${Math.round((done / sendable.length) * 100)}%"></i></div></div>`;
+    const banner = outOk
+      ? `<div class="cx-reco"><span class="cx-ico" aria-hidden="true"><i class="ti ti-send"></i></span><div class="cx-reco__txt"><strong>Outreach is connected</strong><span class="cx-sub">Email, calls and social posts can run through it.</span></div><button type="button" class="cx-btn" data-cx="goto" data-view="outreach">Manage</button></div>`
+      : `<div class="cx-reco"><span class="cx-ico" aria-hidden="true"><i class="ti ti-send"></i></span><div class="cx-reco__txt"><strong>Recommended: connect Outreach once</strong><span class="cx-sub">One sign-in covers email, AI calls and social posts.</span></div><button type="button" class="cx-btn cx-btn--primary" data-cx="goto" data-view="outreach">Connect Outreach</button></div>`;
+    const rows = statuses.map(([c, st]) => chanRow(c, st, sel === c.id)).join("");
+    const emailPane =
+      mailCard(m && m.mail) + `<div class="cx-label">Or use Outreach</div>` + viaOutreach(CHANNELS[0], m);
+    const panes =
+      `<section data-card="outreach">` + pane("outreach", sel === "outreach", "Outreach", outreachCard(m)) + `</section>` +
+      pane("email", sel === "email", "Email", emailPane) +
+      pane("calls", sel === "calls", "Calls", `<p class="cx-sub">${esc(CHANNELS[1].unlock)}</p>` + viaOutreach(CHANNELS[1], m) + soonTiles(CHANNELS[1].soon)) +
+      pane("social", sel === "social", "Social", `<p class="cx-sub">${esc(CHANNELS[2].unlock)}</p>` + viaOutreach(CHANNELS[2], m) + soonTiles(CHANNELS[2].soon)) +
+      pane("meetings", sel === "meetings", "Calendar", `<p class="cx-sub">${esc(CHANNELS[3].unlock)}</p>` + soonTiles(CHANNELS[3].soon)) +
+      pane("crm", sel === "crm", "CRM", `<p class="cx-sub">${esc(CHANNELS[4].unlock)}</p>` + soonTiles(CHANNELS[4].soon));
+    return `<div class="cx-hub${sel ? " cx-hub--detail" : ""}"><div class="cx-hub__list">${progress}${banner}<div class="cx-chans">${rows}</div></div>` +
+      `<div class="cx-hub__detail">${sel ? "" : `<p class="cx-sub cx-hub__empty">Choose a channel to connect it or see how it is set up.</p>`}${panes}</div></div>`;
+  }
+
+  function connectionsHtml(m, view) {
     return (
       `<div class="cx-head"><div><h2 id="connectionsTitle" class="cx-title" tabindex="-1">Connections</h2>` +
       `<p class="cx-sub">Connect or disconnect the apps TenderFlow works with, without leaving this page.</p></div>` +
       `<button type="button" class="cx-x" data-cx="close" aria-label="Close connections">×</button></div>` +
-      `<section data-card="outreach">` + outreachCard(m) + `</section>` + mailCard(m && m.mail) +
+      hubHtml(m, view) +
       `<p class="cx-foot"><i class="ti ti-lock" aria-hidden="true"></i> Your key and your password are kept encrypted and are never shown again, not even to you.</p>`
     );
   }
 
-  const api = { esc, outreachState, outreachCard, connectionsHtml, detailsHtml, connectForm, modesFor, PILL, mailState, mailCard, mailForm };
+  const api = { esc, CHANNELS, channelStatus, hubHtml, outreachState, outreachCard, connectionsHtml, detailsHtml, connectForm, modesFor, PILL, mailState, mailCard, mailForm };
   root.TFConnections = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document === "undefined") return;
@@ -290,7 +379,7 @@
           security: gmail.security || "ssl", reply_to: "", daily_cap: 100, userTouched: false });
   };
   const model = {
-    open: false, status: "idle", info: null, error: null, busy: false, form: freshForm(), changed: false,
+    open: false, view: null, status: "idle", info: null, error: null, busy: false, form: freshForm(), changed: false,
     mail: { status: "idle", info: null, form: null, busy: null, notice: null, error: null },
   };
   let overlay = null;
@@ -323,6 +412,9 @@
       const t = e.target;
       const hit = (sel) => t.closest && t.closest(sel);
       if (t === overlay || hit('[data-cx="close"]')) close();
+      else if (hit('[data-cx="row"]')) setView(hit('[data-cx="row"]').getAttribute("data-view"));
+      else if (hit('[data-cx="goto"]')) setView(hit('[data-cx="goto"]').getAttribute("data-view"));
+      else if (hit('[data-cx="back"]')) setView(null);
       else if (hit('[data-action="outreach-check"]')) load();
       else if (hit('[data-cx="disconnect"]')) disconnect();
       else if (hit('[data-cx="use-shared"]')) connect({ use_shared: true });
@@ -374,12 +466,22 @@
     return overlay;
   }
 
+  // Open one channel's panel (null goes back to the list). The panel's heading takes focus so a keyboard user lands in it.
+  function setView(view) {
+    model.view = view;
+    render();
+    const panel = document.getElementById("connectionsPanel");
+    const target = panel && (view ? panel.querySelector(`[data-pane="${view}"] .cx-pane__title`) : panel.querySelector(".cx-chan"));
+    if (target) target.focus();
+    if (panel && panel.scrollIntoView) panel.scrollTop = 0;
+  }
+
   function render() {
     const panel = document.getElementById("connectionsPanel");
     if (!panel) return;
     const active = document.activeElement;
     const keep = panel.contains(active) ? active.getAttribute("data-cx") || active.getAttribute("data-action") : null;
-    panel.innerHTML = connectionsHtml(model);
+    panel.innerHTML = connectionsHtml(model, model.view);
     // a password typed before this redraw (a status answer arriving) is put back into the box; it is never written into the markup
     const held = [['[data-cxm="password"]', model.mail.form && model.mail.form.password], ['[data-cx="password"]', model.form.password]];
     for (const [sel, value] of held) {
@@ -607,10 +709,11 @@
     render();
     const title = document.getElementById("connectionsTitle");
     if (title) title.focus();
-    Promise.all([load(), loadMail()]).then(() => {
-      const target = card === "mail" && overlay.querySelector('[data-card="mail"]');
-      if (target && target.scrollIntoView) target.scrollIntoView({ block: "start" });
-    });
+    // a wide window starts on a channel (the one asked for, else Email); a phone starts on the list
+    const wide = root.matchMedia && root.matchMedia("(min-width: 820px)").matches;
+    model.view = card === "mail" ? "email" : card === "outreach" ? "outreach" : wide ? "email" : null;
+    render();
+    Promise.all([load(), loadMail()]);
   }
 
   function close() {

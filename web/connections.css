@@ -1,7 +1,7 @@
 /* Connections window (connections.js): the apps TenderFlow works with, one card each. Uses the app's theme tokens. */
 .cx-overlay { position: fixed; inset: 0; z-index: 1400; display: flex; align-items: flex-start; justify-content: center; padding: 56px 16px 16px; overflow-y: auto; background: rgba(15, 23, 42, 0.55); }
 .cx-overlay.hidden { display: none; }
-.cx-panel { width: 100%; max-width: 620px; padding: 18px 20px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); }
+.cx-panel { width: 100%; max-width: 940px; padding: 18px 20px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); }
 .cx-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
 .cx-title { margin: 0 0 2px; font-size: 18px; font-weight: 600; outline: none; }
 .cx-x { appearance: none; border: 0; background: transparent; color: var(--slate); font-size: 24px; line-height: 1; padding: 2px 8px; border-radius: 6px; cursor: pointer; }
@@ -66,3 +66,40 @@ select.cx-input { appearance: auto; }
 .cx-card--unavailable, .cx-card--none, .cx-card--loading { border-color: var(--line); }
 @media (max-width: 560px) { .cx-row { grid-template-columns: 1fr; } }
 .cx-cell { min-width: 0; }
+
+/* Hub: channel list on the left, the chosen channel on the right; one at a time on a phone */
+.cx-hub { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.cx-hub__list { display: grid; gap: 12px; }
+.cx-hub__empty { padding: 24px 8px; text-align: center; }
+.cx-progress { display: grid; gap: 6px; }
+.cx-progress__top { display: grid; gap: 2px; font-size: 13px; }
+.cx-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.cx-bar > i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.cx-reco { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+.cx-reco__txt { flex: 1 1 140px; min-width: 0; display: grid; gap: 2px; font-size: 13px; }
+.cx-chans { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.cx-chan { appearance: none; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; text-align: left; padding: 10px 12px; border: 0; border-top: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; cursor: pointer; }
+.cx-chan:first-child { border-top: 0; }
+.cx-chan:hover { background: var(--paper); }
+.cx-chan.is-on { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); box-shadow: inset 3px 0 0 var(--accent); }
+.cx-chan:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: -2px; }
+.cx-chan__txt { display: grid; gap: 1px; min-width: 0; }
+.cx-chan__name { font-weight: 600; font-size: 14px; }
+.cx-chan__via { font-size: 12px; color: var(--pos, #1b7a4b); overflow-wrap: anywhere; }
+.cx-req, .cx-opt { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.cx-req { color: var(--gold, #b0800a); }
+.cx-opt { color: var(--slate); }
+.cx-hub__detail { min-width: 0; display: grid; gap: 12px; }
+.cx-pane { display: grid; gap: 10px; min-width: 0; }
+.cx-pane[hidden] { display: none; }
+.cx-pane__title { margin: 0; font-size: 16px; font-weight: 600; outline: none; }
+.cx-back { display: none; appearance: none; align-items: center; gap: 6px; justify-self: start; border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; padding: 2px 0; }
+.cx-soon li { justify-content: space-between; }
+@media (max-width: 819px) {
+  .cx-hub { grid-template-columns: minmax(0, 1fr); }
+  .cx-hub--detail .cx-hub__list { display: none; }
+  .cx-hub:not(.cx-hub--detail) .cx-hub__detail { display: none; }
+  .cx-back { display: inline-flex; }
+  .cx-overlay { padding-top: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .cx-bar > i { transition: none; } }
