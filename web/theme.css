@@ -2234,3 +2234,13 @@ body.tf-shell #pipelineKindPills { display: inline-flex; gap: 4px; }
 .dash-acc__cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px 24px; }
 .dash-acc__coltitle { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted, #64748b); margin-bottom: 4px; }
 .dash-acc__head > span:first-child { flex: 0 0 auto; }
+
+/* Tender search bar: on desktop widths keep Clear all and the star on the same row; the chips shrink (and truncate) before anything wraps */
+@media (min-width: 900px) {
+  body.tf-shell #focusPillBar.tf-filterbar { flex-wrap: nowrap; }
+  body.tf-shell #focusPillBar .tf-keyword { flex: 1 1 220px; min-width: 180px; }
+  body.tf-shell #focusPillBar .tf-chip-wrap { flex: 0 1 auto; min-width: 0; }
+  body.tf-shell #focusPillBar .tf-chip { max-width: 100%; min-width: 0; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; }
+  body.tf-shell #focusPillBar .tf-clearall,
+  body.tf-shell #focusPillBar .tf-filterbar__actions { flex: none; }
+}
