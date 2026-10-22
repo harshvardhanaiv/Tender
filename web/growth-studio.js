@@ -10,7 +10,7 @@
 
   const byId = (id) => document.getElementById(id);
   const TABS = { signals: "gsTabSignals", campaigns: "gsTabCampaigns", builder: "gsTabBuilder", social: "gsTabSocial", calls: "gsTabCalls", inbox: "gsTabInbox", performance: "gsTabPerformance" };
-  const TYPE_CHOICES = { renewal: "Contract renewals", development: "New developments", engagement: "Market engagements" };
+  const TYPE_CHOICES = { renewal: "Contract renewals", development: "New developments", engagement: "Market engagements", funding: "Recently funded companies" };
   const STALE_MS = 5 * 60 * 1000;
   const PANES = { signals: "gsPaneSignals", campaigns: "gsPaneCampaigns", builder: "gsPaneBuilder", performance: "gsPanePerformance", social: "gsPaneSocial", calls: "gsPaneCalls", inbox: "gsPaneInbox" };
 

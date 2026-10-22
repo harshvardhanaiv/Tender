@@ -692,6 +692,107 @@ def create_entity_watchlist(cursor) -> None:
     cursor.execute("ALTER TABLE IF EXISTS pipeline ADD COLUMN IF NOT EXISTS added_from VARCHAR(40)")
 
 
+def create_grant_awards(cursor) -> None:
+    """Research and innovation grants from UKRI Gateway to Research (tender_app/gtr_import.py). Kept apart from
+    contract_awards on purpose: a grant is not a contract win, so it must never reach a supplier's contract
+    totals, win counts or the buyer league tables."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS grant_awards (
+            id              SERIAL PRIMARY KEY,
+            gtr_project_id  VARCHAR(64) NOT NULL UNIQUE,
+            supplier_id     INT REFERENCES suppliers(id) ON DELETE SET NULL,
+            supplier_name   TEXT NOT NULL,
+            name_key        TEXT NOT NULL,
+            company_number  VARCHAR(100),
+            postcode        VARCHAR(20),
+            region          VARCHAR(100),
+            website         TEXT,
+            funder          TEXT NOT NULL,
+            programme       TEXT,
+            title           TEXT NOT NULL,
+            abstract        TEXT,
+            status          VARCHAR(40),
+            value_gbp       NUMERIC,
+            start_date      VARCHAR(10),
+            end_date        VARCHAR(10),
+            project_ref     VARCHAR(40),
+            url             TEXT,
+            created_at      TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+        )
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_grant_awards_supplier ON grant_awards(supplier_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_grant_awards_name_key ON grant_awards(name_key)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_grant_awards_start ON grant_awards(start_date DESC)")
+
+
+def create_funding_opportunities(cursor) -> None:
+    """Open government grants from Find a Grant (tender_app/fag_import.py). A grant to apply for is not a
+    tender or an award, so it has its own table and never reaches search results or contract totals."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS funding_opportunities (
+            id           SERIAL PRIMARY KEY,
+            label        VARCHAR(300) NOT NULL UNIQUE,
+            name         TEXT NOT NULL,
+            funder       TEXT,
+            summary      TEXT,
+            min_award    NUMERIC,
+            max_award    NUMERIC,
+            total_award  NUMERIC,
+            locations    TEXT[] NOT NULL DEFAULT '{}',
+            applicants   TEXT[] NOT NULL DEFAULT '{}',
+            open_date    VARCHAR(10),
+            close_date   VARCHAR(10),
+            ongoing      BOOLEAN NOT NULL DEFAULT FALSE,
+            apply_url    TEXT,
+            eligibility  TEXT,
+            url          TEXT,
+            seen_at      TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+        )
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_funding_close ON funding_opportunities(close_date)")
+
+
+def create_charity_tables(cursor) -> None:
+    """The Charity Commission register (tender_app/charity_import.py) and which supplier is which charity."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS charity_register (
+            charity_number  INT PRIMARY KEY,
+            name            TEXT NOT NULL,
+            name_key        TEXT NOT NULL,
+            company_number  VARCHAR(20),
+            registered_on   VARCHAR(10),
+            income          NUMERIC,
+            expenditure     NUMERIC,
+            year_end        VARCHAR(10),
+            postcode        VARCHAR(20),
+            phone           TEXT,
+            email           TEXT,
+            website         TEXT,
+            is_cio          BOOLEAN NOT NULL DEFAULT FALSE,
+            activities      TEXT,
+            updated_at      TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+        )
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_charity_register_name_key ON charity_register(name_key)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_charity_register_company ON charity_register(company_number)")
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supplier_charity (
+            supplier_id     INT PRIMARY KEY REFERENCES suppliers(id) ON DELETE CASCADE,
+            charity_number  INT NOT NULL,
+            match_kind      VARCHAR(20) NOT NULL,
+            matched_at      TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+        )
+        """
+    )
+
+
 def create_growth_inbox_hidden(cursor) -> None:
     """Emails the user deleted from their Growth Studio inbox. Outreach's API has no way to erase a sent email or a reply,
     so deleting hides it here, for this user only, and can be undone (the row is removed)."""
@@ -848,6 +949,9 @@ def run_saas_migrations(conn: Any) -> None:
         create_supplier_contact_tables(cursor)
         create_buyer_contact_cache(cursor)
         create_entity_watchlist(cursor)
+        create_grant_awards(cursor)
+        create_charity_tables(cursor)
+        create_funding_opportunities(cursor)
         create_growth_services(cursor)
         conn.commit()
     except Exception:

@@ -16,6 +16,8 @@ from etenders_scraper.awards import (
     DEDUPED_AWARDS_CTE_SQL,
 )
 from tender_app.security import rate_limit
+from tender_app.grants import grants_for_supplier
+from tender_app.charities import charities_for_suppliers, charity_for_supplier
 from tender_app.geo import geo_radius_clause
 from tender_app.supplier_classifier import classify_supplier_real_data, is_known_large_enterprise
 from tender_app.ch_matcher import normalize_ch_company_number, is_valid_ch_company_number, calculate_name_similarity, clean_contact_field
@@ -469,12 +471,14 @@ _SME_IMPLAUSIBLE_TOTAL_GBP = 100_000_000
 def _shape_supplier_rows(cursor, raw_rows, sme_only: bool, vcse_only: bool) -> list[dict[str, Any]]:
     """Turn result rows into the API's supplier dicts (classification + contact clean-up)."""
     suppliers = []
-    for raw_r in raw_rows:
-        r = _row_to_dict(cursor, raw_r)
+    rows = [_row_to_dict(cursor, raw_r) for raw_r in raw_rows]
+    charities = charities_for_suppliers(cursor, [r.get("id") for r in rows])
+    for r in rows:
         cname = r.get("name", "")
         cnum = r.get("company_number", "")
         sme_st, vcse_st, _ = classify_supplier_real_data(
-            cname, cnum, scraped_sme=r.get("sme_status"), scraped_vcse=r.get("vcse_status")
+            cname, cnum, scraped_sme=r.get("sme_status"), scraped_vcse=r.get("vcse_status"),
+            registered_charity=r.get("id") in charities,
         )
         # A supplier with hundreds of millions of pounds of awards is not an SME (turnover cap about EUR 50m),
         # whatever a scraped flag says: Scott Aerospace showed "SME" beside GBP 2.33bn.
@@ -1137,10 +1141,12 @@ def get_supplier_detail(identifier: str):
             sim = calculate_name_similarity(identifier, sup_row.get("name", ""))
             name_match_confident = sim >= 0.85
 
+        charity = charity_for_supplier(cursor, sup_id)
         sme_st, vcse_st, _ = classify_supplier_real_data(
             sup_row.get("name"), cnum,
             scraped_sme=sup_row.get("sme_status"),
-            scraped_vcse=sup_row.get("vcse_status")
+            scraped_vcse=sup_row.get("vcse_status"),
+            registered_charity=charity is not None,
         )
 
         cnum_valid = normalize_ch_company_number(cnum)
@@ -1177,6 +1183,7 @@ def get_supplier_detail(identifier: str):
             "region": sup_row.get("region") or "UK",
             "sme_status": sme_st,
             "vcse_status": vcse_st,
+            "charity": charity,
             "created_at": str(sup_row.get("created_at", "")),
             "found_contacts": _cached_contacts(cursor, conn, sup_id) if name_match_confident else None,
         }
@@ -1314,6 +1321,8 @@ def get_supplier_detail(identifier: str):
                 "procurement_types": procurement_types
             },
             "awards": awards,
+            # Grants (UKRI Gateway to Research) sit beside the awards but are not in any figure above.
+            "grants": grants_for_supplier(cursor, sup_id, sup_row.get("name")),
             "attribution": OGL_V3_ATTRIBUTION
         })
     except Exception as ex:
@@ -1358,7 +1367,8 @@ def get_supplier_executive_summary(identifier: str):
         sme_st, vcse_st, _ = classify_supplier_real_data(
             sup.get("name"), cnum,
             scraped_sme=sup.get("sme_status"),
-            scraped_vcse=sup.get("vcse_status")
+            scraped_vcse=sup.get("vcse_status"),
+            registered_charity=charity_for_supplier(cursor, sup_id) is not None,
         )
         sup["sme_status"] = sme_st
         sup["vcse_status"] = vcse_st

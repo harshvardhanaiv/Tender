@@ -160,6 +160,15 @@ const renewal = (extra) => ({
   more_contracts: 2, target: { name: "Hinckley", key: "HINCKLEY", targetable: true, reason: null }, links: [{ label: "Award notice", url: "https://example.org/n/1" }],
   state: { dismissed: false, opted_out: false, campaigns: [] }, ...extra,
 });
+
+const funding = (extra) => ({
+  key: "funding:ACMEHEATINGLTD", type: "funding", badge: "Recently funded", buyer: "Acme Heating Ltd", authority: "South East · Funded by Innovate UK",
+  headline: "Acme Heating Ltd won £249,900 from Innovate UK for “Smart boiler controls”, starting 1 September 2026", detail: "“Smart boiler controls” (£249,900), Investment Accelerator.",
+  date: "2026-09-01", days: 51, fit: 71, band: "mid", fit_parts: [{ key: "recency", label: "Recency", points: 26, max: 30, note: "The newest grant started 7 weeks ago" }],
+  services: [], funding: { title: "Smart boiler controls", value: 249900, start: "2026-09-01", funder: "Innovate UK", programme: "Investment Accelerator", grants: 1 },
+  target: { name: "Acme Heating Ltd", key: "ACMEHEATINGLTD", targetable: true, reason: null }, links: [{ label: "Grant on UKRI Gateway to Research", url: "https://gtr.ukri.org/projects?ref=1" }],
+  state: { dismissed: false, opted_out: false, campaigns: [] }, ...extra,
+});
 const ctx = (extra) => ({ selected: [], expanded: [], ...extra });
 
 test("a renewal card shows the buyer, the headline, the fit and what you can do", () => {
@@ -419,6 +428,19 @@ test("funnel bars: a small count is still visible and an empty step is empty", (
 
 // ── runner ────────────────────────────────────────────────────────────────────────────────────
 let failed = 0;
+test("a recently funded card names the company, the funder and the grant, and starts a campaign", () => {
+  const html = V.signalCard(funding(), ctx());
+  has(html, "gs-signal--funding", "Recently funded", "Acme Heating Ltd", "South East · Funded by Innovate UK", "won £249,900 from Innovate UK", "Start campaign →",
+    "https://gtr.ukri.org/projects?ref=1", "Fit <b>71%</b>");
+  noMarkup(V.signalCard(funding({ buyer: EVIL, headline: EVIL, detail: EVIL, links: [{ label: EVIL, url: "javascript:alert(1)" }] }), ctx()));
+});
+
+test("recently funded is off in the default filters but can be chosen", () => {
+  assert.deepEqual(V.defaultFilters({}).types, ["renewal", "development", "engagement"]);
+  assert.equal(V.countsLine({ counts: { funding: 3 }, shown_by_type: { funding: 3 } }), "3 recently funded companies");
+  assert.equal(V.countsLine({ counts: { funding: 1, renewal: 2 }, shown_by_type: { funding: 1, renewal: 2 } }), "2 renewals · 1 recently funded company");
+});
+
 for (const [name, fn] of tests) {
   try {
     fn();

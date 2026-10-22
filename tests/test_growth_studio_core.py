@@ -402,7 +402,7 @@ def test_user_state_is_applied_without_changing_the_cached_signals():
 
 def test_filters_from_validates_and_round_trips():
     f = gs.filters_from({"preset": "housing-repairs-gas"})
-    assert (f.types, f.days, f.authority, f.where, f.frameworks) == (gs.SIGNAL_TYPES, 180, "all", "", True)
+    assert (f.types, f.days, f.authority, f.where, f.frameworks) == (gs.DEFAULT_SIGNAL_TYPES, 180, "all", "", True)
     f = gs.filters_from({"category": "housing-repairs-gas", "types": "engagement,renewal", "days": "90", "authority": "london-borough",
                          "where": "  Camden   Council ", "frameworks": "0"})
     assert f.types == ("renewal", "engagement"), "types come back in the fixed order"

@@ -1,0 +1,30 @@
+/* Funding page: open government grants (funding.js) */
+#fundingModal .funding-page { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.funding-body { flex: 1 1 0; min-height: 0; overflow: auto; padding: 16px 24px 32px; }
+.funding-soon { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.funding-meta { margin: 0 0 12px; color: var(--muted, #5b6472); font-size: 14px; }
+.funding-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); }
+.funding-list[aria-busy="true"] { opacity: 0.55; }
+.funding-card { background: var(--panel, #fff); border: 1px solid var(--line, #dfe3ea); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.funding-card__top { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.funding-card__name { margin: 0; font-size: 16px; line-height: 1.3; }
+.funding-card__award { white-space: nowrap; font-weight: 600; font-size: 14px; }
+.funding-card__funder { color: var(--muted, #5b6472); font-size: 13px; }
+.funding-card__tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.funding-tag, .funding-fit { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--paper, #f3f5f8); border: 1px solid var(--line, #dfe3ea); }
+.funding-tag--open { background: #e6f4ea; border-color: #b7dcc2; color: #1e6b3a; }
+.funding-tag--soon { background: #fdecea; border-color: #f2b8b5; color: #a12622; }
+.funding-fit--high { background: #e6f4ea; border-color: #b7dcc2; color: #1e6b3a; }
+.funding-fit--mid { background: #fff4d6; border-color: #ecd27f; color: #7a5a00; }
+.funding-card__summary { margin: 0; font-size: 14px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.funding-card__facts { margin: 0; display: grid; gap: 4px; font-size: 13px; }
+.funding-card__facts div { display: flex; gap: 8px; }
+.funding-card__facts dt { color: var(--muted, #5b6472); min-width: 96px; }
+.funding-card__facts dd { margin: 0; }
+.funding-card__actions { display: flex; align-items: center; gap: 14px; margin-top: auto; padding-top: 4px; }
+.funding-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; }
+.funding-attribution { margin: 20px 0 0; font-size: 12px; color: var(--muted, #5b6472); max-width: 760px; }
+@media (max-width: 640px) {
+  .funding-body { padding: 12px 16px 28px; }
+  .funding-card__top { flex-direction: column; gap: 4px; }
+}

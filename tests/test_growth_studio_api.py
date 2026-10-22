@@ -399,7 +399,7 @@ def test_renewal_signals_follow_the_fixtures():
     st, r = get_signals(c, profile_id=FIXTURE_IDS["A1"])
     assert st == 200
     assert [s["buyer"] for s in r["signals"]] == [ALPHA, GAMMA, BETA], "best fit first"
-    assert r["counts"] == {"renewal": 3, "development": 0, "engagement": 0, "total": 3, "dismissed": 0}
+    assert r["counts"] == {"renewal": 3, "development": 0, "engagement": 0, "funding": 0, "total": 3, "dismissed": 0}
     assert r["total"] == r["shown"] == 3 and r["profile"] == {"id": FIXTURE_IDS["A1"], "name": "ZZ Growth Profile One", "has_description": True}
     assert r["filters"]["category"]["preset"] == "housing-repairs-gas" and r["filters"]["authority_label"] == "All public bodies"
     alpha, gamma, beta = r["signals"]
@@ -471,7 +471,7 @@ def test_development_signals_follow_the_fixtures():
     reset_limits()
     c = client(USER_A)
     st, r = get_signals(c, types="development")
-    assert st == 200 and r["counts"] == {"renewal": 0, "development": 3, "engagement": 0, "total": 3, "dismissed": 0}
+    assert st == 200 and r["counts"] == {"renewal": 0, "development": 3, "engagement": 0, "funding": 0, "total": 3, "dismissed": 0}
     keys = [s["key"] for s in r["signals"]]
     assert keys == ["development:zz_growth_test_1", "development:zz_growth_test_8", "development:zz_growth_test_2"], \
         "screening opinion, undecided, minor works, small and stale schemes are all left out"
@@ -549,12 +549,12 @@ def test_each_signal_type_is_capped_on_its_own():
     a = client(USER_A)
     st, r = get_signals(a, types="renewal,development,engagement")
     assert st == 200 and r["counts"]["renewal"] == 3 and r["counts"]["development"] == 3 and r["counts"]["engagement"] == 1
-    assert r["shown_by_type"] == {"renewal": 3, "development": 3, "engagement": 1} and r["shown"] == r["total"] == 7
+    assert r["shown_by_type"] == {"renewal": 3, "development": 3, "engagement": 1, "funding": 0} and r["shown"] == r["total"] == 7
     original = gs.MAX_PER_TYPE
     try:
         gs.MAX_PER_TYPE = 2
         st, r = get_signals(a, types="renewal,development,engagement")
-        assert r["shown_by_type"] == {"renewal": 2, "development": 2, "engagement": 1}
+        assert r["shown_by_type"] == {"renewal": 2, "development": 2, "engagement": 1, "funding": 0}
         assert r["shown"] == 5 == len(r["signals"]) and r["total"] == 7
         assert r["counts"]["renewal"] == 3, "counts are of everything, not of what is shown"
         assert [s["fit"] for s in r["signals"]] == sorted((s["fit"] for s in r["signals"]), reverse=True)

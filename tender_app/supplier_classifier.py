@@ -91,7 +91,8 @@ def classify_supplier_real_data(
     company_number: str | None = None,
     ch_data: dict[str, Any] | None = None,
     scraped_sme: str | None = None,
-    scraped_vcse: str | None = None
+    scraped_vcse: str | None = None,
+    registered_charity: bool = False,
 ) -> Tuple[str, str, str]:
     """
     Classifies a supplier's SME and VCSE status based on verified criteria.
@@ -109,7 +110,8 @@ def classify_supplier_real_data(
         
     # 2. Inspect VCSE status
     company_type = str(ch_data.get("company_type") or "").lower()
-    is_vcse = is_known_vcse(comp_name, company_number, company_type)
+    # A supplier found on the Charity Commission register (tender_app/charity_import.py) is VCSE by definition.
+    is_vcse = registered_charity or is_known_vcse(comp_name, company_number, company_type)
     vcse_status = "VCSE" if is_vcse else ("Non-VCSE" if comp_name else "Unclassified")
 
     # 3. Companies House / Real Accounts Data Inspection

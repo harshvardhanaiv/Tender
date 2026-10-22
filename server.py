@@ -83,6 +83,7 @@ from tender_app.blueprints.buyers_bp import buyers_bp, init_buyers_blueprint
 from tender_app.blueprints.planning_bp import init_planning_blueprint
 from tender_app.blueprints.market_radar_bp import init_market_radar_blueprint
 from tender_app.blueprints.market_engagement_bp import init_market_engagement_blueprint
+from tender_app.blueprints.funding_bp import init_funding_blueprint
 from tender_app.blueprints.growth_bp import init_growth_blueprint
 from tender_app.blueprints.email_bp import init_email_blueprint
 from tender_app.blueprints.watchlist_bp import init_watchlist_blueprint
@@ -3050,6 +3051,11 @@ def create_app() -> Flask:
         except Exception as _pl_err:
             print("Warning: Could not start planning leads harvester:", _pl_err)
         try:
+            from tender_app.fag_import import start_funding_scheduler
+            start_funding_scheduler(get_db_connection)
+        except Exception as _fg_err:
+            print("Warning: Could not start the Funding refresh:", _fg_err)
+        try:
             # Contracts Finder has no keyword filter, so every search scans its whole feed
             # (minutes). Warm that cache at startup and keep it warm, otherwise the first search
             # after a deploy or a quiet spell sits at "1 of 3 portals finished" while it scans.
@@ -3077,6 +3083,7 @@ def create_app() -> Flask:
     app.register_blueprint(init_planning_blueprint(get_db_connection))
     app.register_blueprint(init_email_blueprint(get_db_connection))
     app.register_blueprint(init_watchlist_blueprint(get_db_connection))
+    app.register_blueprint(init_funding_blueprint(get_db_connection))
     if ENABLE_BUYER_WORKSPACE:
         app.register_blueprint(init_market_radar_blueprint(get_db_connection))
         app.register_blueprint(init_market_engagement_blueprint(get_db_connection))
