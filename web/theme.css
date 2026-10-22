@@ -2207,3 +2207,9 @@ i.planning-pin__key { display: inline-block; width: 10px; height: 10px; border-r
 .dash-card__kind { font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
 .dash-kanban--single { grid-template-columns: minmax(0, 1fr) !important; }
 body.tf-shell #pipelineKindPills { display: inline-flex; gap: 4px; }
+
+.dash-acc__head { flex-wrap: wrap; justify-content: flex-start; gap: 6px 18px; }
+.dash-acc__part { display: inline-flex; align-items: center; gap: 6px; }
+.dash-acc__cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px 24px; }
+.dash-acc__coltitle { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted, #64748b); margin-bottom: 4px; }
+.dash-acc__head > span:first-child { flex: 0 0 auto; }

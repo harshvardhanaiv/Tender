@@ -7465,7 +7465,7 @@ function pipelineItemDeep(item) {
 let _pipelineShowAllHighFit = false;
 
 let _pipelineKind = "all";            // all | tender | buyer | supplier
-const _pipelineAccOpen = { deadlines: null, highfit: null };   // null = not chosen yet: the first section with something in it opens
+const _pipelineAccOpen = { all: true };   // open until the user closes it
 
 // Buyers and suppliers on the global watchlist (web/watchlist.js) that the board's search and kind filter let through.
 function pipelineEntities(searchQuery, portalFilter) {
@@ -7488,18 +7488,16 @@ function pipelineEntityCardHtml(w) {
   </div>`;
 }
 
-// One accordion for the lists above the board. Each part opens and closes on its own and remembers its state while the page is open.
+// One accordion (one row) for every list above the board. The summary shows each part's count; the body lays the parts side by side.
 function pipelineAccordionHtml(parts) {
   const shown = parts.filter((p) => p.count > 0);
   if (!shown.length) return "";
-  const firstId = shown[0].id;
-  return `<div class="dash-section dash-acc-wrap">` + shown.map((p) => {
-    const chosen = _pipelineAccOpen[p.id];
-    const open = chosen == null ? p.id === firstId : chosen;
-    return `<details class="dash-acc" data-acc="${p.id}"${open ? " open" : ""}>
-      <summary class="dash-acc__head"><span>${p.title}</span><span class="dash-acc__count">${p.count}</span></summary>
-      <div class="dash-acc__body">${p.html}</div></details>`;
-  }).join("") + `</div>`;
+  const open = _pipelineAccOpen.all === true;
+  const summary = shown.map((p) => `<span class="dash-acc__part">${p.title} <span class="dash-acc__count">${p.count}</span></span>`).join("");
+  return `<div class="dash-section dash-acc-wrap"><details class="dash-acc" data-acc="all"${open ? " open" : ""}>
+    <summary class="dash-acc__head">${summary}</summary>
+    <div class="dash-acc__body dash-acc__cols">${shown.map((p) => `<div class="dash-acc__col"><div class="dash-acc__coltitle">${p.title}</div>${p.html}</div>`).join("")}</div>
+  </details></div>`;
 }
 
 function renderPipelineBoard() {
@@ -7564,7 +7562,21 @@ function renderPipelineBoard() {
     .filter(i => i.fit_score != null && i.fit_score >= 60)
     .sort((a, b) => (b.fit_score || 0) - (a.fit_score || 0));
 
-  const statsHtml = `
+  const entityOnlyView = _pipelineKind === "buyer" || _pipelineKind === "supplier";
+  const weekAgo = now - 7 * 864e5;
+  const entityStatsHtml = `
+    <div class="dash-stats">
+      <div class="dash-stat"><span class="dash-stat__num">${entities.length}</span><span class="dash-stat__label">Watched ${_pipelineKind === "buyer" ? "buyers" : "suppliers"}</span></div>
+      <div class="dash-stat"><span class="dash-stat__num">${entities.filter(w => Date.parse(w.created_at) >= weekAgo).length}</span><span class="dash-stat__label">Added in 7 days</span></div>
+      <div class="dash-stat"><span class="dash-stat__num">${new Set(entities.map(w => w.added_from_label)).size}</span><span class="dash-stat__label">Sources</span></div>
+      <div class="dash-stat"><span class="dash-stat__num">${entities.filter(w => w.note).length}</span><span class="dash-stat__label">With notes</span></div>
+    </div>`;
+  const recentEntities = entities.slice().sort((a, b) => Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0)).slice(0, 5);
+  const entityListHtml = recentEntities.length ? `<div class="dash-list">${recentEntities.map(w => `
+      <button type="button" class="dash-list__item" data-open-watched="1" data-kind="${esc(w.kind)}" data-key="${esc(w.entity_key)}" data-name="${esc(w.name)}">
+        <span class="dash-list__info"><span class="dash-list__title">${esc(displayName(w.name))}</span><span class="dash-list__meta">+ ${esc(w.added_from_label)}</span></span>
+      </button>`).join("")}</div>` : "";
+  const statsHtml = entityOnlyView ? entityStatsHtml : `
     <div class="dash-stats">
       <div class="dash-stat"><span class="dash-stat__num">${items.length}</span><span class="dash-stat__label">Tracked</span></div>
       <div class="dash-stat dash-stat--urgent"><span class="dash-stat__num">${urgent.filter(i => i.daysLeft <= 7).length}</span><span class="dash-stat__label">Deadline ≤7 days</span></div>
@@ -7600,10 +7612,12 @@ function renderPipelineBoard() {
             </span>
           </button>`).join("")}
       </div>` : "";
-  const accordionHtml = pipelineAccordionHtml([
-    { id: "deadlines", title: "⏰ Upcoming deadlines", count: urgent.length, html: urgentHtml },
-    { id: "highfit", title: `🎯 High-fit tracked tenders`, count: highFit.length, html: highFitHtml },
-  ]);
+  const accordionHtml = pipelineAccordionHtml(entityOnlyView
+    ? [{ id: "recent", title: "🕒 Recently watched", count: recentEntities.length, html: entityListHtml }]
+    : [
+      { id: "deadlines", title: "⏰ Upcoming deadlines", count: urgent.length, html: urgentHtml },
+      { id: "highfit", title: "🎯 High-fit tracked tenders", count: highFit.length, html: highFitHtml },
+    ]);
 
   const colsHtml = PIPELINE_STAGES.map(stage => {
     const stageItems = items.filter(i => i.stage === stage);
