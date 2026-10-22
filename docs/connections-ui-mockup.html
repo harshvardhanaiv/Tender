@@ -1,0 +1,262 @@
+<title>Connections Hub Mockup</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one compact row per channel; a right-hand panel does the connecting; Outreach is a single banner, not a tile in every channel. */
+:root {
+  --bg: #f4f6f8; --panel: #ffffff; --ink: #14212b; --mute: #5b6b78; --line: #dde3e8;
+  --accent: #0f766e; --accent-ink: #ffffff; --accent-soft: #e0f2ef;
+  --good: #15803d; --good-soft: #e3f4e8; --warn: #a16207; --warn-soft: #fbf0d6; --bad: #b91c1c;
+  --nav: #0d1b2a; --shadow: 0 10px 40px rgba(13,27,42,.18);
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e171f; --panel: #16222c; --ink: #e8eef2; --mute: #93a4b1; --line: #263642;
+  --accent: #2dd4bf; --accent-ink: #062a26; --accent-soft: #12362f;
+  --good: #4ade80; --good-soft: #14321f; --warn: #facc15; --warn-soft: #3a3010; --bad: #f87171;
+  --nav: #08111a; --shadow: 0 10px 40px rgba(0,0,0,.5); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0e171f; --panel: #16222c; --ink: #e8eef2; --mute: #93a4b1; --line: #263642;
+  --accent: #2dd4bf; --accent-ink: #062a26; --accent-soft: #12362f;
+  --good: #4ade80; --good-soft: #14321f; --warn: #facc15; --warn-soft: #3a3010; --bad: #f87171;
+  --nav: #08111a; --shadow: 0 10px 40px rgba(0,0,0,.5); color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.wrap { max-width: 880px; margin: 0 auto; padding-block: 24px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 18px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -.01em; }
+h2 { font-size: 15px; margin: 0; }
+p { margin: 0; }
+.sub { color: var(--mute); max-width: 62ch; }
+.tag { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--mute); }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 7px 13px; font-weight: 600; min-height: 34px; }
+.btn:hover { border-color: var(--mute); }
+.btn--primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn--primary:hover { filter: brightness(1.06); }
+.btn--danger { color: var(--bad); }
+.btn[disabled] { opacity: .5; cursor: not-allowed; }
+
+/* progress */
+.progress { display: grid; gap: 8px; }
+.progress__top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+
+/* outreach banner */
+.reco { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 12px; padding: 14px 16px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.reco__txt { flex: 1 1 280px; min-width: 0; display: grid; gap: 2px; }
+.reco__covers { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.pill { font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); }
+
+/* channel rows */
+.list { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto auto; gap: 14px; align-items: center; padding: 14px 16px; border-top: 1px solid var(--line); }
+.row:first-child { border-top: 0; }
+.ico { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; color: #fff; font-size: 14px; }
+.row__name { font-weight: 700; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row__sub { color: var(--mute); font-size: 12.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--bg); color: var(--mute); white-space: nowrap; }
+.chip i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chip--ok { background: var(--good-soft); color: var(--good); }
+.chip--warn { background: var(--warn-soft); color: var(--warn); }
+.req { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--warn); }
+.opt { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--mute); }
+
+.health { grid-column: 2 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.health > div { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 2px; }
+.health b { font-size: 11px; letter-spacing: .05em; color: var(--mute); }
+
+/* drawer */
+.scrim { position: fixed; inset: 0; background: rgba(8,17,26,.45); z-index: 20; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100%); background: var(--panel); border-left: 1px solid var(--line); box-shadow: var(--shadow); z-index: 21; display: grid; grid-template-rows: auto 1fr auto; padding-top: env(safe-area-inset-top, 0px); padding-right: env(safe-area-inset-right, 0px); animation: slide .18s ease-out; }
+@keyframes slide { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .drawer { animation: none; } .bar > i { transition: none; } }
+.drawer__head { padding: 16px 18px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: center; }
+.drawer__head h2 { flex: 1; font-size: 17px; }
+.x { border: 0; background: none; font-size: 22px; line-height: 1; color: var(--mute); padding: 4px 8px; }
+.drawer__body { padding: 16px 18px; overflow: auto; display: grid; gap: 14px; align-content: start; }
+.drawer__foot { padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.opts { display: grid; gap: 8px; }
+.opt-card { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px; align-items: center; text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 10px 12px; }
+.opt-card[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.opt-card .ico { width: 32px; height: 32px; font-size: 12px; border-radius: 8px; }
+.opt-card b { display: block; }
+.opt-card span.s { color: var(--mute); font-size: 12.5px; }
+.radio { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); }
+.opt-card[aria-checked="true"] .radio { border-color: var(--accent); background: radial-gradient(var(--accent) 45%, transparent 50%); }
+.form { display: grid; gap: 10px; }
+.f { display: grid; gap: 4px; font-weight: 600; font-size: 12.5px; }
+.f input, .f select { font: inherit; font-weight: 400; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); min-width: 0; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.note { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--bg); }
+.note ul { margin: 6px 0 0; padding-left: 18px; }
+.meta { color: var(--mute); font-size: 12.5px; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.tab { border: 0; background: none; padding: 8px 10px; font-weight: 600; color: var(--mute); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; }
+.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--nav); color: #fff; padding: 10px 16px; border-radius: 10px; z-index: 30; box-shadow: var(--shadow); max-width: calc(100% - 32px); }
+
+@media (max-width: 640px) {
+  .row { grid-template-columns: 40px minmax(0, 1fr); }
+  .row .chip, .row > .btn { grid-column: 2; justify-self: start; }
+  .row > .btn { margin-top: -4px; }
+  .drawer { top: auto; height: 88%; width: 100%; border-left: 0; border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; animation: none; }
+}
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:6px">
+    <span class="tag">Mock-up · Growth Studio</span>
+    <h1>Connections</h1>
+    <p class="sub">Connect the tools Growth Studio uses to send, call and post. Start with email; the rest are optional. Click any button to try the panel.</p>
+  </header>
+
+  <section class="progress" aria-label="Setup progress">
+    <div class="progress__top"><b id="progText">0 of 5 connected</b><span class="meta" id="progHint">Connect email first so campaigns can be sent.</span></div>
+    <div class="bar"><i id="progBar" style="width:0%"></i></div>
+  </section>
+
+  <section class="reco" id="reco"></section>
+
+  <section class="list" id="rows" aria-label="Channels"></section>
+</div>
+
+<div id="layer"></div>
+<div id="toast" class="toast" hidden></div>
+
+<script>
+const CHANNELS = [
+  { id: "email", name: "Email", mono: "@", color: "#0f766e", need: true, unlock: "Send campaign emails and follow-ups, and read replies.", providers: [
+    { id: "google", name: "Gmail / Google Workspace", how: "Sign in with Google", kind: "oauth", color: "#2563eb", mono: "G", scopes: ["Send email as you", "Read replies to emails sent from Growth Studio"] },
+    { id: "microsoft", name: "Outlook / Microsoft 365", how: "Sign in with Microsoft", kind: "oauth", color: "#0e7490", mono: "M", scopes: ["Send email as you", "Read replies to emails sent from Growth Studio"] },
+    { id: "smtp", name: "Other email provider", how: "Mail server details", kind: "smtp", color: "#6b7280", mono: "@" }
+  ]},
+  { id: "calls", name: "Calls", mono: "☎", color: "#b45309", unlock: "Run call steps in campaigns and log the outcome.", providers: [
+    { id: "aircall", name: "Aircall", how: "Sign in with Aircall", kind: "oauth", color: "#0f766e", mono: "A", scopes: ["Place calls from your Aircall numbers", "Read call outcomes"] },
+    { id: "twilio", name: "Twilio", how: "Account SID and API key", kind: "key", color: "#b91c1c", mono: "T" },
+    { id: "manual", name: "I'll make calls myself", how: "Call steps become tasks in your Inbox", kind: "manual", color: "#6b7280", mono: "Me" }
+  ]},
+  { id: "social", name: "Social", mono: "in", color: "#1d4ed8", unlock: "Schedule and publish company posts after you approve them.", providers: [
+    { id: "linkedin", name: "LinkedIn page", how: "Sign in with LinkedIn", kind: "oauth", color: "#1d4ed8", mono: "in", scopes: ["Post to the company pages you manage", "Read post engagement"] },
+    { id: "buffer", name: "Buffer", how: "Sign in with Buffer", kind: "oauth", color: "#374151", mono: "B", scopes: ["Add posts to your Buffer queue"] }
+  ]},
+  { id: "meetings", name: "Calendar", mono: "31", color: "#7c3aed", unlock: "Add a booking link to messages and spot booked meetings.", providers: [
+    { id: "gcal", name: "Google Calendar", how: "Sign in with Google", kind: "oauth", color: "#2563eb", mono: "G", scopes: ["See when you are free", "Create events for booked meetings"] },
+    { id: "calendly", name: "Calendly", how: "Sign in with Calendly", kind: "oauth", color: "#1d4ed8", mono: "C", scopes: ["Use your booking links", "See meetings booked through them"] }
+  ]},
+  { id: "crm", name: "CRM", mono: "◎", color: "#c2410c", unlock: "Copy contacts, activity and deals to your CRM.", providers: [
+    { id: "hubspot", name: "HubSpot", how: "Sign in with HubSpot", kind: "oauth", color: "#c2410c", mono: "H", scopes: ["Create and update contacts", "Log emails, calls and meetings"] },
+    { id: "pipedrive", name: "Pipedrive", how: "Sign in with Pipedrive", kind: "oauth", color: "#15803d", mono: "P", scopes: ["Create people and organisations", "Log activity"] }
+  ]}
+];
+const OUTREACH_COVERS = ["email", "calls", "social"];
+const S = { conn: {}, outreach: false, panel: null, pick: null, tab: "signin", consent: false };
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const chan = (id) => CHANNELS.find((c) => c.id === id);
+function connectedName(c) {
+  if (S.conn[c.id]) return c.providers.find((p) => p.id === S.conn[c.id]).name;
+  if (S.outreach && OUTREACH_COVERS.includes(c.id)) return "Outreach";
+  return null;
+}
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 2600); }
+
+function render() {
+  const done = CHANNELS.filter(connectedName).length;
+  $("progText").textContent = `${done} of ${CHANNELS.length} connected`;
+  $("progBar").style.width = `${(done / CHANNELS.length) * 100}%`;
+  $("progHint").textContent = connectedName(chan("email")) ? (done === CHANNELS.length ? "Everything is connected." : "Email is ready. The others are optional.") : "Connect email first so campaigns can be sent.";
+
+  $("reco").innerHTML = S.outreach
+    ? `<div class="ico" style="background:#1f6b4a">O</div><div class="reco__txt"><b>Outreach is connected</b><span class="meta">Live mode · email, calls and social run through it unless you pick another app below.</span></div><button class="btn" data-act="outreach">Manage</button>`
+    : `<div class="ico" style="background:#1f6b4a">O</div><div class="reco__txt"><b>Recommended: connect Outreach once</b><span class="meta">One sign-in covers all three channels below.</span><div class="reco__covers"><span class="pill">Email</span><span class="pill">AI calls</span><span class="pill">Social posts</span></div></div><button class="btn btn--primary" data-act="outreach">Connect Outreach</button>`;
+
+  $("rows").innerHTML = CHANNELS.map((c) => {
+    const name = connectedName(c);
+    const via = S.outreach && !S.conn[c.id] && OUTREACH_COVERS.includes(c.id);
+    const health = c.id === "email" && name
+      ? `<div class="health"><div><b>SPF</b><span class="chip chip--ok"><i></i>Passes</span></div><div><b>DKIM</b><span class="chip chip--ok"><i></i>Passes</span></div><div><b>DMARC</b><span class="chip chip--warn"><i></i>Not set</span></div><div><b>Daily limit</b><span>50 emails</span></div></div>` : "";
+    return `<div class="row">
+      <div class="ico" style="background:${c.color}" aria-hidden="true">${esc(c.mono)}</div>
+      <div style="min-width:0"><div class="row__name">${c.name}${c.need ? '<span class="req">Needed to send</span>' : '<span class="opt">Optional</span>'}</div><div class="row__sub">${esc(c.unlock)}</div></div>
+      ${name ? `<span class="chip chip--ok"><i></i>${esc(name)}${via ? " (via Outreach)" : ""}</span>` : `<span class="chip">Not connected</span>`}
+      <button class="btn ${name ? "" : "btn--primary"}" data-act="open" data-id="${c.id}">${name ? "Manage" : "Connect"}</button>
+      ${health}
+    </div>`;
+  }).join("");
+}
+
+function ico(p, small) { return `<span class="ico" style="background:${p.color}" aria-hidden="true">${esc(p.mono)}</span>`; }
+
+function panelBody(c) {
+  const cur = S.conn[c.id];
+  const opts = c.providers.map((p) => `<button type="button" class="opt-card" role="radio" aria-checked="${S.pick === p.id}" data-act="pick" data-id="${p.id}">${ico(p)}<span><b>${esc(p.name)}</b><span class="s">${cur === p.id ? "Connected" : esc(p.how)}</span></span><i class="radio"></i></button>`).join("");
+  const p = c.providers.find((x) => x.id === S.pick);
+  let form = "";
+  if (p) {
+    if (cur === p.id) form = `<div class="note"><b>Connected</b><div class="meta">Checked just now. TenderFlow can only do what you approved. Disconnect any time.</div></div>`;
+    else if (p.kind === "oauth") form = `<div class="note"><b>TenderFlow will be able to:</b><ul>${p.scopes.map((s) => `<li>${esc(s)}</li>`).join("")}</ul></div><p class="meta">You go to ${esc(p.name.split(" ")[0])} to approve, then come straight back. TenderFlow never sees your password.</p>`;
+    else if (p.kind === "smtp") form = `<div class="form"><div class="two"><label class="f" for="m1">Send from this address<input id="m1" placeholder="you@company.co.uk"></label><label class="f" for="m2">Your name<input id="m2" value="Courtney"></label></div><label class="f" for="m3">Password or app password<input id="m3" type="password" autocomplete="off"></label><div class="two"><label class="f" for="m4">Outgoing server (SMTP)<input id="m4" placeholder="smtp.yourprovider.com"></label><label class="f" for="m5">Port<select id="m5"><option>465 · SSL/TLS</option><option>587 · STARTTLS</option></select></label></div><label class="f" for="m6">Incoming server for replies (IMAP)<input id="m6" placeholder="imap.yourprovider.com"></label><p class="meta">TenderFlow checks the login with your mail server before keeping anything.</p></div>`;
+    else if (p.kind === "key") form = `<div class="form"><label class="f" for="k1">Account SID<input id="k1" autocomplete="off"></label><label class="f" for="k2">API key<input id="k2" type="password" autocomplete="off"></label><label class="f" for="k3">Number to call from<input id="k3" placeholder="+44 20 7946 0000"></label><p class="meta">Details are checked, then kept encrypted. They are never shown again.</p></div>`;
+    else form = `<p class="sub">Call steps become tasks in your Inbox with the buyer's number and talking points. Call from your own phone, then log the outcome.</p>`;
+  }
+  const unavailable = "";
+  return `<p class="sub">${esc(c.unlock)}</p><div class="opts" role="radiogroup" aria-label="Choose an app">${opts}</div>${form}${unavailable}`;
+}
+
+function outreachBody() {
+  if (S.outreach) return `<div class="note"><b>Connected as courtney@priorityplumbing.co.uk</b><div class="meta">Live mode: sends for real. 2 mailboxes · 1 phone number · 2 social channels · 340 credits.</div></div><p class="meta">Campaigns use Outreach for email, calls and social unless you pick another app for a channel.</p>`;
+  const tabs = [["signin", "Sign in"], ["create", "Create account"], ["key", "API key"]];
+  const body = { signin: `<div class="form"><label class="f" for="o1">Outreach email<input id="o1" autocomplete="off"></label><label class="f" for="o2">Password<input id="o2" type="password" autocomplete="off"></label><p class="meta">Your password goes straight to Outreach. TenderFlow does not keep it.</p></div>`,
+    create: `<div class="form"><div class="two"><label class="f" for="o3">Company<input id="o3" value="Priority Plumbing Services Limited"></label><label class="f" for="o4">Work email<input id="o4" placeholder="you@company.co.uk"></label></div><p class="meta">Outreach sends a confirmation email. Your TenderFlow profile is copied across.</p></div>`,
+    key: `<div class="form"><label class="f" for="o5">Outreach API key<input id="o5" autocomplete="off" placeholder="Paste the key from Outreach"></label><p class="meta">Use a test key to try it: nothing is sent or charged. The key is encrypted and never shown again.</p></div>` }[S.tab];
+  return `<div class="tabs" role="tablist">${tabs.map(([id, n]) => `<button class="tab" role="tab" aria-selected="${S.tab === id}" data-act="otab" data-id="${id}">${n}</button>`).join("")}</div>${body}<label class="check" for="oc"><input id="oc" type="checkbox" data-act="consent" ${S.consent ? "checked" : ""}><span>I agree to connect Outreach to TenderFlow so it can send email, post and make calls for me. I can disconnect at any time.</span></label>`;
+}
+
+function openPanel(kind, id) {
+  S.panel = { kind, id };
+  if (kind === "channel") { const c = chan(id); S.pick = S.conn[id] || c.providers[0].id; }
+  if (kind === "outreach") { S.tab = "signin"; S.consent = false; }
+  paintPanel();
+}
+function paintPanel() {
+  if (!S.panel) { $("layer").innerHTML = ""; return; }
+  const out = S.panel.kind === "outreach";
+  const c = out ? null : chan(S.panel.id);
+  const title = out ? "Outreach" : c.name;
+  const p = out ? null : c.providers.find((x) => x.id === S.pick);
+  const connected = out ? S.outreach : (p && S.conn[c.id] === p.id);
+  const primary = connected ? "" : out ? `<button class="btn btn--primary" data-act="doConnect" ${S.consent ? "" : "disabled"}>Sign in and connect</button>`
+    : `<button class="btn btn--primary" data-act="doConnect">${p.kind === "oauth" ? "Continue to " + esc(p.name.split(" ")[0]) : p.kind === "manual" ? "Use this" : "Check and connect"}</button>`;
+  const secondary = connected ? `<button class="btn btn--danger" data-act="doDisconnect">Disconnect</button>${out ? "" : '<button class="btn" data-act="doTest">Send a test</button>'}` : "";
+  $("layer").innerHTML = `<div class="scrim" data-act="close"></div><aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="dt">
+    <div class="drawer__head">${out ? '<span class="ico" style="background:#1f6b4a">O</span>' : `<span class="ico" style="background:${c.color}">${esc(c.mono)}</span>`}<h2 id="dt">${out ? "Connect Outreach" : "Connect " + esc(title)}</h2><button class="x" data-act="close" aria-label="Close">×</button></div>
+    <div class="drawer__body">${out ? outreachBody() : panelBody(c)}</div>
+    <div class="drawer__foot"><button class="btn" data-act="close">Close</button>${secondary}${primary}</div></aside>`;
+  const first = $("layer").querySelector("button.opt-card, input, .tab"); if (first) first.focus({ preventScroll: true });
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-act]"); if (!t) return;
+  const a = t.dataset.act, id = t.dataset.id;
+  if (a === "open") openPanel("channel", id);
+  else if (a === "outreach") openPanel("outreach");
+  else if (a === "close") { S.panel = null; paintPanel(); }
+  else if (a === "pick") { S.pick = id; paintPanel(); }
+  else if (a === "otab") { S.tab = id; paintPanel(); }
+  else if (a === "doConnect") {
+    if (S.panel.kind === "outreach") { S.outreach = true; toast("Outreach connected. Email, calls and social are ready."); }
+    else { S.conn[S.panel.id] = S.pick; toast(chan(S.panel.id).name + " connected."); }
+    S.panel = null; paintPanel(); render();
+  } else if (a === "doDisconnect") {
+    if (S.panel.kind === "outreach") S.outreach = false; else delete S.conn[S.panel.id];
+    toast("Disconnected."); S.panel = null; paintPanel(); render();
+  } else if (a === "doTest") toast("Test email sent to your own address. Check it arrived, and not in spam.");
+});
+document.addEventListener("change", (e) => { if (e.target.dataset.act === "consent") { S.consent = e.target.checked; paintPanel(); } });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.panel) { S.panel = null; paintPanel(); } });
+render();
+</script>
