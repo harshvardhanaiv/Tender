@@ -75,6 +75,13 @@ SOURCES: dict[str, dict[str, str]] = {
         "confidence": "high",
         "source_type_label": "Direct Portal API",
     },
+    "nepo_open": {
+        "label": "NEPO Open (North East)",
+        "type": "nepo_open",
+        "site_root": "https://www.open-uk.org",
+        "confidence": "high",
+        "source_type_label": "Direct Portal API",
+    },
     "gca_agreements": {
         "label": "GCA Frameworks (UK)",
         "type": "gca_agreements",
@@ -155,6 +162,7 @@ UK_IE_SOURCE_IDS = frozenset(
         "contracts_finder",
         "procontract",
         "yortender",
+        "nepo_open",
         "gca_agreements",
     }
 )
@@ -370,6 +378,15 @@ def _fetch_source_batch_one(
     elif cfg["type"] == "procontract":
         from .procontract import search_procontract
         batch = search_procontract(
+            keyword=keyword,
+            source_id=source_id,
+            source_label=cfg["label"],
+            max_results=None,
+        )
+        return source_id, batch, None
+    elif cfg["type"] == "nepo_open":
+        from .nepo_open import search_nepo_open
+        batch = search_nepo_open(
             keyword=keyword,
             source_id=source_id,
             source_label=cfg["label"],

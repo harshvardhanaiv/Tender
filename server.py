@@ -1981,6 +1981,20 @@ def _get_tender_details_dict(source: str, resource_id: str, bypass_cache: bool =
                     detail[k] = v
         return detail
 
+    elif cfg["type"] == "nepo_open":
+        # The notice page is a client-side app; the list row already carries the description.
+        if cached_detail:
+            return cached_detail
+        return {
+            "source": source,
+            "source_label": cfg["label"],
+            "resource_id": resource_id,
+            "title": f"{cfg['label']} Opportunity",
+            "description": f"Public procurement notice via {cfg['label']}.",
+            "detail_url": f"{cfg['site_root']}/opportunities/overview/public/{resource_id}",
+            "procedure": "Open Opportunity",
+        }
+
     elif cfg["type"] == "eu_supply_ctm":
         # The notice page sits behind the portal's own entrance script, so the list row is all we hold.
         if cached_detail:
