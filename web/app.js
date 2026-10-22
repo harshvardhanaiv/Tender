@@ -1951,6 +1951,7 @@ const PORTALS = [
   { id: "pcs", label: "Public Contracts Scotland", country: "United Kingdom", flag: `<img src="/flags/scotland.svg" width="20" height="12" alt="Scotland" style="vertical-align: middle; margin-right: 6px; border-radius: 2px; box-shadow: 0 0 1px rgba(0,0,0,0.3); display: inline-block; object-fit: cover;">`, code: "GB", region: "EUROPE", url: "https://www.publiccontractsscotland.gov.uk/" },
   { id: "sell2wales", label: "Sell2Wales", country: "United Kingdom", flag: `<img src="/flags/wales.svg" width="20" height="12" alt="Wales" style="vertical-align: middle; margin-right: 6px; border-radius: 2px; box-shadow: 0 0 1px rgba(0,0,0,0.3); display: inline-block; object-fit: cover;">`, code: "GB", region: "EUROPE", url: "https://www.sell2wales.gov.wales/" },
   { id: "procontract", label: "ProContract (UK Councils)", country: "United Kingdom", flag: `<img src="/flags/england.svg" width="20" height="12" alt="England" style="vertical-align: middle; margin-right: 6px; border-radius: 2px; box-shadow: 0 0 1px rgba(0,0,0,0.3); display: inline-block; object-fit: cover;">`, code: "GB", region: "EUROPE", url: "https://procontract.due-north.com/" },
+  { id: "yortender", label: "YORtender (Yorkshire)", country: "United Kingdom", flag: `<img src="/flags/england.svg" width="20" height="12" alt="England" style="vertical-align: middle; margin-right: 6px; border-radius: 2px; box-shadow: 0 0 1px rgba(0,0,0,0.3); display: inline-block; object-fit: cover;">`, code: "GB", region: "EUROPE", url: "https://yortender.eu-supply.com/" },
   { id: "gca_agreements", label: "GCA Frameworks (UK)", country: "United Kingdom", flag: `<img src="/flags/uk.svg" width="20" height="12" alt="United Kingdom" style="vertical-align: middle; margin-right: 6px; border-radius: 2px; box-shadow: 0 0 1px rgba(0,0,0,0.3); display: inline-block; object-fit: cover;">`, code: "GB", region: "EUROPE", url: "https://www.gca.gov.uk/agreements", isNew: true },
 
   // France
@@ -1983,7 +1984,7 @@ const NEW_PORTAL_IDS = PORTALS.filter((p) => p.isNew).map((p) => p.id);
 let _selectedPortals = null; // null means ALL
 
 const BACKEND_PORTAL_IDS = [
-  "etenders_ie", "find_tender", "contracts_finder", "etenders_ni", "pcs", "sell2wales", "procontract", "gca_agreements",
+  "etenders_ie", "find_tender", "contracts_finder", "etenders_ni", "pcs", "sell2wales", "procontract", "yortender", "gca_agreements",
   "sam_gov", "canadabuys", "eu_ted", "austender", "gebiz", "gets_nz", "boamp", "bund"
 ];
 
@@ -2111,7 +2112,7 @@ function getPortalFlagImgHtml(p) {
   if (p.id === "pcs") countryName = "Scotland";
   else if (p.id === "sell2wales") countryName = "Wales";
   else if (p.id === "etenders_ni") countryName = "Northern Ireland";
-  else if (p.id === "procontract") countryName = "England";
+  else if (p.id === "procontract" || p.id === "yortender") countryName = "England";
 
   return getFlagImgHtml(p.code, countryName);
 }
@@ -3025,7 +3026,7 @@ let _activeCountyRegionFilter = "all";
 // nation is actually in scope.
 const REGION_PORTAL_IDS = {
   "Ireland": ["etenders_ie"],
-  "England": ["find_tender", "contracts_finder", "gca_agreements", "procontract"],
+  "England": ["find_tender", "contracts_finder", "gca_agreements", "procontract", "yortender"],
   "Scotland": ["find_tender", "contracts_finder", "gca_agreements", "pcs"],
   "Wales": ["find_tender", "contracts_finder", "gca_agreements", "sell2wales"],
   "Northern Ireland": ["find_tender", "contracts_finder", "gca_agreements", "etenders_ni"]
@@ -4703,7 +4704,7 @@ function getDeadlinePassedBannerHtml(row) {
 // The currency a portal quotes in, for a value that arrives as bare digits ("100,000" from Contracts Finder).
 const CURRENCY_BY_SOURCE = {
   etenders_ie: "€", boamp: "€", bund: "€", eu_ted: "€",
-  find_tender: "£", contracts_finder: "£", etenders_ni: "£", pcs: "£", sell2wales: "£", procontract: "£", gca_agreements: "£",
+  find_tender: "£", contracts_finder: "£", etenders_ni: "£", pcs: "£", sell2wales: "£", procontract: "£", yortender: "£", gca_agreements: "£",
   sam_gov: "$", canadabuys: "$",
 };
 

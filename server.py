@@ -1981,6 +1981,20 @@ def _get_tender_details_dict(source: str, resource_id: str, bypass_cache: bool =
                     detail[k] = v
         return detail
 
+    elif cfg["type"] == "eu_supply_ctm":
+        # The notice page sits behind the portal's own entrance script, so the list row is all we hold.
+        if cached_detail:
+            return cached_detail
+        return {
+            "source": source,
+            "source_label": cfg["label"],
+            "resource_id": resource_id,
+            "title": f"{cfg['label']} Opportunity #{resource_id}",
+            "description": f"Public procurement notice #{resource_id} via {cfg['label']}.",
+            "detail_url": f"{cfg['site_root']}/app/rfq/rwlentrance_s.asp?PID={resource_id}&B={cfg['branding']}&PS=1",
+            "procedure": "Open Opportunity",
+        }
+
     elif cfg["type"] == "gca_agreements" or source == "gca_agreements":
         from etenders_scraper.sources.gca_agreements import fetch_gca_agreement_details
         detail = fetch_gca_agreement_details(resource_id)
