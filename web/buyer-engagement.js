@@ -93,13 +93,13 @@
     await BW.ensureOptions();
     const spec = prefillSpec(prefill);
     openModal(`<h2 id="bwModalTitle">New market engagement</h2>
-      <p class="bw-card__sub">Start with the basics. You can change everything later.</p>
+      <p class="bw-card__sub">Start with the basics. You can change everything later.${prefill.incumbent ? ` Filled in from the current contract with ${esc(prefill.incumbent)}; check the value and term.` : ""}</p>
       <div id="engNewError"></div>
       <label class="bw-label" for="engTitle">Title</label>
       <input class="bw-input" id="engTitle" maxlength="200" placeholder="For example: Responsive repairs and gas servicing, 2027 framework" value="${esc(prefill.title || "")}">
       ${categoryFields(spec)}
-      <div class="bw-field-row"><div><label class="bw-label" for="engValue">Estimated value (£)</label><input class="bw-input" id="engValue" type="number" min="0" step="1000" placeholder="e.g. 2,100,000" aria-describedby="engValueHint"><span class="bw-hint" id="engValueHint">In pounds, for the whole term.</span></div>
-        <div><label class="bw-label" for="engTerm">Term (years)</label><input class="bw-input" id="engTerm" type="number" min="0.5" max="30" step="0.5" placeholder="4"></div></div>
+      <div class="bw-field-row"><div><label class="bw-label" for="engValue">Estimated value (£)</label><input class="bw-input" id="engValue" type="number" min="0" step="1000" value="${esc(prefill.value || "")}" placeholder="e.g. 2,100,000" aria-describedby="engValueHint"><span class="bw-hint" id="engValueHint">In pounds, for the whole term.</span></div>
+        <div><label class="bw-label" for="engTerm">Term (years)</label><input class="bw-input" id="engTerm" type="number" min="0.5" max="30" step="0.5" value="${esc(prefill.term || "")}" placeholder="4"></div></div>
       <label class="bw-label" for="engType">How will you engage?</label>
       <select class="bw-select" id="engType">${TYPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select>
       <div class="bw-actions bw-actions--end"><button class="bw-btn" data-action="modal-close">Cancel</button><button class="bw-btn bw-btn--primary" data-action="eng-create">Create plan</button></div>`);

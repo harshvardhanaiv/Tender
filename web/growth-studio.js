@@ -257,9 +257,17 @@
     const f = state.filters || V.defaultFilters(state.options);
     const o = state.options || { presets: [], authority_types: [], day_choices: [], signal_types: [] };
     const customActive = Boolean(f.cpv || f.q);
-    const profileItems = state.profiles.length ? state.profiles.map((p) => [p.id, p.name + (p.is_default ? " (default)" : "")]) : [["", "No company profile yet"]];
+    // the same company name saved twice is listed once (the chosen or default one wins)
+    const seenNames = new Map();
+    state.profiles.forEach((p) => {
+      const k = String(p.name || "").trim().toLowerCase();
+      const kept = seenNames.get(k);
+      if (!kept || p.id === state.profileId || (p.is_default && kept.id !== state.profileId)) seenNames.set(k, p);
+    });
+    const uniqueProfiles = state.profiles.filter((p) => seenNames.get(String(p.name || "").trim().toLowerCase()) === p);
+    const profileItems = uniqueProfiles.length ? uniqueProfiles.map((p) => [p.id, p.name + (p.is_default ? " (default)" : "")]) : [["", "No company profile yet"]];
     byId("gsProfile").innerHTML = optionsHtml(profileItems, state.profileId);
-    byId("gsProfile").disabled = state.profiles.length < 2;
+    byId("gsProfile").disabled = uniqueProfiles.length < 2;
     if (services) services.render();
     byId("gsMinFit").innerHTML = optionsHtml((o.fit_choices || [0, 50, 60, 75, 90]).map((n) => [n, n ? `Fit ${n}%+` : "Any fit"]), Number(f.min_fit) || 0);
     const tv = typesValue(f.types);
@@ -445,8 +453,24 @@
     if (state.signals.selected.length) updateSelectionUi();
   }
 
+  // "Start campaign" adds to the newest unsent draft for the same company, so clicking it on several signals builds one campaign.
+  // It only creates a new one when there is no such draft (the limit on campaigns stays far away).
   async function startCampaign(keys) {
-    const res = await api("POST", "/api/growth/campaigns", { keys, filters: V.filtersBody(state.filters), profile_id: state.profileId || null });
+    if (!state.campaigns.list) {
+      try { state.campaigns.list = (await api("GET", "/api/growth/campaigns")).campaigns; } catch (e) { state.campaigns.list = null; }
+    }
+    const pid = state.profileId || null;
+    const draft = (state.campaigns.list || []).find((c) => c.status === "draft" && (c.profile_id || null) === pid && !(c.counts && c.counts.sent));
+    if (draft) {
+      const res = await api("POST", `/api/growth/campaigns/${draft.id}/targets`, { keys, filters: V.filtersBody(state.filters), profile_id: pid });
+      state.signals.selected = [];
+      state.campaigns.list = null;
+      openFromDetail(res);
+      toast(skippedText(res.skipped, `${V.plural(res.added, "buyer")} added to "${draft.name}".`));
+      loadSignals();
+      return;
+    }
+    const res = await api("POST", "/api/growth/campaigns", { keys, filters: V.filtersBody(state.filters), profile_id: pid });
     state.signals.selected = [];
     state.campaigns.list = null;
     openFromDetail(res);
