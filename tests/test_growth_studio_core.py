@@ -540,8 +540,14 @@ def test_ai_prompt_is_grounded_and_limited():
 
 def test_campaign_validation():
     ok = gs.validate_campaign({"name": "  Social   housing  renewals ", "channel": "email", "status": "draft", "subject": "S", "body": "B"})
-    assert ok == {"name": "Social housing renewals", "channel": "email", "status": "draft", "subject": "S", "body": "B"}
+    # plain text written: any stored formatted version no longer matches it, so it is cleared
+    assert ok == {"name": "Social housing renewals", "channel": "email", "status": "draft", "subject": "S", "body": "B", "body_html": None}
     assert gs.validate_campaign({"status": "paused"}, partial=True) == {"status": "paused"}
+    # a formatted message: cleaned, and its plain-text twin becomes the body
+    rich = gs.validate_campaign({"body_html": '<p>Hi <b>there</b><script>x()</script></p>'}, partial=True)
+    assert rich == {"body_html": "<p>Hi <b>there</b></p>", "body": "Hi there"}
+    assert gs.validate_campaign({"body_html": "<script>x()</script>"}, partial=True) == {"body_html": None, "body": ""}
+    assert gs.validate_campaign({"body_html": "<p>x</p>", "body": "ignored"}, partial=True)["body"] == "x"
     for bad, partial in (({}, False), ({"name": "  "}, False), ({"name": "x" * 121}, False), ({"name": "n", "channel": "fax"}, False),
                          ({"name": "n", "status": "done"}, False), ({"name": "n", "subject": "s" * 201}, False),
                          ({"name": "n", "body": "b" * 6001}, False), ({"name": 5}, False), ({"subject": 5}, True), ({"name": ""}, True)):

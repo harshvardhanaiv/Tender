@@ -133,7 +133,8 @@
     );
   }
 
-  function outreachCard(m) {
+  function outreachParts(m, hideForm) {
+    const formFor = (info, f) => (hideForm ? "" : connectForm(info, f));
     const state = outreachState(m);
     const info = (m && m.info) || {};
     const [pillText, tone] = PILL[state];
@@ -146,16 +147,21 @@
       body = `<p class="cx-warn" role="alert">${esc((m && m.error) || "Could not reach the server.")}</p>`;
       actions = `<button type="button" class="cx-btn" data-action="outreach-check">Try again</button>`;
     } else if (state === "none") {
-      body = `<p class="cx-sub">Connect Outreach to send email, post to social media and make calls from Growth Studio.</p>` + connectForm(info, m && m.form);
+      body = `<p class="cx-sub">Connect Outreach to send email, post to social media and make calls from Growth Studio.</p>` + formFor(info, m && m.form);
     } else if (state === "off") {
-      body = `<p class="cx-sub">You disconnected Outreach. Growth Studio will not send, post or call until you connect it again.</p>` + connectForm(info, m && m.form);
+      body = `<p class="cx-sub">You disconnected Outreach. Growth Studio will not send, post or call until you connect it again.</p>` + formFor(info, m && m.form);
     } else if (state === "attention") {
-      body = `<p class="cx-warn" role="alert">${esc(info.problem || "Outreach did not accept the connection.")}</p>` + connectForm(info, m && m.form);
+      body = `<p class="cx-warn" role="alert">${esc(info.problem || "Outreach did not accept the connection.")}</p>` + formFor(info, m && m.form);
       actions = `<button type="button" class="cx-btn" data-action="outreach-check">Check again</button>` + disconnect;
     } else {
       body = detailsHtml(info) + `<p class="cx-sub cx-hint">Mailboxes, social channels and phone numbers in your Outreach account show here. To send email without an Outreach mailbox, set up your own email account below.</p>`;
       actions = `<button type="button" class="cx-btn" data-action="outreach-check"${m.status === "loading" ? " disabled" : ""}>${m.status === "loading" ? "Checking…" : "Refresh"}</button>` + disconnect;
     }
+    return { state, tone, pillText, body, actions };
+  }
+
+  function outreachCard(m, hideForm) {
+    const { state, tone, pillText, body, actions } = outreachParts(m, hideForm);
     return (
       `<section class="cx-card cx-card--${state}" aria-label="Outreach">` +
       `<div class="cx-card__head"><span class="cx-ico" aria-hidden="true"><i class="ti ti-send"></i></span>` +
@@ -170,12 +176,17 @@
   // ── the user's own email account (Gmail, Outlook, Zoho or any SMTP login) ─────────────────────────────────────────────────
   // Outreach cannot add a mailbox from outside its own account, so an email account is set up here and Growth Studio sends from it.
   // The password goes to TenderFlow's server, is checked against the mail server, is kept encrypted and is never shown again.
+  // A user can connect several (up to info.max_accounts); the first is the default. `account` alone (the default one) is what an
+  // older server answers with.
   //   loading / error / unavailable (the server cannot keep one) / none / ok
+  const accountsOf = (info) => (info && Array.isArray(info.accounts) ? info.accounts : info && info.account ? [info.account] : []);
+  const MAX_MAIL_ACCOUNTS = 5;
+
   function mailState(m) {
     if (!m || m.status === "idle" || (m.status === "loading" && !m.info)) return "loading";
     if (m.status === "error" && !m.info) return "error";
     const info = m.info || {};
-    if (info.account) return "ok";
+    if (accountsOf(info).length) return "ok";
     return info.available === false ? "unavailable" : "none";
   }
 
@@ -191,9 +202,12 @@
     const cell = (html) => `<div class="cx-cell">${html}</div>`; // a label and its box stay together in the grid
     const select = (id, key, label, options) => field(id, label,
       `<select id="${id}" class="cx-input" data-cxm="${key}">` + options.map(([v, t]) => `<option value="${esc(v)}"${String(f[key]) === String(v) ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`);
+    const others = accountsOf(info).length;
     return (
       `<form class="cx-form" data-cx="mail-form" autocomplete="off">` +
       (f.notice ? `<p class="cx-note" role="status">${esc(f.notice)}</p>` : "") +
+      (editing && f.from_email ? `<p class="cx-line">Changing <span class="cx-mail">${esc(f.from_email)}</span></p>` : "") +
+      (!editing && others ? `<p class="cx-line">Add another address to send from. It has its own daily limit.</p>` : "") +
       select("cxmProvider", "provider", "Email provider", presets.map((p) => [p.id, p.label])) +
       (preset.help ? `<p class="cx-sub">${esc(preset.help)}</p>` : "") +
       input("cxmName", "from_name", "Your name (shown to the buyer)", 'autocomplete="name" maxlength="120"') +
@@ -211,7 +225,30 @@
       `<p class="cx-sub">TenderFlow checks the login with your mail server before it keeps anything.</p>` +
       (f.error ? `<p class="cx-warn" role="alert">${esc(f.error)}</p>` : "") +
       `<div class="cx-actions cx-actions--flush"><button type="submit" class="cx-btn cx-btn--primary" data-cx="mail-save"${busy ? " disabled" : ""}>${busy ? "Checking the login…" : editing ? "Save changes" : "Connect email account"}</button>` +
-      (editing ? `<button type="button" class="cx-btn" data-cx="mail-cancel"${busy ? " disabled" : ""}>Cancel</button>` : "") + `</div></form>`
+      (accountsOf(info).length ? `<button type="button" class="cx-btn" data-cx="mail-cancel"${busy ? " disabled" : ""}>Cancel</button>` : "") + `</div></form>`
+    );
+  }
+
+  // One connected account: who it sends as, what it has sent today, and what can be done with it. `busy` is the action under way
+  // for it ("test" or "delete"); every button is off while any account is busy, but only the busy account's label changes.
+  function accountBlock(a, many, mm) {
+    const busyNow = mm.busy || null;
+    const mine = busyNow && (mm.busyId == null || mm.busyId === a.id) ? busyNow : null;
+    const id = a.id != null ? ` data-id="${esc(a.id)}"` : "";
+    const off = busyNow ? " disabled" : "";
+    const who = a.from_name ? `${a.from_name} <${a.from_email}>` : a.from_email;
+    return (
+      `<div class="cx-acct">` +
+      `<p class="cx-line"><span class="cx-mail">${esc(who)}</span> ${a.verified ? `<span class="cx-pill cx-pill--good">Login checked</span>` : `<span class="cx-pill cx-pill--warn">Not checked</span>`}` +
+      `${many && a.is_default ? ` <span class="cx-pill cx-pill--muted">Default</span>` : ""}</p>` +
+      `<p class="cx-line cx-sub">Sends through ${esc(a.host)} (port ${esc(a.port)}) · ${esc(a.sent_today || 0)} of ${esc(a.daily_cap)} sent in the last 24 hours.</p>` +
+      (a.last_error ? `<p class="cx-warn" role="alert">The last send failed: ${esc(a.last_error)}</p>` : "") +
+      `<div class="cx-actions cx-actions--flush">` +
+      `<button type="button" class="cx-btn" data-cx="mail-test"${off}${id} data-tip="Send a short test email from this account to itself, to check that it lands.">${mine === "test" ? "Sending…" : "Send test email"}</button>` +
+      `<button type="button" class="cx-btn" data-cx="mail-edit"${off}${id} data-tip="Change the server, the address, the daily limit or the password.">Edit</button>` +
+      (many && !a.is_default ? `<button type="button" class="cx-btn" data-cx="mail-default"${off}${id} data-tip="Use this address when you do not choose one under Send from.">${mine === "default" ? "Saving…" : "Make default"}</button>` : "") +
+      `<button type="button" class="cx-btn cx-btn--danger" data-cx="mail-delete"${off}${id} data-tip="Forget this email account in TenderFlow. Emails already sent are not affected.">${mine === "delete" ? "Disconnecting…" : "Disconnect"}</button>` +
+      `</div></div>`
     );
   }
 
@@ -219,11 +256,12 @@
     const mm = m || {};
     const state = mailState(m);
     const info = mm.info || {};
-    const a = info.account || null;
+    const list = accountsOf(info);
+    const many = list.length > 1;
+    const failing = list.some((x) => x.last_error);
     const [pillText, tone0] = MAIL_PILL[state];
-    const tone = state === "ok" && a.last_error ? "warn" : tone0;
-    const text = state === "ok" && a.last_error ? "Needs attention" : pillText;
-    const busy = mm.busy || null;
+    const tone = state === "ok" && failing ? "warn" : tone0;
+    const text = state === "ok" && failing ? "Needs attention" : pillText;
     let body;
     let actions = "";
     if (state === "loading") body = `<p class="cx-sub" role="status">Checking…</p>`;
@@ -235,26 +273,26 @@
     } else if (state === "none") {
       body = `<p class="cx-sub">Send Growth Studio email from your own address. Outreach does not need to have a mailbox for this.</p>` + mailForm(info, mm.form || {}, false);
     } else if (mm.form) {
-      body = mailForm(info, mm.form, true);
+      body = mailForm(info, mm.form, mm.form.editId != null);
     } else {
-      const who = a.from_name ? `${a.from_name} <${a.from_email}>` : a.from_email;
+      const max = info.max_accounts || MAX_MAIL_ACCOUNTS;
+      const a = list[0];
       body =
         (mm.notice ? `<p class="cx-note" role="status">${esc(mm.notice)}</p>` : "") +
         (mm.error ? `<p class="cx-warn" role="alert">${esc(mm.error)}</p>` : "") +
-        `<p class="cx-line"><span class="cx-mail">${esc(who)}</span> ${a.verified ? `<span class="cx-pill cx-pill--good">Login checked</span>` : `<span class="cx-pill cx-pill--warn">Not checked</span>`}</p>` +
-        `<p class="cx-line cx-sub">Sends through ${esc(a.host)} (port ${esc(a.port)}) · ${esc(a.sent_today || 0)} of ${esc(a.daily_cap)} sent in the last 24 hours.</p>` +
-        (a.last_error ? `<p class="cx-warn" role="alert">The last send failed: ${esc(a.last_error)}</p>` : "") +
-        `<p class="cx-sub cx-hint">Choose this address under Send from when you send mail in Growth Studio. Replies arrive in this mailbox${a.reply_to ? ` (replies are asked to go to ${esc(a.reply_to)})` : ""}.</p>`;
-      actions =
-        `<button type="button" class="cx-btn" data-cx="mail-test"${busy ? " disabled" : ""} data-tip="Send a short test email from this account to itself, to check that it lands.">${busy === "test" ? "Sending…" : "Send test email"}</button>` +
-        `<button type="button" class="cx-btn" data-cx="mail-edit"${busy ? " disabled" : ""} data-tip="Change the server, the address, the daily limit or the password.">Edit</button>` +
-        `<button type="button" class="cx-btn cx-btn--danger" data-cx="mail-delete"${busy ? " disabled" : ""} data-tip="Forget this email account in TenderFlow. Emails already sent are not affected.">${busy === "delete" ? "Disconnecting…" : "Disconnect"}</button>`;
+        list.map((x) => accountBlock(x, many, mm)).join("") +
+        (list.length < max
+          ? `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn" data-cx="mail-add"${mm.busy ? " disabled" : ""} data-tip="Connect another address to send from. Each has its own daily limit.">＋ Add another email account</button></div>`
+          : `<p class="cx-sub">That is the most email accounts you can connect (${esc(max)}). Disconnect one to add another.</p>`) +
+        (many
+          ? `<p class="cx-sub cx-hint">Choose the address under Send from when you send mail in Growth Studio. When you do not choose, the default one is used. Replies arrive in the mailbox an email was sent from.</p>`
+          : `<p class="cx-sub cx-hint">Choose this address under Send from when you send mail in Growth Studio. Replies arrive in this mailbox${a.reply_to ? ` (replies are asked to go to ${esc(a.reply_to)})` : ""}.</p>`);
     }
     return (
-      `<section class="cx-card cx-card--${state === "ok" && !a.last_error ? "ok" : state === "ok" ? "attention" : state}" data-card="mail" aria-label="Email account">` +
+      `<section class="cx-card cx-card--${state === "ok" && !failing ? "ok" : state === "ok" ? "attention" : state}" data-card="mail" aria-label="${many ? "Email accounts" : "Email account"}">` +
       `<div class="cx-card__head"><span class="cx-ico" aria-hidden="true"><i class="ti ti-mail"></i></span>` +
-      `<div class="cx-card__title"><span class="cx-name">Email account</span> <span class="cx-pill cx-pill--${tone}">${esc(text)}</span>` +
-      `<div class="cx-sub">Send Growth Studio email from your own address (Gmail, Outlook or any provider).</div></div></div>` +
+      `<div class="cx-card__title"><span class="cx-name">${many ? "Email accounts" : "Email account"}</span> <span class="cx-pill cx-pill--${tone}">${esc(text)}</span>` +
+      `<div class="cx-sub">Send Growth Studio email from your own address${many ? "es" : ""} (Gmail, Outlook or any provider).</div></div></div>` +
       `<div class="cx-card__body">${body}</div>` +
       (actions ? `<div class="cx-actions">${actions}</div>` : "") +
       `</section>`
@@ -267,7 +305,7 @@
   const CHANNELS = [
     { id: "email", name: "Email", icon: "ti-mail", needed: true, unlock: "Send campaign emails and read replies.", soon: [["Sign in with Google", "Gmail / Google Workspace"], ["Sign in with Microsoft", "Outlook / Microsoft 365"]] },
     { id: "calls", name: "Calls", icon: "ti-phone", unlock: "Run call steps in campaigns and log the outcome.", soon: [["Sign in", "Aircall"], ["Account details", "Twilio"], ["Tasks in your Inbox", "I'll make calls myself"]] },
-    { id: "social", name: "Social", icon: "ti-share", unlock: "Schedule and publish company posts after you approve them.", soon: [["Sign in", "LinkedIn page"], ["Sign in", "Buffer"]] },
+    { id: "social", name: "Social", icon: "ti-share", unlock: "Schedule and publish company posts after you approve them.", soon: [["Sign in", "Buffer"]] },
     { id: "meetings", name: "Calendar", icon: "ti-calendar", unlock: "Add a booking link to messages and spot booked meetings.", soon: [["Sign in with Google", "Google Calendar"], ["Sign in", "Calendly"]], onlySoon: true },
     { id: "crm", name: "CRM", icon: "ti-address-book", unlock: "Copy contacts, activity and deals to your CRM.", soon: [["Sign in", "HubSpot"], ["Sign in", "Pipedrive"]], onlySoon: true },
   ];
@@ -280,13 +318,19 @@
     const out = outreachState(m) === "ok";
     if (c.id === "email") {
       const mm = (m && m.mail) || {};
-      const a = mailState(mm) === "ok" ? mm.info.account : null;
-      if (a) return { on: true, text: a.from_email, attention: !!a.last_error };
+      const mine = mailState(mm) === "ok" ? accountsOf(mm.info) : [];
+      if (mine.length) return { on: true, text: mine.length > 1 ? `${mine[0].from_email} +${mine.length - 1} more` : mine[0].from_email, attention: mine.some((x) => x.last_error) };
       const boxes = (Array.isArray(w.mailboxes) ? w.mailboxes : []).filter((x) => x && x.email);
       if (out && boxes.length) return { on: true, text: "Outreach mailbox" };
     } else if (c.id === "calls") {
       if (out && Number.isFinite(w.phone_numbers) && w.phone_numbers > 0) return { on: true, text: `Outreach · ${plural(w.phone_numbers, "number")}` };
     } else if (c.id === "social") {
+      const sc = m && m.social;
+      if (out && sc && sc.supported) {
+        const all = sc.channels || [];
+        const sick = all.some((x) => x.status !== "connected");
+        if (all.length) return { on: true, text: `Outreach · ${Array.from(new Set(all.map((x) => x.label))).join(", ")}`, attention: sick };
+      }
       const social = (Array.isArray(w.social_channels) ? w.social_channels : []).filter(Boolean);
       if (out && social.length) return { on: true, text: `Outreach · ${social.map(channelName).join(", ")}` };
     }
@@ -308,12 +352,86 @@
       `<li><span class="cx-mail">${esc(name)}</span> <span class="cx-sub">${esc(how)}</span> <span class="cx-pill cx-pill--muted">Coming soon</span></li>`).join("") + `</ul>`;
   }
 
+  const OUTREACH_WEB = "https://outreach.aivhub.com";
+  const NETWORKS = ["LinkedIn", "Facebook", "Instagram", "X"];
+
+  function step(n, done, title, inner) {
+    return `<li class="cx-step${done ? " is-done" : ""}"><span class="cx-step__n" aria-hidden="true">${done ? `<i class="ti ti-check"></i>` : n}</span>` +
+      `<div class="cx-step__body"><div class="cx-step__title">${esc(title)}${done ? ` <span class="cx-pill cx-pill--good">Done</span>` : ""}</div>${inner}</div></li>`;
+  }
+
+  // Calls and Social set up right here: sign in to Outreach (step 1), link the accounts or number (step 2, done inside
+  // Outreach because its public API cannot add them), then start using it in Growth Studio (step 3).
+  const CH_PILL = { connected: ["Connected", "good"], needs_reauth: ["Needs reconnecting", "warn"], error: ["Problem", "warn"] };
+
+  // The networks Outreach can connect from here, one row per network (a row per account once connected). Each Connect opens the
+  // network's own sign-in in a small window; nothing is typed here, so no password or token passes through TenderFlow.
+  function socialList(sc) {
+    const connectBtn = (p, label) => `<button type="button" class="cx-btn cx-btn--sm" data-cx="social-connect" data-provider="${esc(p.provider)}"${sc.busy ? " disabled" : ""} ` +
+      `data-tip="Opens ${esc(p.label)} in a small window so you can approve the connection. You never type a password here.">${sc.busy === p.provider ? "Opening…" : esc(label)}</button>`;
+    const rows = (sc.providers || []).map((p) => {
+      const mine = (sc.channels || []).filter((c) => c.provider === p.provider);
+      if (!mine.length) {
+        return `<li><span class="cx-mail">${esc(p.label)}</span> ` + (p.available
+          ? `<span class="cx-pill cx-pill--muted">Not connected</span> ${connectBtn(p, "Connect " + p.label)}`
+          : `<span class="cx-pill cx-pill--muted">Not available yet</span> <span class="cx-sub">Outreach has not switched ${esc(p.label)} on.</span>`) + `</li>`;
+      }
+      return mine.map((c) => {
+        const [text, tone] = CH_PILL[c.status] || CH_PILL.error;
+        return `<li><span class="cx-mail">${esc(p.label)}${c.name ? ` · ${esc(c.name)}` : ""}</span> <span class="cx-pill cx-pill--${tone}">${esc(text)}</span> ` +
+          (c.status !== "connected" && p.available ? connectBtn(p, "Reconnect") + " " : "") +
+          `<button type="button" class="cx-btn cx-btn--sm" data-cx="social-disconnect" data-id="${esc(c.id)}"${sc.busy ? " disabled" : ""} data-tip="Stop TenderFlow posting to this account. You can connect it again later.">Disconnect</button></li>`;
+      }).join("");
+    }).join("");
+    return `<ul class="cx-list">${rows}</ul>` +
+      (sc.notice ? `<p class="cx-line" role="status">${esc(sc.notice)}</p>` : "") +
+      (sc.error ? `<p class="cx-line cx-line--bad" role="alert">${esc(sc.error)}</p>` : "") +
+      `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn" data-cx="social-reload"${sc.status === "loading" ? " disabled" : ""}>${sc.status === "loading" ? "Checking…" : "Check again"}</button></div>` +
+      `<p class="cx-sub">You sign in on the network's own page, so TenderFlow never sees your password. Posts still wait for your approval before they go live.</p>`;
+  }
+
+  function channelSetup(c, m, selected) {
+    const out = outreachState(m) === "ok";
+    const info = (m && m.info) || {};
+    const w = info.wallet || {};
+    const social = (Array.isArray(w.social_channels) ? w.social_channels : []).filter(Boolean);
+    const phones = Number.isFinite(w.phone_numbers) ? w.phone_numbers : 0;
+    const have = (net) => social.some((s) => channelName(s) === net);
+    const sc = c.id === "social" && m && m.social && m.social.supported ? m.social : null;
+    const linked = c.id === "social" ? (sc ? (sc.channels || []).some((x) => x.status === "connected") : social.length > 0) : phones > 0;
+    const s1 = out
+      ? step(1, true, "Sign in to Outreach", `<p class="cx-sub">${via(info) || "Connected."}</p>`)
+      : step(1, false, "Sign in to Outreach",
+        `<p class="cx-sub">One sign-in covers email, calls and social posts. No Outreach account yet? Choose Create account.</p>` +
+        (selected ? (() => { const p = outreachParts(m); return p.body + (p.actions ? `<div class="cx-actions cx-actions--flush">${p.actions}</div>` : ""); })() : ""));
+    let inner;
+    if (!out) inner = `<p class="cx-sub">Available once you have signed in.</p>`;
+    else if (sc) inner = socialList(sc);
+    else if (c.id === "social") {
+      inner = `<ul class="cx-list">` + NETWORKS.map((n) => `<li><span class="cx-mail">${n}</span> ` +
+        (have(n) ? `<span class="cx-pill cx-pill--good">Linked</span>` : `<span class="cx-pill cx-pill--muted">Not linked</span> <button type="button" class="cx-btn cx-btn--sm" data-cx="connect-social" data-network="${esc(n)}" data-tip="Opens Outreach in a small window so you can approve ${esc(n)}. Come back here when you are done.">Connect ${esc(n)}</button>`) + `</li>`).join("") + `</ul>` +
+        `<div class="cx-actions cx-actions--flush">` +
+        `<button type="button" class="cx-btn" data-action="outreach-check"${m && m.status === "loading" ? " disabled" : ""}>${m && m.status === "loading" ? "Checking…" : "Check again"}</button></div>` +
+        `<p class="cx-sub">Social accounts linked to your Outreach account show here.</p>`;
+    } else {
+      inner = `<p class="cx-line">${phones > 0 ? esc(plural(phones, "phone number")) + " in your Outreach account." : "No phone number in your Outreach account yet."}</p>` +
+        `<div class="cx-actions cx-actions--flush">` +
+        `<button type="button" class="cx-btn" data-action="outreach-check"${m && m.status === "loading" ? " disabled" : ""}>${m && m.status === "loading" ? "Checking…" : "Check again"}</button></div>` +
+        `<p class="cx-sub">Outreach's AI makes the calls from that number, to UK landlines only. Phone numbers in your Outreach account show here.</p>`;
+    }
+    const s2 = step(2, out && linked, c.id === "social" ? "Link your social accounts" : "Add a phone number", inner);
+    const tab = c.id === "social" ? "Social" : "Calls";
+    const s3 = step(3, false, `Use ${tab} in Growth Studio`, out && linked
+      ? `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn cx-btn--primary" data-cx="open-growth" data-tab="${c.id}">Open ${tab} in Growth Studio</button></div>`
+      : `<p class="cx-sub">${c.id === "social" ? "Write a post, check the preview, then approve it to publish." : "Pick a buyer, check the script, then start the call."}</p>`);
+    return `<ol class="cx-steps">${s1}${s2}${s3}</ol>`;
+  }
+
   function viaOutreach(c, m) {
     const out = outreachState(m) === "ok";
-    const what = { email: "its mailboxes", calls: "its phone numbers", social: "its social channels" }[c.id];
     return out
-      ? `<p class="cx-line">Outreach is connected, so this channel uses ${what}.</p><div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn" data-cx="goto" data-view="outreach">Manage Outreach</button></div>`
-      : `<p class="cx-line">Outreach covers this channel as well as email, calls and social posts, with one sign-in.</p><div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn cx-btn--primary" data-cx="goto" data-view="outreach">Connect Outreach</button></div>`;
+      ? `<p class="cx-line">Outreach is connected, so this channel uses its mailboxes.</p><div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn" data-cx="goto" data-view="outreach">Manage Outreach</button></div>`
+      : `<p class="cx-line">Outreach covers this channel as well as calls and social posts, with one sign-in.</p><div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn cx-btn--primary" data-cx="goto" data-view="outreach">Connect Outreach</button></div>`;
   }
 
   function pane(view, selected, title, inner) {
@@ -340,10 +458,10 @@
     const emailPane =
       mailCard(m && m.mail) + `<div class="cx-label">Or use Outreach</div>` + viaOutreach(CHANNELS[0], m);
     const panes =
-      `<section data-card="outreach">` + pane("outreach", sel === "outreach", "Outreach", outreachCard(m)) + `</section>` +
+      `<section data-card="outreach">` + pane("outreach", sel === "outreach", "Outreach", outreachCard(m, sel !== "outreach")) + `</section>` +
       pane("email", sel === "email", "Email", emailPane) +
-      pane("calls", sel === "calls", "Calls", `<p class="cx-sub">${esc(CHANNELS[1].unlock)}</p>` + viaOutreach(CHANNELS[1], m) + soonTiles(CHANNELS[1].soon)) +
-      pane("social", sel === "social", "Social", `<p class="cx-sub">${esc(CHANNELS[2].unlock)}</p>` + viaOutreach(CHANNELS[2], m) + soonTiles(CHANNELS[2].soon)) +
+      pane("calls", sel === "calls", "Calls", `<p class="cx-sub">${esc(CHANNELS[1].unlock)}</p>` + channelSetup(CHANNELS[1], m, sel === "calls") + soonTiles(CHANNELS[1].soon)) +
+      pane("social", sel === "social", "Social", `<p class="cx-sub">${esc(CHANNELS[2].unlock)}</p>` + channelSetup(CHANNELS[2], m, sel === "social") + soonTiles(CHANNELS[2].soon)) +
       pane("meetings", sel === "meetings", "Calendar", `<p class="cx-sub">${esc(CHANNELS[3].unlock)}</p>` + soonTiles(CHANNELS[3].soon)) +
       pane("crm", sel === "crm", "CRM", `<p class="cx-sub">${esc(CHANNELS[4].unlock)}</p>` + soonTiles(CHANNELS[4].soon));
     return `<div class="cx-hub${sel ? " cx-hub--detail" : ""}"><div class="cx-hub__list">${progress}${banner}<div class="cx-chans">${rows}</div></div>` +
@@ -360,27 +478,34 @@
     );
   }
 
-  const api = { esc, CHANNELS, channelStatus, hubHtml, outreachState, outreachCard, connectionsHtml, detailsHtml, connectForm, modesFor, PILL, mailState, mailCard, mailForm };
+  const api = { esc, CHANNELS, socialList, channelStatus, hubHtml, outreachState, outreachCard, connectionsHtml, detailsHtml, connectForm, modesFor, PILL, mailState, mailCard, mailForm, accountsOf };
   root.TFConnections = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document === "undefined") return;
 
   // ── controller (browser only) ─────────────────────────────────────────────────────────────────
   const freshForm = () => ({ mode: null, key: "", email: "", password: "", company: "", name: "", consent: false, busy: false, error: null, notice: null });
-  // The email account's form: filled from the saved account when there is one, else from the Gmail preset.
-  const freshMailForm = (info) => {
-    const a = info && info.account;
+  // The email account's form: filled from the saved account being changed (editId), else blank from the Gmail preset to add one.
+  const freshMailForm = (info, editId) => {
+    const a = editId != null ? accountsOf(info).find((x) => x.id === editId) : null;
     const gmail = ((info && info.presets) || []).find((x) => x.id === "gmail") || {};
-    const base = { password: "", busy: false, error: null, notice: null };
+    const base = { password: "", busy: false, error: null, notice: null, editId: a ? a.id : null };
     return a
       ? Object.assign(base, { provider: a.provider, from_name: a.from_name || "", from_email: a.from_email, username: a.username, host: a.host, port: a.port,
           security: a.security, reply_to: a.reply_to || "", daily_cap: a.daily_cap, userTouched: true })
       : Object.assign(base, { provider: "gmail", from_name: "", from_email: "", username: "", host: gmail.host || "", port: gmail.port || 465,
           security: gmail.security || "ssl", reply_to: "", daily_cap: 100, userTouched: false });
   };
+  // The id on the button that was clicked (an account), or null.
+  const idOf = (el) => {
+    const v = el && el.getAttribute ? el.getAttribute("data-id") : null;
+    return v != null && /^\d+$/.test(v) ? Number(v) : null;
+  };
   const model = {
     open: false, view: null, status: "idle", info: null, error: null, busy: false, form: freshForm(), changed: false,
-    mail: { status: "idle", info: null, form: null, busy: null, notice: null, error: null },
+    mail: { status: "idle", info: null, form: null, busy: null, busyId: null, notice: null, error: null },
+    // the social networks Outreach can connect from here (supported stays null until asked, false when Outreach has not shipped it)
+    social: { status: "idle", supported: null, providers: [], channels: [], busy: null, notice: null, error: null, origin: "" },
   };
   let overlay = null;
   let opener = null;
@@ -408,6 +533,7 @@
     overlay.setAttribute("aria-labelledby", "connectionsTitle");
     overlay.innerHTML = `<div class="cx-panel" id="connectionsPanel"></div>`;
     document.body.appendChild(overlay);
+    document.dispatchEvent(new root.CustomEvent("connections:created"));
     overlay.addEventListener("click", (e) => {
       const t = e.target;
       const hit = (sel) => t.closest && t.closest(sel);
@@ -415,6 +541,11 @@
       else if (hit('[data-cx="row"]')) setView(hit('[data-cx="row"]').getAttribute("data-view"));
       else if (hit('[data-cx="goto"]')) setView(hit('[data-cx="goto"]').getAttribute("data-view"));
       else if (hit('[data-cx="back"]')) setView(null);
+      else if (hit('[data-cx="social-connect"]')) connectChannel(hit('[data-cx="social-connect"]').getAttribute("data-provider"));
+      else if (hit('[data-cx="social-disconnect"]')) disconnectChannel(hit('[data-cx="social-disconnect"]').getAttribute("data-id"));
+      else if (hit('[data-cx="social-reload"]')) { load(); loadSocial(); }
+      else if (hit('[data-cx="connect-social"]')) connectSocial(hit('[data-cx="connect-social"]').getAttribute("data-network"));
+      else if (hit('[data-cx="open-growth"]')) openGrowth(hit('[data-cx="open-growth"]').getAttribute("data-tab"));
       else if (hit('[data-action="outreach-check"]')) load();
       else if (hit('[data-cx="disconnect"]')) disconnect();
       else if (hit('[data-cx="use-shared"]')) connect({ use_shared: true });
@@ -422,10 +553,18 @@
       else if (hit('[data-cx="forgot"]')) mailAction("forgot");
       else if (hit('[data-cx="resend"]')) mailAction("resend");
       else if (hit('[data-cx="mail-reload"]')) loadMail();
-      else if (hit('[data-cx="mail-edit"]')) { model.mail.form = freshMailForm(model.mail.info); model.mail.notice = model.mail.error = null; render(); }
+      else if (hit('[data-cx="mail-edit"]')) {
+        const first = accountsOf(model.mail.info)[0];
+        const eid = idOf(hit('[data-cx="mail-edit"]'));
+        model.mail.form = freshMailForm(model.mail.info, eid != null ? eid : first ? first.id : null);
+        model.mail.notice = model.mail.error = null;
+        render();
+      }
+      else if (hit('[data-cx="mail-add"]')) { model.mail.form = freshMailForm(model.mail.info, null); model.mail.notice = model.mail.error = null; render(); }
       else if (hit('[data-cx="mail-cancel"]')) { model.mail.form = null; render(); }
-      else if (hit('[data-cx="mail-test"]')) testMail();
-      else if (hit('[data-cx="mail-delete"]')) deleteMail();
+      else if (hit('[data-cx="mail-test"]')) testMail(idOf(hit('[data-cx="mail-test"]')));
+      else if (hit('[data-cx="mail-default"]')) defaultMail(idOf(hit('[data-cx="mail-default"]')));
+      else if (hit('[data-cx="mail-delete"]')) deleteMail(idOf(hit('[data-cx="mail-delete"]')));
     });
     const FIELDS = { key: "key", email: "email", password: "password", company: "company", name: "name" };
     const onMailField = (e, k) => {
@@ -467,9 +606,110 @@
   }
 
   // Open one channel's panel (null goes back to the list). The panel's heading takes focus so a keyboard user lands in it.
+  // Each network is approved on Outreach's own page (its public API cannot link one), so open it in a small window;
+  // coming back to this tab re-reads the account.
+  function connectSocial(network) {
+    const info = (model.info) || {};
+    const base = /^https:\/\//.test(String(info.web_url || "")) ? info.web_url : "https://outreach.aivhub.com";
+    const url = /#/.test(base) ? base : `${base.replace(/\/+$/, "")}/#/social`;
+    const w = root.open(url, "outreachSocial", "popup=yes,width=560,height=760");
+    if (!w) root.open(url, "_blank", "noopener");
+  }
+
+  // keepMessage: read the list again but leave the notice or error that the click just produced on screen
+  async function loadSocial(quiet, keepMessage) {
+    const sc = model.social;
+    if (sc.status === "loading") return;
+    sc.status = "loading";
+    if (!quiet) render();
+    try {
+      const r = await call("GET", "/api/growth/social/channels");
+      Object.assign(sc, { status: "ok", supported: r.supported !== false, providers: r.providers || [], channels: r.channels || [], origin: r.outreach_origin || "", error: keepMessage ? sc.error : null });
+    } catch (e) {
+      Object.assign(sc, { status: "error", supported: null, error: null }); // Outreach is not connected or not reachable: the older steps still show
+    }
+    render();
+  }
+
+  // Open the network's sign-in in a small window. The blank window is opened inside the click so a pop-up blocker allows it;
+  // the sign-in link is put in it once Outreach has answered. When the window closes, or tells us it is done, the list is read again.
+  async function connectChannel(provider) {
+    const sc = model.social;
+    if (sc.busy) return;
+    sc.busy = provider;
+    sc.error = sc.notice = null;
+    render();
+    const w = root.open("about:blank", "outreachSocial", "popup=yes,width=560,height=760");
+    try {
+      const r = await call("POST", "/api/growth/social/channels/connect", { provider });
+      if (w && !w.closed) {
+        w.location.href = r.auth_url;
+        const timer = root.setInterval(() => {
+          if (!w.closed) return;
+          root.clearInterval(timer);
+          afterChannelWindow();
+        }, 700);
+      } else {
+        root.open(r.auth_url, "_blank", "noopener");
+        sc.notice = "Your browser blocked the small window, so it opened in a new tab. When you have finished there, come back here and choose Check again.";
+      }
+    } catch (e) {
+      if (w && !w.closed) w.close();
+      sc.error = e.message;
+    }
+    sc.busy = null;
+    render();
+  }
+
+  function afterChannelWindow() {
+    model.changed = true;
+    loadSocial(true);
+    load();
+  }
+
+  async function disconnectChannel(id) {
+    const sc = model.social;
+    if (sc.busy || !id) return;
+    sc.busy = id;
+    sc.error = sc.notice = null;
+    render();
+    try {
+      await call("DELETE", `/api/growth/social/channels/${encodeURIComponent(id)}`);
+      sc.notice = "Disconnected. You can connect it again whenever you like.";
+      model.changed = true;
+    } catch (e) {
+      sc.error = e.message;
+    }
+    sc.busy = null;
+    await loadSocial(true, true);
+    load();
+  }
+
+  // The sign-in window tells this page when it is finished: Outreach's own message, or the page TenderFlow shows at the end.
+  root.addEventListener("message", (e) => {
+    const d = e && e.data;
+    if (!d || typeof d !== "object" || typeof d.type !== "string") return;
+    const fromOutreach = d.type === "outreach.channel" && (e.origin === model.social.origin || e.origin === OUTREACH_WEB);
+    const fromHere = d.type === "tf.outreach.channel" && e.origin === root.location.origin;
+    if (!fromOutreach && !fromHere) return;
+    const name = channelName(d.provider);
+    model.social.notice = d.status === "connected" ? `${name} is connected.` : `${name} could not be connected. Try again.`;
+    afterChannelWindow();
+  });
+
+  // leave Connections and land on the Social or Calls tab of Growth Studio
+  function openGrowth(tab) {
+    close();
+    const byId = (id) => document.getElementById(id);
+    const btn = byId("btnGrowthStudio");
+    if (btn) btn.click();
+    root.setTimeout(() => { const t = byId(tab === "calls" ? "gsTabCalls" : "gsTabSocial"); if (t) t.click(); }, 150);
+  }
+
   function setView(view) {
     model.view = view;
     render();
+    if (view === "social" && outreachState(model) === "ok" && model.social.status !== "loading") loadSocial(true);
     const panel = document.getElementById("connectionsPanel");
     const target = panel && (view ? panel.querySelector(`[data-pane="${view}"] .cx-pane__title`) : panel.querySelector(".cx-chan"));
     if (target) target.focus();
@@ -502,6 +742,7 @@
     try {
       model.info = await call("GET", "/api/growth/outreach/status");
       model.status = "ok";
+      if (outreachState(model) === "ok" && model.social.status === "idle") loadSocial(true);
     } catch (e) {
       model.status = "error";
       model.error = e.message;
@@ -519,7 +760,7 @@
     try {
       mm.info = await call("GET", "/api/growth/email-account");
       mm.status = "ok";
-      if (!mm.info.account && !mm.form) mm.form = freshMailForm(mm.info);
+      if (!accountsOf(mm.info).length && !mm.form) mm.form = freshMailForm(mm.info, null);
     } catch (e) {
       mm.status = "error";
       mm.error = e.message;
@@ -534,7 +775,7 @@
     const mm = model.mail;
     const f = mm.form;
     if (!f || f.busy) return;
-    const editing = !!(mm.info && mm.info.account);
+    const editing = f.editId != null;
     if (!String(f.from_email).trim() || !String(f.username).trim()) { f.error = "Enter the address to send from, and the login."; render(); return; }
     if (!String(f.host).trim()) { f.error = "Enter the mail server."; render(); return; }
     if (!editing && !f.password) { f.error = "Enter the password (an app password, where your provider asks for one)."; render(); return; }
@@ -542,6 +783,7 @@
       provider: f.provider, from_name: String(f.from_name).trim(), from_email: String(f.from_email).trim(), username: String(f.username).trim(),
       password: f.password, host: String(f.host).trim(), port: Number(f.port), security: f.security, reply_to: String(f.reply_to).trim(), daily_cap: Number(f.daily_cap),
     };
+    if (editing) body.id = f.editId;
     f.busy = true;
     f.error = null;
     f.password = ""; // gone from the page the moment it is sent, whatever the answer
@@ -551,7 +793,7 @@
       mm.status = "ok";
       mm.form = null;
       mm.error = null;
-      mm.notice = "Email account connected. Send a test email to check that it lands.";
+      mm.notice = editing ? "Changes saved." : "Email account connected. Send a test email to check that it lands.";
       model.changed = true;
     } catch (e) {
       f.busy = false;
@@ -560,38 +802,61 @@
     render();
   }
 
-  async function testMail() {
+  async function testMail(id) {
     const mm = model.mail;
     if (mm.busy) return;
     mm.busy = "test";
+    mm.busyId = id;
     mm.error = mm.notice = null;
     render();
     try {
-      const res = await call("POST", "/api/growth/email-account/test", {});
+      const res = await call("POST", "/api/growth/email-account/test", id == null ? {} : { id });
       mm.notice = `Test email sent to ${res.sent_to}. Check that inbox (and your spam folder).`;
     } catch (e) {
       mm.error = e.message;
     }
     try { mm.info = await call("GET", "/api/growth/email-account"); } catch (e) { /* what is shown stays */ }
-    mm.busy = null;
+    mm.busy = mm.busyId = null;
     render();
   }
 
-  async function deleteMail() {
+  async function defaultMail(id) {
     const mm = model.mail;
-    if (mm.busy) return;
-    if (!(await ask("Disconnect this email account? Growth Studio will not send from it until you set it up again. Emails already sent are not affected."))) return;
-    mm.busy = "delete";
+    if (mm.busy || id == null) return;
+    mm.busy = "default";
+    mm.busyId = id;
     mm.error = mm.notice = null;
     render();
     try {
-      mm.info = await call("DELETE", "/api/growth/email-account");
-      mm.form = freshMailForm(mm.info);
+      mm.info = await call("POST", "/api/growth/email-account/default", { id });
+      const now = accountsOf(mm.info).find((x) => x.id === id);
+      mm.notice = now ? `${now.from_email} is now the default. Growth Studio sends from it unless you choose another address.` : null;
       model.changed = true;
     } catch (e) {
       mm.error = e.message;
     }
-    mm.busy = null;
+    mm.busy = mm.busyId = null;
+    render();
+  }
+
+  async function deleteMail(id) {
+    const mm = model.mail;
+    if (mm.busy) return;
+    const target = accountsOf(mm.info).find((x) => x.id === id) || accountsOf(mm.info)[0];
+    const addr = target ? target.from_email : "it";
+    if (!(await ask(`Disconnect this email account? Growth Studio will not send from ${addr} until you set it up again. Emails already sent are not affected.`))) return;
+    mm.busy = "delete";
+    mm.busyId = id;
+    mm.error = mm.notice = null;
+    render();
+    try {
+      mm.info = await call("DELETE", "/api/growth/email-account" + (id == null ? "" : `?id=${id}`));
+      mm.form = accountsOf(mm.info).length ? null : freshMailForm(mm.info, null);
+      model.changed = true;
+    } catch (e) {
+      mm.error = e.message;
+    }
+    mm.busy = mm.busyId = null;
     render();
   }
 
@@ -743,6 +1008,10 @@
       const b = document.getElementById(id);
       if (b) b.addEventListener("click", () => open(b));
     }
+    // back from Outreach's own site after linking an account or number: look again without a click
+    root.addEventListener("focus", () => {
+      if (model.open && (model.view === "social" || model.view === "calls") && model.status !== "loading") load();
+    });
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && model.open) { e.stopPropagation(); close(); }
     }, true);
@@ -756,6 +1025,7 @@
   }
   api.open = open;
   api.close = close;
+  root.closeConnections = close; // shell.js closes it like the other sections
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
   else start();
 })(typeof window !== "undefined" ? window : globalThis);

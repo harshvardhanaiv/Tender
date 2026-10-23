@@ -276,10 +276,16 @@ def test_connection(account: Mapping[str, Any], password: str, factory: SmtpFact
         pass
 
 
+_HTML_FRAME = ('<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222">'
+               "{}</body></html>")
+
+
 def build_message(account: Mapping[str, Any], to: str, subject: str, body: str,
-                  unsubscribe_to: str | None = None) -> EmailMessage:
-    """A plain-text message from the user. Carries a mailto List-Unsubscribe, which gives mail clients their
-    unsubscribe affordance without pointing at a TenderFlow URL."""
+                  unsubscribe_to: str | None = None, html: str | None = None,
+                  attachments: Iterable[Mapping[str, Any]] | None = None) -> EmailMessage:
+    """A message from the user: plain text, or text plus an HTML version (so a mail client that cannot show formatting still
+    reads it), with files attached when there are any ({"filename", "content_type", "data"}). Carries a mailto List-Unsubscribe,
+    which gives mail clients their unsubscribe affordance without pointing at a TenderFlow URL."""
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = formataddr((account.get("from_name") or "", account["from_email"]))
@@ -292,6 +298,11 @@ def build_message(account: Mapping[str, Any], to: str, subject: str, body: str,
     unsub = unsubscribe_to or account["from_email"]
     msg["List-Unsubscribe"] = f"<mailto:{unsub}?subject=unsubscribe>"
     msg.set_content(body)
+    if html:
+        msg.add_alternative(_HTML_FRAME.format(html), subtype="html")
+    for f in attachments or ():
+        maintype, _, subtype = (f.get("content_type") or "application/octet-stream").partition("/")
+        msg.add_attachment(bytes(f["data"]), maintype=maintype or "application", subtype=subtype or "octet-stream", filename=f["filename"])
     return msg
 
 
@@ -299,7 +310,7 @@ def send_batch(account: Mapping[str, Any], password: str, items: Iterable[Mappin
                on_result: Callable[[Mapping[str, Any], dict[str, Any]], None] | None = None,
                factory: SmtpFactory | None = None,
                pause: float = SEND_PAUSE_SECONDS) -> list[dict[str, Any]]:
-    """Send each {"key", "to", "subject", "body"} item over one connection, pausing between messages.
+    """Send each {"key", "to", "subject", "body", optional "html" and "attachments"} item over one connection, pausing between messages.
 
     `on_result` is called as soon as each message has an outcome, so the caller can record it before the
     next one is attempted. Stops after a fatal failure (bad login, unreachable server); the remaining items
@@ -332,7 +343,8 @@ def send_batch(account: Mapping[str, Any], password: str, items: Iterable[Mappin
             if i and pause:
                 time.sleep(pause)
             try:
-                msg = build_message(account, item["to"], item["subject"], item["body"])
+                msg = build_message(account, item["to"], item["subject"], item["body"],
+                                    html=item.get("html"), attachments=item.get("attachments"))
                 smtp.send_message(msg)
                 record(item, {"key": item.get("key"), "ok": True, "error": None,
                               "message_id": msg["Message-ID"], "fatal": False})

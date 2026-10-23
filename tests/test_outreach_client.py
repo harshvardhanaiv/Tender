@@ -47,6 +47,81 @@ def raises(fn, status=None, code=None):
     raise AssertionError("expected OutreachError")
 
 
+def test_social_channel_calls_go_through_run_with_the_users_key():
+    fake = Fake(body={"providers": []})
+    c = client(fake)
+    c.channel_providers()
+    c.channel_list()
+    c.channel_list(refresh=True)
+    c.channel_connect("linkedin", "https://app.example/outreach/connected")
+    c.channel_disconnect("ch_5b3e92a1")
+    bodies = [json.loads(x["data"]) for x in fake.calls]
+    assert [(x["method"], x["url"]) for x in fake.calls] == [("POST", "https://api.example.test/v1/run")] * 5
+    assert bodies[0] == {"plugin": "social", "action": "channel.providers"}
+    assert bodies[1] == {"plugin": "social", "action": "channel.list"}
+    assert bodies[2] == {"plugin": "social", "action": "channel.list", "data": {"refresh": True}}
+    assert bodies[3] == {"plugin": "social", "action": "channel.connect", "data": {"provider": "linkedin", "return_url": "https://app.example/outreach/connected"}}
+    assert bodies[4] == {"plugin": "social", "action": "channel.disconnect", "data": {"id": "ch_5b3e92a1"}}
+    assert all(x["headers"]["Authorization"] == f"Bearer {KEY}" for x in fake.calls)
+
+
+def test_a_network_or_channel_id_is_checked_before_it_is_sent():
+    fake = Fake()
+    c = client(fake)
+    for bad in ("", "LinkedIn", "linked in", "../x", "a" * 40, None):
+        raises(lambda b=bad: c.channel_connect(b, "https://app.example/x"), 400, "invalid_request")
+    for bad in ("", "a b", "x/../y", "ab", None):
+        raises(lambda b=bad: c.channel_disconnect(b), 400, "invalid_request")
+    assert fake.calls == []
+
+
+def test_the_networks_outreach_has_switched_on_are_read_in_any_of_the_likely_shapes():
+    shapes = [
+        {"providers": [{"provider": "linkedin", "available": True}, {"provider": "threads", "available": False}]},
+        {"data": {"providers": ["linkedin", "threads"]}},
+        {"providers": [{"id": "linkedin", "label": "LinkedIn page", "enabled": True}, {"id": "threads", "enabled": False}]},
+        [{"provider": "linkedin"}, {"provider": "threads", "available": False}],
+    ]
+    for raw in shapes:
+        got = oc.channel_providers_summary(raw)
+        assert [g["provider"] for g in got] == ["linkedin", "threads"], raw
+        assert got[0]["available"] is True and got[1]["available"] is (True if raw == shapes[1] else False), raw
+    assert oc.channel_providers_summary({"providers": [{"provider": "x"}, {"provider": "X "}, {"provider": "bad name!"}, 5, None]}) == [
+        {"provider": "x", "label": "X", "available": True}]
+    assert oc.channel_providers_summary({}) == [] and oc.channel_providers_summary("nope") == []
+    assert oc.channel_providers_summary({"providers": [{"provider": "linkedin", "label": "L" * 100}]})[0]["label"] == "L" * 40
+
+
+def test_the_connected_accounts_are_read_with_a_status_that_is_never_mistaken_for_working():
+    raw = {"channels": [
+        {"id": "ch_1", "provider": "linkedin", "display_name": "Acme Ltd", "status": "connected", "connected_at": "2026-10-23T09:00:00Z"},
+        {"id": "ch_2", "provider": "facebook", "name": "Acme Page", "status": "needs_reauth"},
+        {"id": "ch_3", "provider": "x", "handle": "@acme", "status": "error"},
+        {"id": "ch_4", "provider": "threads", "status": "something-new"},
+        {"id": "ch_5", "provider": "instagram"},
+        {"id": "bad id", "provider": "linkedin"}, {"provider": "linkedin"}, {"id": "ch_6"}, "junk",
+    ]}
+    got = oc.channel_list_summary(raw)
+    assert [(g["id"], g["provider"], g["status"]) for g in got] == [
+        ("ch_1", "linkedin", "connected"), ("ch_2", "facebook", "needs_reauth"), ("ch_3", "x", "error"), ("ch_4", "threads", "error"), ("ch_5", "instagram", "connected")]
+    assert got[0]["name"] == "Acme Ltd" and got[0]["label"] == "LinkedIn" and got[2]["name"] == "@acme"
+    assert oc.channel_list_summary({"data": {"channels": raw["channels"][:1]}})[0]["id"] == "ch_1"
+    assert oc.channel_list_summary({}) == [] and oc.channel_list_summary(None) == []
+
+
+def test_the_connect_answer_gives_a_safe_link_only():
+    assert oc.connect_summary({"auth_url": "https://www.linkedin.com/oauth/v2/authorization?client_id=1&state=abc"})["auth_url"].startswith("https://www.linkedin.com/")
+    long = "https://x.example/auth?state=" + "a" * 900
+    assert oc.connect_summary({"auth_url": long})["auth_url"] == long, "an OAuth link is longer than an ordinary one"
+    for bad in ("javascript:alert(1)", "http://evil.example/x", "https://", "https://a.example/x y", 'https://a.example/"><script>', "https://u@evil.example/", None, "", 5):
+        assert oc.connect_summary({"auth_url": bad})["auth_url"] is None, bad
+    # a test key answers with the return address itself, which is plain http on a developer's machine
+    assert oc.connect_summary({"auth_url": "http://localhost:8092/outreach/connected?status=connected&provider=linkedin"})["auth_url"]
+    assert oc.connect_summary({"data": {"auth_url": "https://a.example/x", "connected": True}}) == {"auth_url": "https://a.example/x", "connected": True}
+    assert oc.connect_summary("nope") == {"auth_url": None, "connected": False}
+    assert oc.provider_label("linkedin") == "LinkedIn" and oc.provider_label("my_net") == "My Net"
+
+
 def test_key_mode_and_mask():
     assert oc.key_mode(KEY) == "test"
     assert oc.key_mode(" " + LIVE + " ") == "live"

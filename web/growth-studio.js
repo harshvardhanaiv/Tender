@@ -53,7 +53,9 @@
 
   async function api(method, url, body, signal) {
     const init = { method, headers: {}, credentials: "same-origin" };
-    if (body !== undefined) {
+    if (body instanceof FormData) {
+      init.body = body; // files: the browser sets the multipart type itself
+    } else if (body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(body);
     }
@@ -210,12 +212,15 @@
   function renderBuilder() {
     const b = state.builder;
     if (b.detail && b.detail.targets) b.detail.targets.forEach(withLookup);
+    const typing = document.activeElement && document.activeElement.id === "gsBodyRich";
     keepFocus(() => {
       byId(PANES.builder).innerHTML = V.builderPane({
         status: b.status, error: b.error, detail: b.detail, draft: b.draft, dirty: b.dirty, preview: b.preview, previewTarget: b.previewTarget,
-        warnings: b.warnings, drafting: b.drafting, options: state.options, aiNote: b.aiNote, outreach: b.outreach,
+        warnings: b.warnings, drafting: b.drafting, options: state.options, aiNote: b.aiNote, outreach: b.outreach, profiles: state.profiles,
       });
+      V.fillRich(byId(PANES.builder));
     });
+    if (typing) caretToEnd(byId("gsBodyRich")); // the editor was replaced while the user was in it: put the cursor back at the end
   }
 
   function renderPerformance() {
@@ -320,6 +325,9 @@
       syncFilterBar();
       saveTargeting.flush();
       loadSignals();
+      // Looking at a campaign that nobody has been emailed from yet: it follows the company chosen at the top, so the email changes with it
+      const d = state.tab === "builder" && state.builder.detail;
+      if (d && ctx.profile_id && d.campaign.profile_id !== ctx.profile_id && !d.targets.some((t) => t.sent_at)) await changeCampaignProfile(String(ctx.profile_id));
     });
   }
 
@@ -511,7 +519,7 @@
     b.id = detail.campaign.id;
     b.status = "ok";
     if (reset || !b.dirty || !b.draft) {
-      b.draft = { subject: detail.campaign.subject, body: detail.campaign.body };
+      b.draft = { subject: detail.campaign.subject, body: detail.campaign.body, html: detail.campaign.body_html || "" };
       b.dirty = false;
     }
     b.previewTarget = pickPreviewTarget(detail, b.previewTarget);
@@ -583,12 +591,12 @@
         // what this browser used last, if it can still be used; else the user's own email account when they have one
         let saved = null;
         try { saved = localStorage.getItem("tf_outreach_mailbox"); } catch (e) { saved = null; }
-        const own = !!(info.mail_account && info.mail_account.verified);
+        const own = !!V.ownAccount(info);
         const list = (info.wallet && info.wallet.mailboxes) || [];
-        if (saved === "smtp" && own) o.mailbox = "smtp";
+        if (V.isOwnChoice(saved) && own) o.mailbox = V.senderChoice(info, saved); // an account that is gone gives way to the default
         else if (saved && list.some((m) => String(m.id || m.email) === saved && m.can_send !== false)) o.mailbox = saved;
         else if (saved === "" && info.ready) o.mailbox = "";
-        else o.mailbox = own ? "smtp" : "";
+        else o.mailbox = own ? V.senderChoice(info, null) : "";
       }
       o.drafts = drafts.drafts;
       o.status = "ok";
@@ -625,17 +633,99 @@
     if (!b.detail || !b.detail.targets.some((t) => !t.opted_out) || !byId("gsPreview")) return;
     const seq = ++b.previewSeq;
     try {
-      const p = await api("POST", `/api/growth/campaigns/${b.id}/preview`, { target_id: b.previewTarget, subject: b.draft.subject, body: b.draft.body });
+      const p = await api("POST", `/api/growth/campaigns/${b.id}/preview`, { target_id: b.previewTarget, subject: b.draft.subject, ...bodyFields(b.draft) });
       if (seq !== b.previewSeq || !byId("gsPreview")) return;
       b.preview = p;
       b.previewTarget = p.target_id;
       b.warnings = p.warnings;
       byId("gsPreview").innerHTML = V.previewHtml(p, b.detail.targets, b.previewTarget);
+      V.fillRich(byId("gsPreview"));
       byId("gsWarnings").innerHTML = V.warningsHtml(p.warnings);
     } catch (err) {
       if (seq === b.previewSeq && byId("gsPreview")) byId("gsPreview").innerHTML = `<p class="gs-hint gs-hint--warn">${V.esc(err.message)}</p>`;
     }
   }, 350);
+
+  // What the message is sent to the server as: the formatted version once the editor has been used, else the plain text.
+  function bodyFields(draft) {
+    return draft.html ? { body_html: draft.html } : { body: draft.body };
+  }
+
+  function caretToEnd(el) {
+    if (!el) return;
+    el.focus();
+    const sel = window.getSelection && window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  // The editor changed (typing, a toolbar button, a paste, an inserted field): keep the draft, its plain-text twin and the preview in step.
+  function richChanged() {
+    const el = byId("gsBodyRich");
+    if (!el) return;
+    const b = state.builder;
+    b.draft.html = el.innerHTML;
+    b.draft.body = (el.innerText || "").replace(/\n{3,}/g, "\n\n").trim();
+    b.lastField = "body";
+    markDirty();
+    refreshPreview();
+  }
+
+  const RICH_COMMANDS = { bold: "bold", italic: "italic", underline: "underline", ul: "insertUnorderedList", ol: "insertOrderedList", clear: "removeFormat" };
+
+  function richCommand(cmd) {
+    const el = byId("gsBodyRich");
+    if (!el) return;
+    el.focus();
+    try {
+      document.execCommand("defaultParagraphSeparator", false, "p");
+    } catch (err) {
+      /* an older browser keeps its default */
+    }
+    if (cmd === "link") {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) return toast("Select the text to turn into a link first.", { error: true });
+      const url = (window.prompt("Link address (https://… or an email address)", "https://") || "").trim();
+      if (!url) return;
+      const href = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(url) ? "mailto:" + url : url;
+      if (!/^(https?:\/\/|mailto:)[^\s<>"']+$/i.test(href)) return toast("A link must start with https:// or http://, or be an email address.", { error: true });
+      document.execCommand("createLink", false, href);
+    } else if (RICH_COMMANDS[cmd]) {
+      document.execCommand(RICH_COMMANDS[cmd], false, null);
+      if (cmd === "clear") document.execCommand("unlink", false, null);
+    }
+    richChanged();
+  }
+
+  // Pasted text keeps its bold, lists and links but nothing else (no fonts, colours or page styles from Word or a web page).
+  function onPaste(event) {
+    const t = event.target;
+    if (!t || t.id !== "gsBodyRich") return;
+    const data = event.clipboardData;
+    if (!data) return;
+    event.preventDefault();
+    const html = data.getData("text/html");
+    if (html) document.execCommand("insertHTML", false, V.safeHtml(html));
+    else document.execCommand("insertText", false, data.getData("text/plain"));
+    richChanged();
+  }
+
+  async function uploadFiles(files) {
+    const b = state.builder;
+    const list = Array.from(files || []);
+    if (!list.length || !b.id) return;
+    const form = new FormData();
+    list.forEach((f) => form.append("files", f, f.name));
+    const res = await api("POST", `/api/growth/campaigns/${b.id}/attachments`, form);
+    applyDetail(res, false);
+    const added = res.attachments.length;
+    if ((res.rejected || []).length) toast(res.rejected.join(" "), { error: true });
+    else toast(`${V.plural(list.length, "file")} attached. ${added} in all.`);
+  }
 
   function markDirty() {
     const b = state.builder;
@@ -649,7 +739,7 @@
 
   async function saveMessage() {
     const b = state.builder;
-    const res = await api("PATCH", `/api/growth/campaigns/${b.id}`, { subject: b.draft.subject, body: b.draft.body });
+    const res = await api("PATCH", `/api/growth/campaigns/${b.id}`, { subject: b.draft.subject, ...bodyFields(b.draft) });
     b.dirty = false;
     applyDetail(res, true);
     toast("Message saved.");
@@ -675,12 +765,32 @@
       const res = await api("PATCH", url, fields);
       b.detail = res;
       const target = targetId && res.targets.find((t) => t.id === targetId);
-      const row = target && document.querySelector(`#gsPaneBuilder tr.gs-target[data-id="${targetId}"]`);
+      const row = target && document.querySelector(`#gsPaneBuilder .gs-target[data-id="${targetId}"]`);
       if (row && target) row.outerHTML = V.targetRow(withLookup(target));
       refreshPreview();
     } catch (err) {
       renderBuilder(); // put the control back to what the server has
       throw err;
+    }
+  }
+
+  // The company this campaign speaks for. {{company_name}}, {{sender_name}} and the preview follow it at once; text that was
+  // already written (a template or AI draft names the company in plain words) only changes if the user lets it be redrafted.
+  async function changeCampaignProfile(value) {
+    const b = state.builder;
+    let res;
+    try {
+      res = await api("PATCH", `/api/growth/campaigns/${b.id}`, { profile_id: value ? Number(value) : null });
+    } catch (err) {
+      renderBuilder(); // put the control back to what the server has
+      throw err;
+    }
+    state.campaigns.list = null;
+    applyDetail(res, false);
+    const name = res.campaign.profile_name || "this company";
+    toast(`This campaign now speaks for ${name}.`);
+    if (await confirmDialog(`Write the message again for ${name}? The text now in the editor is replaced. If you keep it, only merge fields such as {{company_name}} change.`)) {
+      await draft("template");
     }
   }
 
@@ -697,7 +807,7 @@
       const body = { mode };
       if (mode === "ai" && b.aiNote.trim()) body.instructions = b.aiNote.trim();
       const res = await api("POST", `/api/growth/campaigns/${b.id}/draft`, body);
-      b.draft = { subject: res.subject, body: res.body };
+      b.draft = { subject: res.subject, body: res.body, html: "" };
       b.dirty = false;
       markDirty();
       toast(mode === "ai" ? "AI draft ready. Read it, edit it and save it: nothing is saved until you do." : "Template draft ready. Edit it and save it.");
@@ -868,6 +978,11 @@
       input.scrollIntoView({ block: "center", behavior: "smooth" });
       input.focus();
     },
+    // the four steps above the builder: take the reader to that part of the page
+    "goto-step": (a) => {
+      const el = byId(a.dataset.target);
+      if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+    },
     // a named person's address from the notice, accepted by the user: saved like one they typed
     "use-suggestion": (a) => run(() => patchQuietly({ contact_email: a.dataset.email }, Number(a.dataset.id))),
     "outreach-send": () =>
@@ -876,9 +991,9 @@
         const o = b.outreach;
         const n = b.detail ? b.detail.eligible : 0;
         const choice = V.senderChoice(o.info, o.mailbox);
-        const own = V.ownAccount(o.info);
-        const picked = choice && choice !== "smtp" && o.info && o.info.wallet && (o.info.wallet.mailboxes || []).find((m) => String(m.id || m.email) === choice);
-        const via = choice === "smtp" ? `from ${own.from_email}` : picked ? `from ${picked.email}` : "from your connected Outreach mailbox";
+        const own = V.isOwnChoice(choice) ? V.accountForChoice(o.info, choice) : null;
+        const picked = choice && !own && o.info && o.info.wallet && (o.info.wallet.mailboxes || []).find((m) => String(m.id || m.email) === choice);
+        const via = own ? `from ${own.from_email}` : picked ? `from ${picked.email}` : "from your connected Outreach mailbox";
         if (!(await confirmDialog(`Send this email now to up to ${V.plural(n, "buyer")}, ${via}? Real emails will go out and this cannot be undone.`))) return;
         o.pushing = true;
         renderBuilder();
@@ -940,7 +1055,22 @@
         toast("Campaign deleted.");
         loadSignals();
       }),
+    "rich-cmd": (a) => richCommand(a.dataset.cmd),
+    "attach-files": () => byId("gsAttachInput")?.click(),
+    "remove-attachment": (a) =>
+      run(async () => {
+        applyDetail(await api("DELETE", `/api/growth/campaigns/${state.builder.id}/attachments/${a.dataset.id}`), false);
+        toast("File removed.");
+      }),
     "insert-field": (a) => {
+      const rich = state.builder.lastField !== "subject" && byId("gsBodyRich");
+      if (rich) {
+        // into the formatted editor at the cursor
+        rich.focus();
+        if (!rich.contains(window.getSelection().anchorNode)) caretToEnd(rich);
+        document.execCommand("insertText", false, "{{" + a.dataset.name + "}}");
+        return richChanged();
+      }
       const field = byId(state.builder.lastField === "subject" ? "gsSubject" : "gsBody");
       if (!field) return;
       const out = V.insertAt(field.value, field.selectionStart, field.selectionEnd, "{{" + a.dataset.name + "}}");
@@ -954,6 +1084,11 @@
   };
 
   function onClick(event) {
+    // the small menus (Export, ⋯, Insert field) close after a choice or a click anywhere else, but not on their own button
+    const own = event.target.closest("details.gs-menu > summary");
+    document.querySelectorAll("#gsPaneBuilder details.gs-menu[open]").forEach((d) => {
+      if (!own || own.parentNode !== d) d.open = false;
+    });
     const a = event.target.closest("[data-action]");
     if (!a || a.disabled || a.tagName === "INPUT" || a.tagName === "SELECT") return;
     const handler = CLICK[a.dataset.action];
@@ -987,6 +1122,11 @@
       case "gsPreviewTarget":
         state.builder.previewTarget = Number(t.value);
         return refreshPreview.flush();
+      case "gsAttachInput": {
+        const chosen = Array.from(t.files || []);
+        t.value = ""; // the same file can be chosen again
+        return void run(() => uploadFiles(chosen));
+      }
       default:
     }
     const d = t.dataset || {};
@@ -1017,6 +1157,7 @@
     }
     if (d.field === "campaign-name") return void run(() => patchQuietly({ name: t.value }));
     if (d.field === "campaign-channel") return void run(() => patchQuietly({ channel: t.value }));
+    if (d.field === "campaign-profile") return void run(() => changeCampaignProfile(t.value));
     if (d.field === "campaign-status") return void run(() => patchQuietly({ status: t.value }));
     if (d.field === "performance-days") {
       state.performance.days = t.value;
@@ -1040,6 +1181,7 @@
       return;
     }
     const field = t.dataset && t.dataset.field;
+    if (field === "body-rich") return richChanged();
     if (field === "subject" || field === "body") {
       state.builder.draft[field] = t.value;
       state.builder.lastField = field;
@@ -1051,6 +1193,7 @@
   function onFocusIn(event) {
     const field = event.target.dataset && event.target.dataset.field;
     if (field === "subject" || field === "body") state.builder.lastField = field;
+    if (field === "body-rich") state.builder.lastField = "body";
   }
 
   function onKeydown(event) {
@@ -1140,6 +1283,7 @@
     host.addEventListener("click", onClick);
     host.addEventListener("change", onChange);
     host.addEventListener("input", onInput);
+    host.addEventListener("paste", onPaste);
     host.addEventListener("keydown", onKeydown);
     host.addEventListener("focusin", onFocusIn);
     host.addEventListener("toggle", (event) => {

@@ -334,6 +334,195 @@ def test_a_request_without_the_csrf_token_is_refused():
     c = client(USER_A)
     assert call(c, "put", "/api/growth/email-account", FORM, headers={})[0] in (400, 403)
     assert call(c, "delete", "/api/growth/email-account", headers={})[0] in (400, 403)
+    assert call(c, "post", "/api/growth/email-account/default", {"id": 1}, headers={})[0] in (400, 403)
+
+
+# ── several accounts ──────────────────────────────────────────────────────────────────────────
+
+def second(**changes):
+    return {"from_name": "Bids Team", "from_email": "bids@acme.example", "username": "bids@acme.example", **changes}
+
+
+def ids_of(state):
+    return [a["id"] for a in state["accounts"]]
+
+
+def test_a_user_can_connect_several_accounts_the_first_is_the_default_and_the_status_lists_them_all():
+    setup()
+    c = client(USER_A)
+    code, body, _ = save(c)
+    assert code == 200 and [a["is_default"] for a in body["accounts"]] == [True] and body["max_accounts"] == 5
+    code, body, text = save(c, **second())
+    assert code == 200 and APP_PASSWORD not in text
+    assert [a["from_email"] for a in body["accounts"]] == ["sam@acme.example", "bids@acme.example"]
+    assert [a["is_default"] for a in body["accounts"]] == [True, False] and body["account"]["from_email"] == "sam@acme.example"
+    assert SMTP.logins == [("sam@acme.example", APP_PASSWORD), ("bids@acme.example", APP_PASSWORD)], "each login is tried before it is kept"
+    code, status, _ = call(c, "get", "/api/growth/outreach/status")
+    assert [a["from_email"] for a in status["mail_accounts"]] == ["sam@acme.example", "bids@acme.example"]
+    assert status["mail_account"]["from_email"] == "sam@acme.example"
+    assert account(client(USER_B))["accounts"] == [], "another user sees none of them"
+
+
+def test_adding_an_address_that_is_already_connected_replaces_it_and_a_limit_stops_a_sixth_account():
+    setup()
+    c = client(USER_A)
+    save(c)
+    code, body, _ = save(c, from_email="SAM@acme.example", daily_cap=10)
+    assert code == 200 and len(body["accounts"]) == 1 and body["accounts"][0]["daily_cap"] == 10, "same address, any case: one account"
+    for n in range(2, 6):
+        assert save(c, **second(from_email=f"box{n}@acme.example", username=f"box{n}@acme.example"))[0] == 200
+    SMTP.connections.clear()
+    code, body, _ = save(c, **second(from_email="box6@acme.example", username="box6@acme.example"))
+    assert code == 409 and body["code"] == "too_many_accounts" and "up to 5" in body["error"]
+    assert len(account(c)["accounts"]) == 5
+    assert save(c, from_email="box3@acme.example", daily_cap=7)[0] == 200, "an account already there can still be changed at the limit"
+
+
+def test_an_account_is_changed_by_its_id_and_a_taken_address_or_a_stranger_s_id_is_refused():
+    setup()
+    a, b = client(USER_A), client(USER_B)
+    save(a)
+    first, other = ids_of(save(a, **second())[1])
+    code, body, _ = save(a, id=other, password="", from_email="bids@acme.example", username="bids@acme.example", daily_cap=33, from_name="Bids")
+    assert code == 200 and [x["daily_cap"] for x in body["accounts"] if x["id"] == other] == [33] and len(body["accounts"]) == 2
+    code, body, _ = save(a, id=other, from_email="sam@acme.example", username="sam@acme.example")
+    assert code == 409 and body["code"] == "duplicate_account", "that address belongs to the other account"
+    code, body, _ = save(b, id=first, **second(from_email="bo@acme.example", username="bo@acme.example"))
+    assert code == 404 and body["code"] == "no_mail_account", "someone else's account is not there for this user"
+    assert [x["from_email"] for x in account(a)["accounts"]] == ["sam@acme.example", "bids@acme.example"] and account(b)["accounts"] == []
+    assert save(a, id="abc")[0] == 400 and save(a, id=True)[0] == 400
+
+
+def test_the_default_can_be_changed_and_when_it_is_forgotten_the_oldest_other_account_takes_over():
+    setup()
+    a, b = client(USER_A), client(USER_B)
+    save(a)
+    first, second_id = ids_of(save(a, **second())[1])
+    third = ids_of(save(a, **second(from_email="ops@acme.example", username="ops@acme.example"))[1])[2]
+    code, body, _ = call(a, "post", "/api/growth/email-account/default", {"id": third})
+    assert code == 200 and body["account"]["id"] == third and [x["id"] for x in body["accounts"]][0] == third
+    assert [x["id"] for x in body["accounts"] if x["is_default"]] == [third]
+    assert call(a, "post", "/api/growth/email-account/default", {})[0] == 400
+    assert call(b, "post", "/api/growth/email-account/default", {"id": first})[0] == 404, "not another user's account"
+    assert account(a)["account"]["id"] == third
+    code, body, _ = call(a, "delete", f"/api/growth/email-account?id={third}")
+    assert code == 200 and ids_of(body) == [first, second_id] and body["account"]["id"] == first and body["accounts"][0]["is_default"]
+    code, body, _ = call(a, "delete", f"/api/growth/email-account?id={second_id}")
+    assert ids_of(body) == [first] and body["accounts"][0]["is_default"], "a default that is not the one removed stays"
+    assert call(b, "delete", f"/api/growth/email-account?id={first}")[0] == 200 and ids_of(account(a)) == [first], "B cannot remove A's account"
+    assert call(a, "delete", "/api/growth/email-account?id=abc")[0] == 400
+    code, body, _ = call(a, "delete", "/api/growth/email-account")
+    assert body["accounts"] == [] and body["account"] is None, "no id: the default account, as before"
+
+
+def test_a_test_email_goes_from_the_account_asked_for():
+    setup()
+    c = client(USER_A)
+    save(c)
+    first, other = ids_of(save(c, **second())[1])
+    SMTP.sent.clear()
+    code, body, _ = call(c, "post", "/api/growth/email-account/test", {"id": other})
+    assert code == 200 and body == {"sent_to": "bids@acme.example"} and SMTP.sent[0]["To"] == "bids@acme.example"
+    assert call(c, "post", "/api/growth/email-account/test", {})[1] == {"sent_to": "sam@acme.example"}, "no id: the default account"
+    assert call(client(USER_B), "post", "/api/growth/email-account/test", {"id": other})[0] == 409
+    SMTP.fail_login = True
+    assert call(c, "post", "/api/growth/email-account/test", {"id": other})[0] == 400
+    by_id = {x["id"]: x for x in account(c)["accounts"]}
+    assert by_id[other]["last_error"] and not by_id[first]["last_error"], "the failure is remembered against the account that failed"
+
+
+def test_send_mail_goes_out_through_the_chosen_account_and_each_account_has_its_own_daily_limit():
+    setup()
+    c = client(USER_A)
+    save(c, daily_cap=1)
+    first, other = ids_of(save(c, **second(daily_cap=50))[1])
+    cid, _ = make_campaign(USER_A)
+    SMTP.sent.clear()
+    code, body, _ = send(c, cid, mailbox="smtp")
+    assert code == 200 and body["mailbox"] == "sam@acme.example" and len(body["sent"]) == 1 and body["deferred"] == 1, "no id: the default account"
+    assert "sam@acme.example" in SMTP.sent[0]["From"]
+    code, body, _ = send(c, cid, mailbox="smtp")
+    assert code == 400 and body["code"] == "daily_limit", "the default account's own limit is used up"
+    SMTP.sent.clear()
+    code, body, _ = send(c, cid, mailbox=f"smtp:{other}")
+    assert code == 200 and body["mailbox"] == "bids@acme.example" and len(body["sent"]) == 1 and FAKE.calls == []
+    assert "Bids Team" in SMTP.sent[0]["From"] and "bids@acme.example" in SMTP.sent[0]["From"]
+    by_id = {x["id"]: x for x in account(c)["accounts"]}
+    assert (by_id[first]["sent_today"], by_id[other]["sent_today"]) == (1, 1), "each send counts against the account it went from"
+    assert base.target_statuses(c, cid)["Alpha Borough Council"] == "sent" and base.target_statuses(c, cid)["Beta District Council"] == "sent"
+
+
+def test_a_send_names_an_account_the_user_owns_and_a_malformed_choice_is_refused():
+    setup()
+    a, b = client(USER_A), client(USER_B)
+    save(a)
+    mine = ids_of(account(a))[0]
+    cid, _ = make_campaign(USER_B)
+    SMTP.connections.clear()
+    code, body, _ = send(b, cid, mailbox=f"smtp:{mine}")
+    assert code == 409 and body["code"] == "no_mail_account" and SMTP.connections == [], "not another user's account"
+    for bad in ("smtp:abc", "smtp:", "smtp:-1", "smtp:1;2", "smtp:99999999999"):
+        code, body, _ = send(b, cid, mailbox=bad)
+        assert code == 400, (bad, body)
+    code, body, _ = send(a, make_campaign(USER_A)[0], mailbox="smtp:999999")
+    assert code == 409 and body["code"] == "no_mail_account", "an account that is gone is not swapped for the default"
+    assert SMTP.connections == [] and FAKE.calls == []
+
+
+def test_sends_recorded_before_accounts_were_told_apart_count_against_the_default_account():
+    setup()
+    c = client(USER_A)
+    save(c)
+    other = ids_of(save(c, **second())[1])[1]
+    cid, _ = make_campaign(USER_A)
+    assert send(c, cid)[0] == 200
+    conn = db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE growth_outreach_drafts SET mail_account_id = NULL WHERE username = %s AND mode = 'smtp'", (USER_A,))
+        conn.commit()
+    finally:
+        conn.close()
+    by_id = {x["id"]: x["sent_today"] for x in account(c)["accounts"]}
+    assert by_id[ids_of(account(c))[0]] == 2 and by_id[other] == 0
+
+
+def test_a_table_made_when_one_account_was_allowed_is_upgraded_keeping_each_users_account_as_their_default():
+    from tender_app.db_ext import create_user_mail_accounts
+    conn = db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DROP SCHEMA IF EXISTS mail_upgrade_test CASCADE")
+            cur.execute("CREATE SCHEMA mail_upgrade_test")
+            cur.execute("SET search_path TO mail_upgrade_test")  # the real table is never touched
+            cur.execute("""CREATE TABLE user_mail_accounts (username VARCHAR(255) PRIMARY KEY, provider VARCHAR(16) NOT NULL DEFAULT 'custom',
+                           host VARCHAR(253) NOT NULL, port INTEGER NOT NULL, security VARCHAR(10) NOT NULL, login VARCHAR(254) NOT NULL,
+                           password_enc TEXT NOT NULL, from_email VARCHAR(254) NOT NULL, from_name VARCHAR(120), reply_to VARCHAR(254),
+                           daily_cap INTEGER NOT NULL DEFAULT 100, verified_at TIMESTAMP, last_error TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            for user in ("u1", "u2"):
+                cur.execute("INSERT INTO user_mail_accounts (username, host, port, security, login, password_enc, from_email) "
+                            "VALUES (%s, 'smtp.x.example', 465, 'ssl', %s, 'enc', %s)", (user, f"{user}@x.example", f"{user}@x.example"))
+            create_user_mail_accounts(cur)
+            create_user_mail_accounts(cur)  # running it again changes nothing
+            cur.execute("SELECT username, id IS NOT NULL, is_default FROM user_mail_accounts ORDER BY username")
+            assert cur.fetchall() == [("u1", True, True), ("u2", True, True)]
+            cur.execute("INSERT INTO user_mail_accounts (username, host, port, security, login, password_enc, from_email) "
+                        "VALUES ('u1', 'smtp.x.example', 465, 'ssl', 'b', 'enc', 'b@x.example')")
+            cur.execute("SELECT COUNT(*) FROM user_mail_accounts WHERE username = 'u1'")
+            assert cur.fetchone()[0] == 2, "a user can now have two"
+            try:
+                cur.execute("INSERT INTO user_mail_accounts (username, host, port, security, login, password_enc, from_email) "
+                            "VALUES ('u1', 'smtp.x.example', 465, 'ssl', 'b', 'enc', 'B@X.example')")
+                raise AssertionError("the same address twice for one user should be refused")
+            except Exception as exc:
+                assert "user_mail_accounts_user_from" in str(exc), exc
+    finally:
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("SET search_path TO public")
+            cur.execute("DROP SCHEMA IF EXISTS mail_upgrade_test CASCADE")
+        conn.commit()
+        conn.close()
 
 
 if __name__ == "__main__":

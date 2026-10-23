@@ -561,6 +561,28 @@ def create_growth_tables(cursor) -> None:
     )
     # body_hash: which message text this draft was made from, so an edited message is never sent under an old draft
     cursor.execute("ALTER TABLE growth_outreach_drafts ADD COLUMN IF NOT EXISTS body_hash VARCHAR(16)")
+    # mail_account_id: which of the user's email accounts (user_mail_accounts.id) a mode 'smtp' draft was sent from, so each account's
+    # daily limit counts only its own sends. NULL on older rows and on Outreach sends.
+    cursor.execute("ALTER TABLE growth_outreach_drafts ADD COLUMN IF NOT EXISTS mail_account_id INTEGER")
+    # A formatted message (tender_app/email_rich.py): body_html is the cleaned HTML the editor produced, NULL for a plain message.
+    # `body` always holds its plain-text twin, so everything that reads the text (preview, export, checks) keeps working.
+    cursor.execute("ALTER TABLE growth_campaigns ADD COLUMN IF NOT EXISTS body_html TEXT")
+    # Files attached to every email of a campaign. Kept in the row (at most 10 MB per campaign) and only sent from the user's own email account.
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS growth_campaign_files (
+            id            SERIAL PRIMARY KEY,
+            campaign_id   INTEGER NOT NULL REFERENCES growth_campaigns(id) ON DELETE CASCADE,
+            username      VARCHAR(255) NOT NULL,
+            filename      TEXT NOT NULL,
+            content_type  VARCHAR(120) NOT NULL,
+            size_bytes    INTEGER NOT NULL,
+            data          BYTEA NOT NULL,
+            created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_growth_campaign_files_campaign ON growth_campaign_files (campaign_id)")
     # Social posts and phone calls made through Outreach (tender_app/outreach_channels.py). A post waits here as
     # needs_approval until the user approves it; a call is one row per number the user chose to call.
     cursor.execute(
@@ -627,13 +649,14 @@ def create_growth_tables(cursor) -> None:
 
 
 def create_user_mail_accounts(cursor) -> None:
-    """The user's own sending mailbox (tender_app/mail_account.py, sending in tender_app/user_mailer.py). password_enc is
-    Fernet ciphertext, never returned."""
-    # A send through it is recorded in growth_outreach_drafts with mode 'smtp' and outreach_id = the Message-ID.
+    """The user's own sending mailboxes (tender_app/mail_account.py, sending in tender_app/user_mailer.py): several per user, one
+    of them the default. password_enc is Fernet ciphertext, never returned."""
+    # A send through one is recorded in growth_outreach_drafts with mode 'smtp', mail_account_id and outreach_id = the Message-ID.
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS user_mail_accounts (
-            username     VARCHAR(255) PRIMARY KEY,
+            id           SERIAL PRIMARY KEY,
+            username     VARCHAR(255) NOT NULL,
             provider     VARCHAR(16) NOT NULL DEFAULT 'custom',
             host         VARCHAR(253) NOT NULL,
             port         INTEGER NOT NULL,
@@ -646,9 +669,31 @@ def create_user_mail_accounts(cursor) -> None:
             daily_cap    INTEGER NOT NULL DEFAULT 100,
             verified_at  TIMESTAMP,
             last_error   TEXT,
-            updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_default   BOOLEAN NOT NULL DEFAULT FALSE
         )
         """
+    )
+    # A table made when a user could have one account has username as its key: add the id and the default flag, key on the id,
+    # and make the first account of each user their default.
+    cursor.execute("ALTER TABLE user_mail_accounts ADD COLUMN IF NOT EXISTS id SERIAL")
+    cursor.execute("ALTER TABLE user_mail_accounts ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE")
+    cursor.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+                       WHERE c.conname = 'user_mail_accounts_pkey' AND c.conrelid = 'user_mail_accounts'::regclass AND a.attname = 'username') THEN
+                ALTER TABLE user_mail_accounts DROP CONSTRAINT user_mail_accounts_pkey;
+                ALTER TABLE user_mail_accounts ADD PRIMARY KEY (id);
+            END IF;
+        END $$
+        """
+    )
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS user_mail_accounts_user_from ON user_mail_accounts (username, LOWER(from_email))")
+    cursor.execute(
+        """UPDATE user_mail_accounts SET is_default = TRUE
+           WHERE id IN (SELECT MIN(id) FROM user_mail_accounts GROUP BY username HAVING NOT BOOL_OR(is_default))"""
     )
 
 

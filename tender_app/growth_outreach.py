@@ -22,6 +22,7 @@ import hashlib
 import re
 from typing import Any, Iterable, Mapping
 
+from tender_app import email_rich as er
 from tender_app import growth_studio as gs
 
 MAX_PER_PUSH = 25  # Outreach allows 30 creating requests a minute per key; stay under it
@@ -55,9 +56,15 @@ def retry_tag(record: Mapping[str, Any] | None) -> str:
     return "-r" + hashlib.sha256(str(rec.get("checked_at") or rec.get("error") or "").encode("utf-8")).hexdigest()[:6]
 
 
-def message_hash(subject: str, body: str) -> str:
-    """Identifies the exact text a draft was made from, so an edited message is never sent under an old draft."""
-    return hashlib.sha256((subject + chr(10) + body).encode("utf-8")).hexdigest()[:16]
+def message_hash(subject: str, body: str, extra: str = "") -> str:
+    """Identifies the exact text a draft was made from, so an edited message is never sent under an old draft.
+    `extra` (the formatted version and the attached files) is mixed in only when there is some, so plain messages keep their hash."""
+    return hashlib.sha256((subject + chr(10) + body + ((chr(10) + "[extra]" + extra) if extra else "")).encode("utf-8")).hexdigest()[:16]
+
+
+def attachment_signature(files: Iterable[Mapping[str, Any]] | None) -> str:
+    """Which files are attached, by id and size: adding, removing or replacing one makes a new message."""
+    return ",".join(f"{f.get('id')}:{f.get('size_bytes')}" for f in (files or []))
 
 
 def message_blockers(subject: str | None, body: str | None) -> list[str]:
@@ -142,6 +149,7 @@ def plan_push(
     only_ids: Iterable[int] | None = None,
     allow_personal: bool = False,
     limit: int = MAX_PER_PUSH,
+    files: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """What would be sent: {"items": [{target_id, buyer, email, payload}], "skipped": [{target_id, buyer,
     reason}], "deferred": n, "blockers": [..]}. `deferred` counts buyers that qualify but are past `limit`."""
@@ -151,6 +159,8 @@ def plan_push(
     plan: dict[str, Any] = {"items": [], "skipped": [], "deferred": 0, "blockers": blockers}
     if blockers:
         return plan
+    body_html = campaign.get("body_html") or ""
+    attach_sig = attachment_signature(files)
     wanted = None if only_ids is None else set(only_ids)
     for t in targets:
         tid = t.get("id")
@@ -187,9 +197,11 @@ def plan_push(
                 elif len(plan["items"]) >= limit:
                     plan["deferred"] += 1
                 else:
+                    html = er.render_html(body_html, values) if body_html else ""
                     plan["items"].append({
-                        "target_id": tid, "buyer": buyer, "email": email, "hash": message_hash(subj, text),
-                        "subject": subj, "text": text,
+                        "target_id": tid, "buyer": buyer, "email": email,
+                        "hash": message_hash(subj, text, (html + "|" + attach_sig) if (html or attach_sig) else ""),
+                        "subject": subj, "text": text, "html": html or None,
                         "payload": build_payload(campaign.get("name") or "Growth Studio", buyer, email, subj, text),
                     })
     return plan

@@ -183,6 +183,24 @@ def test_a_reply_that_asks_to_stop_is_noticed_but_quoted_history_is_not_read():
     assert not go.looks_like_opt_out("Great.\n> reply stop to opt out")
 
 
+def test_a_formatted_message_is_filled_in_for_each_buyer_and_changes_the_hash():
+    html = "<p>Hello {{buyer_contact}},</p><p><b>{{buyer_name}}</b> renews on {{renewal_date}}.</p><p>" + gs.OPT_OUT_LINE + "</p>"
+    plain = go.plan_push(campaign(), [target(1)], set(), SENDER, set())["items"][0]
+    rich = go.plan_push({**campaign(), "body_html": html}, [target(1, buyer="A & B Council")], set(), SENDER, set())["items"][0]
+    assert plain["html"] is None
+    assert "<b>A &amp; B Council</b>" in rich["html"] and "{{" not in rich["html"]
+    assert plain["hash"] != rich["hash"]
+    assert go.plan_push(campaign(), [target(1)], set(), SENDER, set())["items"][0]["hash"] == plain["hash"]  # plain messages keep their hash
+
+
+def test_attached_files_change_the_hash_so_an_edit_is_a_new_message():
+    base = go.plan_push(campaign(), [target(1)], set(), SENDER, set())["items"][0]["hash"]
+    one = go.plan_push(campaign(), [target(1)], set(), SENDER, set(), files=[{"id": 1, "size_bytes": 10}])["items"][0]["hash"]
+    two = go.plan_push(campaign(), [target(1)], set(), SENDER, set(), files=[{"id": 1, "size_bytes": 10}, {"id": 2, "size_bytes": 5}])["items"][0]["hash"]
+    assert len({base, one, two}) == 3
+    assert go.attachment_signature(None) == "" and go.attachment_signature([{"id": 3, "size_bytes": 7}]) == "3:7"
+
+
 def test_the_inbox_filters():
     assert go.INBOX_FILTERS["replies"] == "replied" and go.INBOX_FILTERS["all"] is None and "bogus" not in go.INBOX_FILTERS
 

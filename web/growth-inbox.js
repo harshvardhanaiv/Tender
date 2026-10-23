@@ -36,20 +36,18 @@
   // Outreach account and are only listed here. The card shows the list and the panel checks again when Connections is closed.
   function accountsCard(info) {
     const i = info || {};
-    const own = V.ownAccount(i);
-    const mine = i.mail_account || null;
+    const mine = Array.isArray(i.mail_accounts) ? i.mail_accounts : i.mail_account ? [i.mail_account] : [];
     const boxes = ((i.wallet && Array.isArray(i.wallet.mailboxes)) ? i.wallet.mailboxes : []).filter((b) => b && b.email);
-    const ownRow = mine
-      ? `<li class="gs-in-acc__row"><span class="gs-in-acc__email">${esc(mine.from_email)}</span> ${V.badge("Your email account", "accent")} ${own ? V.badge("Can send", "good") : V.badge("Not checked yet", "warn")} <span class="gs-hint">${esc(mine.sent_today || 0)} of ${esc(mine.daily_cap)} sent in the last 24 hours</span></li>`
-      : "";
-    const rows = ownRow + boxes.map((b) => {
+    const ownRows = mine.map((a) =>
+      `<li class="gs-in-acc__row"><span class="gs-in-acc__email">${esc(a.from_email)}</span> ${V.badge("Your email account", "accent")}${mine.length > 1 && a.is_default ? " " + V.badge("Default", "muted") : ""} ${a.verified ? V.badge("Can send", "good") : V.badge("Not checked yet", "warn")} <span class="gs-hint">${esc(a.sent_today || 0)} of ${esc(a.daily_cap)} sent in the last 24 hours</span></li>`).join("");
+    const rows = ownRows + boxes.map((b) => {
       const ok = b.can_send !== false;
       const status = b.status && !/^(ok|active|connected)$/i.test(String(b.status)) ? ` <span class="gs-hint">(${esc(String(b.status).replace(/_/g, " "))})</span>` : "";
       return `<li class="gs-in-acc__row"><span class="gs-in-acc__email">${esc(b.email)}</span> ${V.badge("Outreach", "muted")} ${ok ? V.badge("Can send", "good") : V.badge("Cannot send yet", "warn")}${status}</li>`;
     }).join("");
     const have = !!rows;
-    const add = V.openConnections("mail", mine ? "Email account settings" : "＋ Add an email account", !have,
-      mine ? "Open Connections to change your email account, send a test email or disconnect it." : "Open Connections on this page to add your own email account (Gmail, Outlook or any other provider).");
+    const add = V.openConnections("mail", mine.length ? "Email account settings" : "＋ Add an email account", !have,
+      mine.length ? "Open Connections to add another email account, change one, send a test email or disconnect it." : "Open Connections on this page to add your own email account (Gmail, Outlook or any other provider).");
     return (
       `<div class="gs-card gs-in-accounts"><div class="gs-in-accounts__head"><div class="gs-card__title">Email accounts</div>` +
       `<div class="gs-actions gs-actions--tight">${add}<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-check" data-tip="Ask again which email accounts you have.">Refresh accounts</button></div></div>` +

@@ -53,6 +53,18 @@ test("the Inbox lists the Outreach mailboxes and the user's own email account, w
   assert.match(own, />Email account settings<\/button>/, "with an account set up the button changes it");
 });
 
+test("several own accounts are each listed with their own count, the default is marked, and the button still opens Connections", () => {
+  const a = { id: 7, from_email: "sam@acme.example", verified: true, sent_today: 3, daily_cap: 100, is_default: true };
+  const b = { id: 9, from_email: "bids@acme.example", verified: true, sent_today: 0, daily_cap: 50, is_default: false };
+  const html = I.accountsCard({ ready: false, configured: false, mail_account: a, mail_accounts: [a, b] });
+  assert.match(html, /sam@acme\.example<\/span> <span class="gs-badge gs-badge--accent">Your email account<\/span> <span class="gs-badge gs-badge--muted">Default<\/span> <span class="gs-badge gs-badge--good">Can send<\/span> <span class="gs-hint">3 of 100 sent/);
+  assert.match(html, /bids@acme\.example<\/span> <span class="gs-badge gs-badge--accent">Your email account<\/span> <span class="gs-badge gs-badge--good">Can send<\/span> <span class="gs-hint">0 of 50 sent/);
+  assert.equal((html.match(/Default</g) || []).length, 1);
+  assert.match(html, />Email account settings<\/button>/);
+  assert.match(html, /data-tip="Open Connections to add another email account/);
+  assert.ok(!I.accountsCard({ ready: false, mail_account: a, mail_accounts: [a] }).includes("Default<"), "one account is not called the default");
+});
+
 test("with no email account anywhere it says nothing can be sent and makes Add the main button", () => {
   const html = I.accountsCard({ ready: true, configured: true, wallet: { mailboxes: [] } });
   assert.match(html, /No email account is set up yet, so nothing can be sent/);

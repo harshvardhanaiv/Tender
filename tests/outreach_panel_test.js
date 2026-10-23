@@ -306,6 +306,49 @@ test("an Outreach with no mailbox is pointed at the email account, and the resul
   assert.match(V.outreachDraftRow({ buyer: "Alpha", outreach_id: "cp_1", mode: "test", status: "sending", approval: "approved" }), /<code>cp_1<\/code>/);
 });
 
+// ── several own accounts ─────────────────────────────────────────────────────────────────────────
+const bids = { id: 9, from_email: "bids@acme.example", verified: true, sent_today: 0, daily_cap: 50, reply_to: "", is_default: false };
+const sam = Object.assign({}, mine, { id: 7, is_default: true });
+const severalInfo = (o) => Object.assign({}, ready, { mail_account: sam, mail_accounts: [sam, bids] }, o);
+
+test("with several accounts each has its own choice, the default is picked first, and 'smtp' still means the default", () => {
+  const info = severalInfo({ ready: false });
+  assert.equal(V.senderChoice(info, undefined), "smtp:7");
+  assert.equal(V.senderChoice(info, "smtp"), "smtp:7", "a choice remembered from when there was one account");
+  assert.equal(V.senderChoice(info, "smtp:9"), "smtp:9");
+  assert.equal(V.senderChoice(info, "smtp:99"), "smtp:7", "an account that is gone gives way to the default");
+  assert.equal(V.senderChoice(severalInfo(), "smtp:9"), "smtp:9");
+  assert.equal(V.senderChoice(severalInfo(), ""), "", "Let Outreach choose is still a choice");
+  assert.equal(V.senderChoice(severalInfo(), "smtp:abc"), "smtp:7", "a value that is not an account is never passed on as one");
+  assert.equal(V.senderChoice(Object.assign({}, ready, { mail_account: bids, mail_accounts: [bids] }), "smtp:9"), "smtp", "a single account keeps the plain value");
+  assert.deepEqual(V.ownAccounts(severalInfo({ mail_accounts: [sam, Object.assign({}, bids, { verified: false })] })).map((a) => a.id), [7], "an unchecked login is left out");
+  assert.equal(V.ownAccount(severalInfo({ mail_accounts: [bids, sam] })).id, 7, "the default, wherever it is in the list");
+  assert.equal(V.accountForChoice(info, "smtp:9").from_email, "bids@acme.example");
+  assert.equal(V.accountForChoice(info, "smtp").id, 7);
+  assert.equal(V.accountForChoice(info, "smtp:99"), null);
+  assert.ok(V.isOwnChoice("smtp") && V.isOwnChoice("smtp:12") && !V.isOwnChoice("") && !V.isOwnChoice("mb_1") && !V.isOwnChoice(null) && !V.isOwnChoice("smtp:x"));
+});
+
+test("Send from lists every account, marks the default, and with no Outreach mailbox still offers the choice", () => {
+  const html = panel({ info: severalInfo({ ready: false, problem: "Outreach is not connected." }) });
+  const select = (html.match(/<select data-field="outreach-mailbox"[^>]*>[\s\S]*?<\/select>/) || [])[0] || "";
+  assert.match(select, /<option value="smtp:7" selected>sam@acme\.example \(your email account, default\)<\/option>/);
+  assert.match(select, /<option value="smtp:9">bids@acme\.example \(your email account\)<\/option>/);
+  const other = panel({ info: severalInfo({ ready: false }), mailbox: "smtp:9" });
+  assert.match(other, /<option value="smtp:9" selected>/);
+  assert.match(other, /Sending from <strong>bids@acme\.example<\/strong>\. 0 of 50 sent in the last 24 hours/);
+  assert.match(other, /sent from bids@acme\.example \(up to 25 at a time, within your daily limit\)/);
+  const remembered = panel({ info: severalInfo({ ready: false }), mailbox: "smtp" });
+  assert.match(remembered, /<option value="smtp:7" selected>/, "the plain value shows the default as chosen");
+  const both = panel({ info: severalInfo({ wallet: { credits: 3, mailboxes: [{ id: "mb_1", email: "hello@aivhub.com", can_send: true }] } }) });
+  assert.match(both, /value="smtp:7" selected[\s\S]*value="smtp:9"[\s\S]*hello@aivhub\.com \(through Outreach\)/);
+});
+
+test("the addresses of several accounts are escaped", () => {
+  const html = panel({ info: severalInfo({ ready: false, mail_accounts: [Object.assign({}, sam, { from_email: '"><img src=x>' }), bids] }) });
+  assert.ok(!html.includes("<img"), html);
+});
+
 test("the own account's address is escaped", () => {
   const html = panel({ info: Object.assign({}, ready, { ready: false, mail_account: Object.assign({}, mine, { from_email: '"><img src=x>' }) }) });
   assert.ok(!html.includes("<img"), html);

@@ -41,6 +41,7 @@ DEFAULT_TIMEOUT = 15.0
 
 _KEY_RE = re.compile(r"^sk_(test|live)_[A-Za-z0-9_\-]{6,}$")
 _ID_RE = re.compile(r"^[A-Za-z0-9_\-]{3,64}$")
+_PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_]{0,30}$")  # "x" is a network
 
 # (method, url, headers, body bytes or None, timeout) -> (status, response headers, response text)
 Transport = Callable[[str, str, Mapping[str, str], "bytes | None", float], "tuple[int, Mapping[str, str], str]"]
@@ -52,10 +53,10 @@ def key_mode(key: str | None) -> str | None:
     return m.group(1) if m else None
 
 
-def _https_url(value: str | None) -> str | None:
+def _https_url(value: str | None, limit: int = 500) -> str | None:
     """`value` when it is a plain https:// link with a host and nothing risky in it, else None."""
     text = (value or "").strip()
-    if not text.lower().startswith("https://") or len(text) > 500 or any(c.isspace() or c in '"<>\\' for c in text):
+    if not text.lower().startswith("https://") or len(text) > limit or any(c.isspace() or c in '"<>\\' for c in text):
         return None
     host = text[8:].split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
     return text if host and "@" not in host else None
@@ -326,6 +327,34 @@ class OutreachClient:
         if not _ID_RE.match(post_id or ""):
             raise OutreachError("That is not an Outreach post id.", 400, "invalid_request")
         return self._call("GET", f"/v1/social/posts/{post_id}")
+
+    # ── connecting social accounts from the partner's own page (`social` plugin, POST /v1/run) ──────
+
+    def run(self, plugin: str, action: str, data: Mapping[str, Any] | None = None, idempotency_key: str | None = None) -> dict[str, Any]:
+        """One call of Outreach's single entry point: POST /v1/run {"plugin", "action", "data"}, with the user's key."""
+        body: dict[str, Any] = {"plugin": plugin, "action": action}
+        if data is not None:
+            body["data"] = dict(data)
+        return self._call("POST", "/v1/run", body, idempotency_key)
+
+    def channel_providers(self) -> dict[str, Any]:
+        """Which social networks are switched on at Outreach's end right now."""
+        return self.run("social", "channel.providers")
+
+    def channel_list(self, refresh: bool = False) -> dict[str, Any]:
+        return self.run("social", "channel.list", {"refresh": True} if refresh else None)
+
+    def channel_connect(self, provider: str, return_url: str) -> dict[str, Any]:
+        """Start connecting one network. The answer carries `auth_url`, to open in a small window; the user signs in on the
+        network's own page, so neither side sees a password or token."""
+        if not _PROVIDER_RE.match(provider or ""):
+            raise OutreachError("That is not a social network.", 400, "invalid_request")
+        return self.run("social", "channel.connect", {"provider": provider, "return_url": return_url})
+
+    def channel_disconnect(self, channel_id: str) -> dict[str, Any]:
+        if not _ID_RE.match(channel_id or ""):
+            raise OutreachError("That is not an Outreach channel id.", 400, "invalid_request")
+        return self.run("social", "channel.disconnect", {"id": channel_id})
 
     def update_social_post(self, post_id: str, payload: Mapping[str, Any], idempotency_key: str) -> dict[str, Any]:
         """Change a post: its publish time, or ask the AI to write the text, the picture or both again. Outreach sends a
@@ -602,6 +631,79 @@ def _variants(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
         if label and t:
             out.append({"channel": label[0], "text": t})
     return out
+
+
+# ── connecting social accounts: what the three read calls answer, reduced to what the page shows ──────────────
+PROVIDER_LABELS = {"linkedin": "LinkedIn", "facebook": "Facebook", "instagram": "Instagram", "x": "X", "twitter": "X", "threads": "Threads"}
+DEFAULT_PROVIDERS = ("linkedin", "facebook", "instagram", "x", "threads")
+_CHANNEL_STATUS = {
+    "connected": "connected", "active": "connected", "ok": "connected", "linked": "connected",
+    "needs_reauth": "needs_reauth", "reauth": "needs_reauth", "expired": "needs_reauth", "needs_reconnect": "needs_reauth", "reconnect": "needs_reauth",
+    "error": "error", "failed": "error", "disconnected": "error",
+}
+
+
+def _rows(raw: Any, names: tuple[str, ...]) -> list[Any]:
+    """The list under any of `names`, at the top level or one level down (`data`); a bare list answer is the list."""
+    if isinstance(raw, list):
+        return raw
+    if not isinstance(raw, dict):
+        return []
+    for src in (raw, raw.get("data") if isinstance(raw.get("data"), dict) else None):
+        if isinstance(src, dict):
+            for name in names:
+                if isinstance(src.get(name), list):
+                    return src[name]
+    return raw["data"] if isinstance(raw.get("data"), list) else []
+
+
+def provider_label(provider: str) -> str:
+    return PROVIDER_LABELS.get(provider) or provider.replace("_", " ").title()
+
+
+def channel_providers_summary(raw: Any) -> list[dict[str, Any]]:
+    """[{provider, label, available}]: the networks Outreach has switched on. `available` is False for one whose developer app is
+    not set up at Outreach's end yet (the page then explains instead of offering a button that cannot work)."""
+    out: list[dict[str, Any]] = []
+    for item in _rows(raw, ("providers", "networks", "channels", "items"))[:20]:
+        if isinstance(item, str):
+            item = {"provider": item}
+        if not isinstance(item, dict):
+            continue
+        p = str(_find(item, ("provider", "id", "network", "name", "type")) or "").strip().lower()
+        if not _PROVIDER_RE.match(p) or any(o["provider"] == p for o in out):
+            continue
+        avail = item.get("available", item.get("enabled", True))
+        out.append({"provider": p, "label": _text(item.get("label"), 40) or provider_label(p), "available": avail is not False})
+    return out
+
+
+def channel_list_summary(raw: Any) -> list[dict[str, Any]]:
+    """[{id, provider, label, name, status, connected_at}] for the accounts the user has connected. `status` is one of
+    connected, needs_reauth, error (anything else Outreach says is shown as error, so it is never mistaken for working)."""
+    out: list[dict[str, Any]] = []
+    for item in _rows(raw, ("channels", "accounts", "items"))[:50]:
+        if not isinstance(item, dict):
+            continue
+        cid = _text(_find(item, ("id", "channel_id")), 64)
+        p = str(_find(item, ("provider", "network", "platform", "type")) or "").strip().lower()
+        if not cid or not _ID_RE.match(cid) or not _PROVIDER_RE.match(p):
+            continue
+        status = _CHANNEL_STATUS.get(str(_find(item, ("status", "state")) or "connected").strip().lower(), "error")
+        out.append({"id": cid, "provider": p, "label": provider_label(p), "status": status,
+                    "name": _text(_find(item, ("display_name", "name", "handle", "account_name", "username", "title")), 80),
+                    "connected_at": _text(_find(item, ("connected_at", "created_at")), 40)})
+    return out
+
+
+def connect_summary(raw: Any) -> dict[str, Any]:
+    """The answer of channel.connect: the link to open (https only; a test key answers with the return address at once),
+    and whether it already counts as connected."""
+    link = _text(_find(raw, ("auth_url", "url", "authorize_url")), 2000)
+    url = _https_url(link, 2000)
+    if not url and link and re.match(r"^http://(localhost|127\.0\.0\.1)(:\d{1,5})?(/[^\s\"<>\\]*)?$", link.strip()):
+        url = link.strip()  # a test key answers with the return address itself, which is plain http on a developer's machine
+    return {"auth_url": url, "connected": bool(_find(raw, ("connected", "done"))) if isinstance(raw, dict) else False}
 
 
 def post_summary(raw: Mapping[str, Any]) -> dict[str, Any]:

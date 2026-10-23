@@ -44,10 +44,18 @@ test("nothing in the window opens another window or leaves the page", () => {
   for (const m of [connected(), connected({ source: "own" }), notConnected(), notConnected({ source: "disconnected", shared_available: true }),
     notConnected({ configured: true, problem: "bad" }), { status: "loading", info: null }, { status: "error", info: null, error: "x" }]) {
     const html = C.connectionsHtml(m);
-    assert.ok(!/<a\b/.test(html), "no links");
-    assert.ok(!/data-outreach-link|target="_blank"|href=/.test(html));
+    onlyOutreachLinks(html);
   }
 });
+
+// The one deliberate exception: linking a social account or a phone number happens on Outreach's own site.
+function onlyOutreachLinks(html) {
+  for (const a of html.match(/<a\b[^>]*>/g) || []) {
+    assert.match(a, /href="https:\/\/outreach\.aivhub\.com(\/#\/(social|voice))?"/, "only Outreach");
+    assert.match(a, /rel="noopener"/);
+  }
+  assert.ok(!/data-outreach-link/.test(html));
+}
 
 test("connected through the organisation's key: says so, lists email, social, calls, and offers Refresh and Disconnect", () => {
   const html = C.outreachCard(connected());
@@ -265,7 +273,7 @@ const presets = [
   { id: "gmail", label: "Gmail / Google Workspace", host: "smtp.gmail.com", port: 465, security: "ssl", help: "Turn on 2-step verification, then create an app password and use it here." },
   { id: "custom", label: "Other (custom SMTP)", host: "", port: 587, security: "starttls", help: "Use the SMTP host your provider gave you." },
 ];
-const account = { provider: "gmail", from_name: "Sam Lee", from_email: "sam@acme.example", host: "smtp.gmail.com", port: 465, security: "ssl",
+const account = { id: 7, is_default: true, provider: "gmail", from_name: "Sam Lee", from_email: "sam@acme.example", host: "smtp.gmail.com", port: 465, security: "ssl",
   username: "sam@acme.example", reply_to: "", daily_cap: 100, verified: true, sent_today: 4, last_error: null };
 const form = (o) => Object.assign({ provider: "gmail", from_name: "", from_email: "", username: "", password: "", host: "smtp.gmail.com", port: 465, security: "ssl",
   reply_to: "", daily_cap: 100, busy: false, error: null, notice: null }, o);
@@ -331,10 +339,89 @@ test("a send that failed marks the card as needing attention and says why", () =
 });
 
 test("editing keeps the saved password unless a new one is typed, and can be cancelled", () => {
-  const html = C.mailCard(mailModel({ info: { available: true, account, presets }, form: form({ from_email: "sam@acme.example", username: "sam@acme.example" }) }));
+  const html = C.mailCard(mailModel({ info: { available: true, account, presets }, form: form({ editId: 7, from_email: "sam@acme.example", username: "sam@acme.example" }) }));
   assert.match(html, /Password \(leave blank to keep the saved one\)/);
   assert.match(html, />Save changes<\/button>/);
   assert.match(html, /data-cx="mail-cancel"[^>]*>Cancel<\/button>/);
+  assert.match(html, /Changing <span class="cx-mail">sam@acme\.example<\/span>/, "it says which account is being changed");
+  assert.ok(!html.includes("Add another address"));
+});
+
+// ── several accounts ──────────────────────────────────────────────────────────────────────────
+
+const bids = Object.assign({}, account, { id: 9, is_default: false, from_name: "", from_email: "bids@acme.example", username: "bids@acme.example", sent_today: 0, daily_cap: 50 });
+const two = (o) => mailModel(Object.assign({ info: { available: true, account, accounts: [account, bids], max_accounts: 5, presets }, form: null }, o));
+
+test("several accounts: each is its own block with its own buttons, the default is marked and only the others can be made the default", () => {
+  const html = C.mailCard(two());
+  assert.match(html, /aria-label="Email accounts"/);
+  assert.match(html, /Email accounts<\/span> <span class="cx-pill cx-pill--good">Connected</);
+  assert.equal((html.match(/class="cx-acct"/g) || []).length, 2);
+  assert.match(html, /Sam Lee &lt;sam@acme\.example&gt;<\/span> <span class="cx-pill cx-pill--good">Login checked<\/span> <span class="cx-pill cx-pill--muted">Default</);
+  assert.match(html, /<span class="cx-mail">bids@acme\.example<\/span> <span class="cx-pill cx-pill--good">Login checked<\/span><\/p>/, "the second is not marked default");
+  assert.match(html, /4 of 100 sent in the last 24 hours/);
+  assert.match(html, /0 of 50 sent in the last 24 hours/, "each has its own limit");
+  for (const kind of ["mail-test", "mail-edit", "mail-delete"]) {
+    assert.match(html, new RegExp(`data-cx="${kind}"[^>]* data-id="7"`));
+    assert.match(html, new RegExp(`data-cx="${kind}"[^>]* data-id="9"`));
+  }
+  assert.equal((html.match(/data-cx="mail-default"/g) || []).length, 1);
+  assert.match(html, /data-cx="mail-default"[^>]* data-id="9"[^>]*>Make default</, "the default one has no such button");
+  assert.match(html, /the default one is used\./);
+  assert.match(html, /data-cx="mail-add"[^>]*>＋ Add another email account</);
+  assert.ok(!html.includes("<input"));
+});
+
+test("one account looks as it did, with Add another beside it and no default marking", () => {
+  const html = C.mailCard(mailModel({ info: { available: true, account, accounts: [account], max_accounts: 5, presets }, form: null }));
+  assert.match(html, /aria-label="Email account"/);
+  assert.ok(!html.includes("Default") && !html.includes("mail-default"));
+  assert.match(html, /data-cx="mail-add"/);
+  assert.match(html, /Replies arrive in this mailbox/);
+});
+
+test("at the limit there is no Add button, only a reason", () => {
+  const five = [account, ...[1, 2, 3, 4].map((n) => Object.assign({}, bids, { id: 20 + n, from_email: `box${n}@acme.example` }))];
+  const html = C.mailCard(mailModel({ info: { available: true, accounts: five, max_accounts: 5, presets }, form: null }));
+  assert.ok(!html.includes("mail-add"));
+  assert.match(html, /most email accounts you can connect \(5\)/);
+});
+
+test("adding another account shows a blank form that can be cancelled, and saving it says Connect", () => {
+  const html = C.mailCard(two({ form: form({ editId: null }) }));
+  assert.match(html, /Add another address to send from\. It has its own daily limit\./);
+  assert.match(html, /data-cx="mail-save">Connect email account</);
+  assert.match(html, /Password or app password/, "a new account always needs its password");
+  assert.match(html, /data-cx="mail-cancel"/);
+  assert.ok(!html.includes("Changing"));
+});
+
+test("while one account is tested or changed only its button shows progress, but nothing else can be pressed", () => {
+  const html = C.mailCard(two({ busy: "test", busyId: 9 }));
+  assert.match(html, /data-cx="mail-test" disabled data-id="9"[^>]*>Sending…/);
+  assert.match(html, /data-cx="mail-test" disabled data-id="7"[^>]*>Send test email</);
+  assert.match(html, /data-cx="mail-add" disabled/);
+  assert.match(C.mailCard(two({ busy: "default", busyId: 9 })), /data-cx="mail-default" disabled data-id="9"[^>]*>Saving…/);
+  assert.match(C.mailCard(two({ busy: "delete", busyId: 7 })), /data-cx="mail-delete" disabled data-id="7"[^>]*>Disconnecting…[\s\S]*data-cx="mail-delete" disabled data-id="9"[^>]*>Disconnect</);
+});
+
+test("one failing account marks the whole card as needing attention and says which, and every address is escaped", () => {
+  const html = C.mailCard(two({ info: { available: true, accounts: [account, Object.assign({}, bids, { last_error: "The mailbox rejected the login." })], max_accounts: 5, presets } }));
+  assert.match(html, /cx-card--attention/);
+  assert.match(html, /cx-pill--warn">Needs attention</);
+  assert.equal((html.match(/The last send failed/g) || []).length, 1);
+  const evil = '"><img src=x onerror=alert(1)>';
+  const bad = C.mailCard(two({ info: { available: true, accounts: [account, Object.assign({}, bids, { from_email: evil, from_name: evil, host: evil })], max_accounts: 5, presets } }));
+  assert.ok(!/<img src=x/.test(bad));
+});
+
+test("the Email row in the list shows the default address and how many more", () => {
+  const row = (accounts) => C.channelStatus(C.CHANNELS[0], { mail: mailModel({ info: { available: true, accounts, max_accounts: 5, presets }, form: null }) });
+  assert.deepEqual(row([account]), { on: true, text: "sam@acme.example", attention: false });
+  assert.deepEqual(row([account, bids]), { on: true, text: "sam@acme.example +1 more", attention: false });
+  assert.equal(row([account, Object.assign({}, bids, { last_error: "x" })]).attention, true);
+  assert.deepEqual(C.accountsOf({ account }), [account], "an older answer with only the default account still works");
+  assert.deepEqual(C.accountsOf({ account: null }), []);
 });
 
 test("when the server cannot keep an account, or cannot be reached, the card says so", () => {
@@ -352,14 +439,16 @@ test("the window shows both cards, Outreach first, and neither opens anything", 
   assert.ok(html.indexOf('aria-label="Outreach"') > 0 && html.indexOf('aria-label="Email account"') > html.indexOf('aria-label="Outreach"'));
   assert.match(html, /data-card="outreach"/);
   assert.match(html, /data-card="mail"/);
-  assert.ok(!/<a\b|href=|target="_blank"/.test(html));
+  onlyOutreachLinks(html);
   assert.match(C.connectionsHtml(connected()), /aria-label="Email account"/, "a model with no mail state still draws the card");
 });
 
 test("the controller sends the password only to the server, clears it at once, asks before disconnecting the account and announces a change", () => {
   assert.match(src, /call\("PUT", "\/api\/growth\/email-account", body\)/);
-  assert.match(src, /call\("POST", "\/api\/growth\/email-account\/test", \{\}\)/);
-  assert.match(src, /call\("DELETE", "\/api\/growth\/email-account"\)/);
+  assert.match(src, /call\("POST", "\/api\/growth\/email-account\/test", id == null \? \{\} : \{ id \}\)/);
+  assert.match(src, /call\("POST", "\/api\/growth\/email-account\/default", \{ id \}\)/);
+  assert.match(src, /call\("DELETE", "\/api\/growth\/email-account" \+ \(id == null \? "" : `\?id=\$\{id\}`\)\)/);
+  assert.match(src, /if \(editing\) body\.id = f\.editId;/, "a change names the account; an addition does not");
   assert.match(src, /f\.password = ""; \/\/ gone from the page the moment it is sent[\s\S]*render\(\);\s*try \{\s*mm\.info = await call\("PUT"/, "cleared before the request returns");
   assert.match(src, /new root\.CustomEvent\("connections:changed"\)/, "the panels are told to look again");
   assert.match(src, /closest\("\[data-open-connections\]"\)/, "any button marked for it opens this window");
@@ -374,8 +463,117 @@ test("the controller never opens a window, never stores the key in the browser a
   assert.match(src, /call\("DELETE", "\/api\/growth\/outreach\/connect"\)/);
   assert.match(src, /showConfirm[\s\S]*root\.confirm\(text\)/, "a confirmation comes first");
   assert.match(src, /if \(!\(await ask\("Disconnect Outreach\?/);
-  assert.match(src, /if \(!\(await ask\("Disconnect this email account\?/);
+  assert.match(src, /if \(!\(await ask\(`Disconnect this email account\?/);
   assert.match(src, /f\.key = ""/, "the key is cleared from the page once used");
+});
+
+test("Calls and Social set up in steps: sign in here, link the account on Outreach, then open it in Growth Studio", () => {
+  const out = notConnected();
+  const social = C.hubHtml({ status: "ready", info: out }, "social");
+  assert.match(social, /data-pane="social"[^>]*>[\s\S]*cx-steps/);
+  assert.match(social, /Sign in to Outreach/);
+  assert.match(social, /data-cx="connect-form"/, "the sign-in form is in the Social pane itself");
+  assert.equal((social.match(/data-cx="connect-form"/g) || []).length, 1, "one form on the page, so its ids are unique");
+  assert.ok(!/data-cx="open-growth"/.test(social), "nothing to open until it is set up");
+  const calls = C.hubHtml({ status: "ready", info: out }, "outreach");
+  assert.equal((calls.match(/data-cx="connect-form"/g) || []).length, 1);
+
+  const linked = connected();
+  linked.info.wallet = Object.assign({}, linked.info.wallet, { social_channels: ["linkedin"], phone_numbers: 0 });
+  const html = C.hubHtml(linked, "social");
+  assert.match(html, /LinkedIn<\/span> <span class="cx-pill cx-pill--good">Linked/);
+  assert.match(html, /Facebook<\/span> <span class="cx-pill cx-pill--muted">Not linked/);
+  assert.match(html, /data-cx="open-growth" data-tab="social"/);
+  assert.ok(!/<a|target="_blank"/.test(html), "no links");
+  assert.match(html, /data-cx="connect-social" data-network="Facebook"/);
+  assert.ok(!/data-network="LinkedIn"/.test(html), "a linked network has no Connect button");
+  const phone = C.hubHtml(linked, "calls");
+  assert.match(phone, /No phone number in your Outreach account yet/);
+  assert.ok(!/data-cx="open-growth" data-tab="calls"/.test(phone));
+});
+
+// ── connecting social accounts from here (Outreach's channel.* actions) ───────────────────────────────────────
+const providers = [{ provider: "linkedin", label: "LinkedIn", available: true }, { provider: "facebook", label: "Facebook", available: true },
+  { provider: "instagram", label: "Instagram", available: false }, { provider: "x", label: "X", available: true }, { provider: "threads", label: "Threads", available: true }];
+const social = (o) => Object.assign({ status: "ok", supported: true, providers, channels: [], busy: null, notice: null, error: null, origin: "https://outreach.aivhub.com" }, o);
+
+test("each network that can be connected from here has a Connect button, and one that Outreach has not switched on says so", () => {
+  const html = C.socialList(social());
+  for (const p of ["linkedin", "facebook", "x", "threads"]) assert.match(html, new RegExp(`data-cx="social-connect" data-provider="${p}"`));
+  assert.ok(!/data-provider="instagram"/.test(html), "no button that cannot work");
+  assert.match(html, /Instagram<\/span> <span class="cx-pill cx-pill--muted">Not available yet<\/span>/);
+  assert.match(html, /Connect LinkedIn/);
+  assert.match(html, /You sign in on the network's own page, so TenderFlow never sees your password/);
+  assert.match(html, /data-cx="social-reload"/);
+  assert.ok(!/<a /.test(html) && !/outreach\.aivhub\.com/.test(html), "nothing opens Outreach itself");
+});
+
+test("a connected account shows its name and can be disconnected; one that needs reconnecting offers Reconnect", () => {
+  const html = C.socialList(social({ channels: [
+    { id: "ch_1", provider: "linkedin", label: "LinkedIn", name: "Acme Ltd", status: "connected" },
+    { id: "ch_2", provider: "facebook", label: "Facebook", name: "Acme Page", status: "needs_reauth" },
+    { id: "ch_3", provider: "x", label: "X", name: "@acme", status: "error" }] }));
+  assert.match(html, /LinkedIn · Acme Ltd<\/span> <span class="cx-pill cx-pill--good">Connected<\/span>/);
+  assert.match(html, /Facebook · Acme Page<\/span> <span class="cx-pill cx-pill--warn">Needs reconnecting<\/span>/);
+  assert.match(html, /X · @acme<\/span> <span class="cx-pill cx-pill--warn">Problem<\/span>/);
+  assert.match(html, /data-cx="social-disconnect" data-id="ch_1"/);
+  assert.equal((html.match(/>Reconnect</g) || []).length, 2, "only the two that are not working");
+  assert.ok(!/data-provider="linkedin"/.test(html), "a working account has no Connect button");
+  assert.match(html, /data-provider="threads"/, "networks with nothing connected are still offered");
+});
+
+test("while one is opening every button waits, and a notice or an error is shown in its place", () => {
+  const html = C.socialList(social({ busy: "linkedin", notice: "LinkedIn is connected.", error: "Outreach said no." }));
+  assert.match(html, /Opening…/);
+  assert.equal((html.match(/data-cx="social-connect"[^>]* disabled/g) || []).length, 4, "every Connect (four networks are on) is disabled while one is open");
+  assert.match(html, /role="status">LinkedIn is connected\./);
+  assert.match(html, /role="alert">Outreach said no\./);
+  assert.match(C.socialList(social({ status: "loading" })), /Checking…/);
+});
+
+test("the Social pane uses the real list when Outreach supports it, and the older steps when it does not", () => {
+  const out = connected({ wallet: { credits: 1, mailboxes: [], social_channels: [], phone_numbers: 0 } });
+  const withSocial = Object.assign({}, out, { social: social({ channels: [{ id: "ch_1", provider: "linkedin", label: "LinkedIn", name: "Acme", status: "connected" }] }) });
+  const html = C.hubHtml(withSocial, "social");
+  assert.match(html, /data-cx="social-connect" data-provider="facebook"/);
+  assert.ok(!/data-cx="connect-social"/.test(html), "the old open-Outreach button is gone");
+  assert.match(html, /data-cx="open-growth" data-tab="social"/, "one account is enough to start using Social");
+  const unsupported = Object.assign({}, out, { social: social({ supported: false, providers: [], channels: [] }) });
+  assert.match(C.hubHtml(unsupported, "social"), /data-cx="connect-social" data-network="Facebook"/, "the older steps still work until Outreach has shipped it");
+  assert.match(C.hubHtml(out, "social"), /data-cx="connect-social"/, "and before it has been asked");
+  const noAccount = Object.assign({}, out, { social: social() });
+  assert.ok(!/data-cx="open-growth" data-tab="social"/.test(C.hubHtml(noAccount, "social")), "nothing to open until an account is connected");
+});
+
+test("the Social row in the list shows the connected networks, and warns when one is not working", () => {
+  const out = connected({ wallet: { credits: 1, mailboxes: [], social_channels: [], phone_numbers: 0 } });
+  const row = (sc) => C.channelStatus(C.CHANNELS.find((c) => c.id === "social"), Object.assign({}, out, { social: sc }));
+  assert.deepEqual(row(social()), { on: false, text: "Not connected" });
+  const ok = row(social({ channels: [{ id: "a", provider: "linkedin", label: "LinkedIn", status: "connected" }, { id: "b", provider: "x", label: "X", status: "connected" }] }));
+  assert.equal(ok.on, true); assert.equal(ok.text, "Outreach · LinkedIn, X"); assert.ok(!ok.attention);
+  assert.equal(row(social({ channels: [{ id: "a", provider: "linkedin", label: "LinkedIn", status: "needs_reauth" }] })).attention, true);
+  assert.equal(row(social({ supported: false })).on, false);
+});
+
+test("everything from Outreach in the social list is escaped", () => {
+  const evil = `<img src=x onerror=alert(1)>"'`;
+  const html = C.socialList(social({ providers: [{ provider: "linkedin", label: evil, available: true }, { provider: "x", label: evil, available: false }],
+    channels: [{ id: evil, provider: "linkedin", label: evil, name: evil, status: "connected" }], notice: evil, error: evil }));
+  assert.ok(!/<img src=x/.test(html) && !/onerror=alert\(1\)>"/.test(html), "no markup from the server survives");
+});
+
+test("the controller opens the sign-in in a small window, never a tab, checks who a message came from, and refreshes after", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "web", "connections.js"), "utf8");
+  assert.match(src, /root\.open\("about:blank", "outreachSocial", "popup=yes,width=560,height=760"\)/, "opened inside the click so a blocker allows it");
+  assert.match(src, /w\.location\.href = r\.auth_url/);
+  assert.match(src, /e\.origin === model\.social\.origin \|\| e\.origin === OUTREACH_WEB/, "Outreach's message is only trusted from Outreach");
+  assert.match(src, /d\.type === "tf\.outreach\.channel" && e\.origin === root\.location\.origin/, "and our own page's message only from this origin");
+  assert.match(src, /afterChannelWindow\(\)/);
+  const gone = src.slice(src.indexOf("async function disconnectChannel"), src.indexOf("The sign-in window tells this page"));
+  assert.match(gone, /sc\.error = e\.message/);
+  assert.match(gone, /await loadSocial\(true, true\)/, "the refresh after a failed Disconnect must not wipe the reason it failed");
+  assert.match(src, /\/api\/growth\/social\/channels\/connect/);
+  assert.ok(!/password|token/i.test(src.slice(src.indexOf("async function connectChannel"), src.indexOf("function afterChannelWindow"))), "no credential is handled here");
 });
 
 let failed = 0;

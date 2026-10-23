@@ -6,6 +6,7 @@
 
   // [sidebar button id, section element id, close function in app.js]
   const SECTIONS = [
+    ["btnConnectionsNav", "connectionsModal", "closeConnections"],
     ["btnDashboard", "dashboardModal", "closeDashboard"],
     ["btnFunding", "fundingModal", "closeFunding"],
     ["btnPlanningLeads", "planningLeadsModal", "closePlanningLeads"],
@@ -69,10 +70,10 @@
     });
 
     const observer = new MutationObserver(syncActive);
-    SECTIONS.forEach(([, sectionId]) => {
-      const el = byId(sectionId);
-      if (el) observer.observe(el, { attributes: true, attributeFilter: ["class"] });
-    });
+    const watch = (el) => el && observer.observe(el, { attributes: true, attributeFilter: ["class"] });
+    SECTIONS.forEach(([, sectionId]) => watch(byId(sectionId)));
+    // Connections builds its page the first time it is opened
+    document.addEventListener("connections:created", () => { watch(byId("connectionsModal")); syncActive(); });
     syncActive();
   }
 

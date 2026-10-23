@@ -382,10 +382,85 @@ test("merge field buttons are only the ones this campaign can fill", () => {
   noMarkup(V.warningsHtml([{ text: EVIL }]));
 });
 
+test("the editor has a formatting toolbar, carries the message as an attribute and keeps the plain text beside it", () => {
+  const html = builder({ draft: { subject: "S", body: "Line one\n\nLine two", html: "" } });
+  has(html, 'role="toolbar"', 'data-cmd="bold"', 'data-cmd="italic"', 'data-cmd="underline"', 'data-cmd="ul"', 'data-cmd="ol"', 'data-cmd="link"', 'data-cmd="clear"',
+    'id="gsBodyRich"', 'contenteditable="true"', 'data-field="body-rich"', 'id="gsBody"', " hidden>Line one\n\nLine two</textarea>");
+  has(html, 'data-html="&lt;p&gt;Line one&lt;/p&gt;&lt;p&gt;Line two&lt;/p&gt;"');
+  // a saved formatted version wins over the plain text
+  has(builder({ draft: { subject: "S", body: "x", html: "<p><b>Bold</b></p>" } }), 'data-html="&lt;p&gt;&lt;b&gt;Bold&lt;/b&gt;&lt;/p&gt;"');
+  // nothing from the message is ever written into the markup itself
+  const evil = builder({ draft: { subject: "S", body: EVIL, html: `<p>${EVIL}</p>` } });
+  noMarkup(evil);
+});
+
+test("plain text becomes paragraphs and the fallback never lets markup through", () => {
+  assert.equal(V.textToHtml("Hello,\n\nWe saw <this> & that.\nSecond line.\n\nSam"), "<p>Hello,</p><p>We saw &lt;this&gt; &amp; that.<br>Second line.</p><p>Sam</p>");
+  assert.equal(V.textToHtml(""), "");
+  assert.equal(V.textToHtml(null), "");
+  // without a browser the safe-html step keeps the text only
+  assert.equal(V.safeHtml("<p>Hi <b>there</b><script>alert(1)</script></p>"), "Hi therealert(1)".replace("alert(1)", "alert(1)"));
+  noMarkup(V.safeHtml(`<img src=x onerror=alert(1)>${EVIL}`));
+});
+
+test("files attached to the campaign are listed with a way to remove each and a note about the sender", () => {
+  const files = [{ id: 7, name: "Case study.pdf", type: "application/pdf", size: 250000 }, { id: 8, name: "Rates.xlsx", type: "x", size: 3 * 1048576 }];
+  const html = builder({ detail: detail({ attachments: files }) });
+  has(html, 'data-action="attach-files"', 'id="gsAttachInput"', "multiple", "2 files attached", "Case study.pdf", "244 KB", "Rates.xlsx", "3 MB",
+    'data-action="remove-attachment" data-id="7"', 'data-action="remove-attachment" data-id="8"');
+  has(builder(), 'data-action="attach-files"', "Up to 10 files, 10 MB together. Sent from your own email account.");
+  lacks(builder(), "remove-attachment");
+  noMarkup(V.attachmentsBlock([{ id: 1, name: EVIL, size: 5 }]));
+});
+
+test("the preview shows the formatted message and the files, and keeps the text as a fallback", () => {
+  const targets = [target()];
+  const p = { target_id: 1, to: "p@x.example", subject: "S", body: "Plain text", html: "<p><b>Bold</b></p>", attachments: [{ name: "Case study.pdf", size: 10 }], missing: [], unknown: [] };
+  const html = V.previewHtml(p, targets, 1);
+  has(html, 'class="gs-preview__rich" data-rich="&lt;p&gt;&lt;b&gt;Bold&lt;/b&gt;&lt;/p&gt;"', '<pre class="gs-preview__body">Plain text</pre>', "Case study.pdf", ">Files<");
+  lacks(V.previewHtml({ ...p, html: null, attachments: [] }, targets, 1), "gs-preview__rich", ">Files<");
+  noMarkup(V.previewHtml({ ...p, html: `<p>${EVIL}</p>`, attachments: [{ name: EVIL, size: 1 }] }, targets, 1));
+});
+
+test("the company a campaign speaks for is chosen from the user's own profiles", () => {
+  const profiles = [{ id: 3, name: "Acme Heating Ltd" }, { id: 4, name: "Acme Roofing Ltd" }];
+  const html = builder({ detail: detail({ campaign: { ...detail().campaign, profile_id: 4, profile_name: "Acme Roofing Ltd" } }), profiles });
+  has(html, 'data-field="campaign-profile"', '<option value="3">Acme Heating Ltd</option>', '<option value="4" selected>Acme Roofing Ltd</option>');
+  const deleted = builder({ detail: detail({ campaign: { ...detail().campaign, profile_id: 99, profile_name: "Gone Ltd" } }), profiles });
+  has(deleted, '<option value="" selected>Gone Ltd</option>');
+  lacks(builder(), "campaign-profile");
+  noMarkup(V.companySelect({ profile_id: 1, profile_name: EVIL }, [{ id: 1, name: EVIL }]));
+});
+
+test("attached files can only go from the user's own email account", () => {
+  const own = { ready: false, mail_account: { id: 1, verified: true, from_email: "me@own.example", daily_cap: 100, sent_today: 0, is_default: true } };
+  const viaOutreach = { ready: true, mode: "test", wallet: { mailboxes: [{ id: "mb_1", email: "hello@o.example", can_send: true }] }, max_per_push: 25 };
+  const state = (info, mailbox) => ({ status: "ok", info, drafts: [], mailbox });
+  const withFiles = [{ id: 1, name: "a.pdf", size: 1 }];
+  const ownHtml = builder({ detail: detail({ targets: [target()], attachments: withFiles }), outreach: state(own, "smtp") });
+  lacks(ownHtml, "Outreach cannot carry files", 'data-action="outreach-send" disabled');
+  const outHtml = builder({ detail: detail({ targets: [target()], attachments: withFiles }), outreach: state(viaOutreach, "") });
+  has(outHtml, "Outreach cannot carry files", "Attached files can only be sent from your own email account.", 'data-action="outreach-send" disabled');
+  lacks(builder({ detail: detail({ targets: [target()] }), outreach: state(viaOutreach, "") }), "Outreach cannot carry files");
+});
+
+test("the send bar shows what is missing and who the mail goes from, and only exists when there is a way to send", () => {
+  const own = { ready: false, mail_account: { id: 1, verified: true, from_email: "me@own.example", daily_cap: 100, sent_today: 0, is_default: true } };
+  const ready = builder({ detail: detail({ targets: [target(), target({ id: 2 })] }), outreach: { status: "ok", info: own, drafts: [], mailbox: "smtp" } });
+  has(ready, 'class="gs-sendbar"', "✓ Every buyer has an address", "✓ Message saved", "From <b>me@own.example</b>", "Send 2 emails");
+  lacks(ready, 'data-action="outreach-send" disabled');
+  const gap = builder({ detail: detail(), outreach: { status: "ok", info: own, drafts: [], mailbox: "smtp" } });
+  has(gap, "✕ Every buyer has an address", "1 buyer has no email address.", 'data-action="outreach-send" disabled');
+  const unsaved = builder({ dirty: true, detail: detail({ targets: [target()] }), outreach: { status: "ok", info: own, drafts: [], mailbox: "smtp" } });
+  has(unsaved, "✕ Message saved", "Save the message first.");
+  lacks(builder(), "gs-sendbar");
+  lacks(builder({ outreach: { status: "ok", info: { ready: false, problem: "x" }, drafts: [] } }), "gs-sendbar");
+});
+
 test("the preview", () => {
   const targets = [target(), target({ id: 2, buyer_name: "Blaby" }), target({ id: 3, buyer_name: "Gone", opted_out: true })];
   const html = V.previewHtml({ to: "procurement@x.example", subject: "Hi Hinckley", body: "Line one\nLine two", missing: ["incumbent"], unknown: ["typo"] }, targets, 2);
-  has(html, '<option value="2" selected>Blaby</option>', '<option value="1">', "To: procurement@x.example", "<b>Subject:</b> Hi Hinckley", "Line one\nLine two", "{{incumbent}}", "{{typo}}", "Not a merge field");
+  has(html, '<option value="2" selected>Blaby</option>', '<option value="1">', '<span class="gs-mail__k">To</span><span>procurement@x.example</span>', '<span class="gs-mail__k">Subject</span><span><b>Hi Hinckley</b></span>', "Line one\nLine two", "{{incumbent}}", "{{typo}}", "Not a merge field");
   lacks(html, '<option value="3"');
   has(V.previewHtml({ to: null, subject: "s", body: "b", missing: [], unknown: [] }, targets, 1), "no email address yet");
   has(V.previewHtml(null, targets, 1), "Preparing the preview…");

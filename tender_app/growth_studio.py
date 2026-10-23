@@ -50,6 +50,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from etenders_scraper.awards import UK_IE_SOURCE_PORTALS
 from etenders_scraper.planning.scoring import lead_score
+from tender_app import email_rich as er
 from tender_app import market_radar as mr
 
 SIGNAL_TYPES = ("renewal", "development", "engagement", "funding")
@@ -1436,8 +1437,14 @@ def validate_campaign(data: Mapping[str, Any], partial: bool = False) -> dict[st
         out["status"] = data["status"]
     if "subject" in data:
         out["subject"] = _text(data["subject"], "subject", MAX_SUBJECT) or ""
-    if "body" in data:
+    if "body_html" in data:
+        # a formatted message: cleaned here, and its plain-text twin becomes `body`, so the two can never disagree
+        html = er.sanitize_html(data["body_html"])
+        out["body_html"] = html or None
+        out["body"] = _text(er.html_to_text(html), "body", MAX_BODY) or ""
+    elif "body" in data:
         out["body"] = _text(data["body"], "body", MAX_BODY) or ""
+        out["body_html"] = None  # plain text was written: any old formatted version no longer matches it
     return out
 
 
