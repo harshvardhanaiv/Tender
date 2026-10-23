@@ -434,13 +434,45 @@ test("when the server cannot keep an account, or cannot be reached, the card say
   assert.match(C.mailCard(undefined), /Checking…/);
 });
 
-test("the window shows both cards, Outreach first, and neither opens anything", () => {
+test("the page has the Outreach card on the left and Outreach with its three steps on the right, and nothing opens another window", () => {
   const html = C.connectionsHtml(Object.assign(connected(), { mail: mailModel() }));
-  assert.ok(html.indexOf('aria-label="Outreach"') > 0 && html.indexOf('aria-label="Email account"') > html.indexOf('aria-label="Outreach"'));
   assert.match(html, /data-card="outreach"/);
-  assert.match(html, /data-card="mail"/);
+  assert.match(html, /Outreach: 0 of 3 channels set up|Outreach: \d of 3 channels set up/);
+  assert.ok(html.indexOf("cx-hub__list") < html.indexOf("cx-hub__detail"), "the summary is on the left, Outreach on the right");
+  for (const t of ["Sign in to Outreach", "Choose how Outreach reaches people", "Use Outreach in Growth Studio"]) assert.ok(html.includes(t), t);
+  assert.ok(html.indexOf("Sign in to Outreach") < html.indexOf("Choose how Outreach reaches people") && html.indexOf("Choose how Outreach reaches people") < html.indexOf("Use Outreach in Growth Studio"), "steps in order");
+  // the three channels are tabs, Email open first, and the email account is what the Email tab holds
+  for (const c of ["email", "calls", "social"]) assert.match(html, new RegExp(`class="cx-tab[^"]*" data-cx="row" data-view="${c}"`));
+  assert.match(html, /class="cx-tab is-on" data-cx="row" data-view="email"/);
+  assert.match(html, /data-pane="email"/);
+  assert.match(html, /data-cxm="from_email"/, "the form to add an email account is in the Email tab");
+  assert.ok(!/data-pane="calls"|data-pane="social"/.test(html), "one channel is open at a time");
+  assert.match(html, /Calendar[\s\S]*Coming soon[\s\S]*CRM[\s\S]*Coming soon/);
   onlyOutreachLinks(html);
-  assert.match(C.connectionsHtml(connected()), /aria-label="Email account"/, "a model with no mail state still draws the card");
+  assert.match(C.connectionsHtml(connected()), /data-pane="email"/, "a model with no mail state still draws the tab");
+});
+
+test("the right panel has Refresh and Disconnect only while Outreach is connected, and a test key gets one clear note", () => {
+  const live = C.hubHtml(connected({ mode: "live" }), "social");
+  assert.match(live, /cx-mainhead__act">[\s\S]*data-action="outreach-check"[\s\S]*data-cx="disconnect"/);
+  assert.ok(!/Test mode/.test(live), "no note for a live key");
+  const test = C.hubHtml(connected({ mode: "test" }), "social");
+  assert.match(test, /role="note"><strong>Test mode\.<\/strong> Your Outreach key is a test key, so nothing real is sent, posted or connected/);
+  assert.equal((test.match(/Test mode\./g) || []).length, 1, "said once, in step 1");
+  assert.ok(!/cx-mainhead__act/.test(C.hubHtml(notConnected(), "email")), "nothing to refresh or disconnect before connecting");
+});
+
+test("the left side counts the channels that are set up, with a dot for each", () => {
+  const none = C.hubHtml(notConnected(), "email");
+  assert.match(none, /Outreach: 0 of 3 channels set up/);
+  assert.match(none, /Set up email first so campaigns can be sent\./);
+  assert.equal((none.match(/class="cx-dot is-on"/g) || []).length, 0);
+  const all = connected({ wallet: { credits: 1, mailboxes: [{ id: "mb", email: "a@x.example", can_send: true }], social_channels: ["linkedin"], phone_numbers: 1 } });
+  const html = C.hubHtml(all, "email");
+  assert.match(html, /Outreach: 3 of 3 channels set up/);
+  assert.match(html, /Everything you can connect is connected\./);
+  assert.equal((html.match(/class="cx-dot is-on"/g) || []).length, 3);
+  assert.match(html, /width:100%/);
 });
 
 test("the controller sends the password only to the server, clears it at once, asks before disconnecting the account and announces a change", () => {
@@ -470,7 +502,8 @@ test("the controller never opens a window, never stores the key in the browser a
 test("Calls and Social set up in steps: sign in here, link the account on Outreach, then open it in Growth Studio", () => {
   const out = notConnected();
   const social = C.hubHtml({ status: "ready", info: out }, "social");
-  assert.match(social, /data-pane="social"[^>]*>[\s\S]*cx-steps/);
+  assert.match(social, /cx-steps[\s\S]*data-pane="social"/);
+  assert.match(social, /Available once you have signed in to Outreach/, "the channel waits for step 1");
   assert.match(social, /Sign in to Outreach/);
   assert.match(social, /data-cx="connect-form"/, "the sign-in form is in the Social pane itself");
   assert.equal((social.match(/data-cx="connect-form"/g) || []).length, 1, "one form on the page, so its ids are unique");
@@ -531,6 +564,17 @@ test("while one is opening every button waits, and a notice or an error is shown
   assert.match(C.socialList(social({ status: "loading" })), /Checking…/);
 });
 
+test("a test key's sample accounts are never listed as connected", () => {
+  // the server sends no channels for a test key, so every network shows as not connected and can be tried
+  const none = C.socialList(social({ simulated: true, channels: [] }));
+  assert.equal((none.match(/Not connected</g) || []).length, 4, "the four networks that are on");
+  assert.match(none, /data-cx="social-connect" data-provider="linkedin"/);
+  assert.ok(!/>Try connect</.test(none) && !/Test LinkedIn/.test(none), "no sample account is shown as connected");
+  const src = fs.readFileSync(path.join(__dirname, "..", "web", "connections.js"), "utf8");
+  assert.match(src, /simulated: !!r\.simulated/);
+  assert.match(src, /Nothing real was disconnected/, "after Disconnect on samples it does not claim anything was removed");
+});
+
 test("the Social pane uses the real list when Outreach supports it, and the older steps when it does not", () => {
   const out = connected({ wallet: { credits: 1, mailboxes: [], social_channels: [], phone_numbers: 0 } });
   const withSocial = Object.assign({}, out, { social: social({ channels: [{ id: "ch_1", provider: "linkedin", label: "LinkedIn", name: "Acme", status: "connected" }] }) });
@@ -564,7 +608,9 @@ test("everything from Outreach in the social list is escaped", () => {
 
 test("the controller opens the sign-in in a small window, never a tab, checks who a message came from, and refreshes after", () => {
   const src = fs.readFileSync(path.join(__dirname, "..", "web", "connections.js"), "utf8");
-  assert.match(src, /root\.open\("about:blank", "outreachSocial", "popup=yes,width=560,height=760"\)/, "opened inside the click so a blocker allows it");
+  assert.match(src, /root\.open\("about:blank", "outreachSocial" \+ Date\.now\(\), "popup=yes,width=560,height=760"\)/, "opened inside the click so a blocker allows it, under a fresh name so an old window is never reused");
+  assert.match(src, /new root\.BroadcastChannel\("tf-outreach-channel"\)/, "the finished window is also heard through a same-site broadcast");
+  assert.match(src, /e\.data\.type === "tf\.outreach\.channel"\) channelDone\(e\.data\)/);
   assert.match(src, /w\.location\.href = r\.auth_url/);
   assert.match(src, /e\.origin === model\.social\.origin \|\| e\.origin === OUTREACH_WEB/, "Outreach's message is only trusted from Outreach");
   assert.match(src, /d\.type === "tf\.outreach\.channel" && e\.origin === root\.location\.origin/, "and our own page's message only from this origin");

@@ -112,7 +112,7 @@ def test_a_post_needs_a_prompt_and_a_connected_channel():
     problems, _, _ = och.post_problems("A long enough prompt here", [], None)
     assert problems == ["Choose at least one channel to post to."]
     problems, _, _ = och.post_problems("A long enough prompt here", ["linkedin", "instagram"], ["linkedin"])
-    assert problems == ["Not connected in Outreach: instagram. Connect it there, or choose another channel."]
+    assert problems == ["Not connected in Outreach: instagram. Connect it under Connections, Social, or choose another channel."]
     problems, channels, _ = och.post_problems("A long enough prompt here", ["linkedin; drop"], None)
     assert channels == [] and problems == ["Choose at least one channel to post to."]  # not a channel name at all
     problems, _, prompt = och.post_problems("x" * 1600, ["linkedin"], None)

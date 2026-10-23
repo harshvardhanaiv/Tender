@@ -66,6 +66,17 @@ def test_networks_and_accounts_are_read():
     assert [c["body"]["action"] for c in runs()] == ["channel.providers", "channel.list"]
 
 
+def test_a_test_keys_sample_accounts_are_flagged_and_never_listed_as_connected():
+    install()
+    outreach(channels={"channels": CHANNELS["channels"], "simulated": True})
+    body = call(client(USER_A), "get", "/api/growth/social/channels")[1]
+    assert body["simulated"] is True and body["channels"] == [], "they are not the user's accounts"
+    assert [p["provider"] for p in body["providers"]][:2] == ["linkedin", "facebook"], "every network is still offered"
+    outreach()
+    body = call(client(USER_A), "get", "/api/growth/social/channels")[1]
+    assert body["simulated"] is False and len(body["channels"]) == 2
+
+
 def test_when_outreach_has_not_shipped_the_actions_the_page_is_told_so_rather_than_given_an_error():
     install()
     outreach(unknown=True)
@@ -145,7 +156,8 @@ def test_disconnect_names_the_account_and_a_bad_id_never_reaches_outreach():
     c = client(USER_A)
     code, body, _ = call(c, "delete", "/api/growth/social/channels/ch_1")
     assert code == 200 and body == {"disconnected": "ch_1"}
-    assert runs("channel.disconnect")[0]["body"]["data"] == {"id": "ch_1"}
+    sent = runs("channel.disconnect")[0]["body"]
+    assert sent["id"] == "ch_1" and "data" not in sent, "Outreach reads the id from the top level of the request"
     code, body, _ = call(c, "delete", "/api/growth/social/channels/a%20b")
     assert code == 400 and len(runs("channel.disconnect")) == 1
 
@@ -168,6 +180,8 @@ def test_the_window_a_sign_in_ends_on_tells_the_opener_and_closes_itself():
     html = r.get_data(as_text=True)
     assert r.status_code == 200 and r.mimetype == "text/html" and "window.close()" in html
     assert 'type:"tf.outreach.channel",status:"connected",provider:"linkedin"' in html and "window.location.origin" in html
+    assert 'new BroadcastChannel("tf-outreach-channel")' in html, "also told to every tab of the site, in case the window's link back is gone"
+    assert 'id="c" hidden' in html and 'hidden=false' in html, "a browser that will not close the window gets a Close button"
     assert "no-store" in r.headers.get("Cache-Control", "")
     err = c.get("/outreach/connected?status=error&provider=facebook").get_data(as_text=True)
     assert 'status:"error"' in err and "could not be connected" in err

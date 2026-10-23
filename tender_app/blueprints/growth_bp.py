@@ -1534,11 +1534,17 @@ def growth_outreach_connected():
     if provider:
         status = "connected" if request.args.get("status") == "connected" else "error"
         text = f"{provider.title()} is connected." if status == "connected" else f"{provider.title()} could not be connected."
+        # told to the page that opened this window, and broadcast to every tab of this site (that still works when the browser has cut
+        # the window's link back); a browser that will not close the window gets a Close button instead of a dead end
         page = (
             '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connections</title>'
-            f'<p style="font:16px system-ui,sans-serif;padding:24px">{text} You can close this window.</p>'
-            f'<script>try{{window.opener&&window.opener.postMessage({{type:"tf.outreach.channel",status:"{status}",provider:"{provider}"}},window.location.origin)}}catch(e){{}}window.close();</script>'
-        )
+            f'<div style="font:16px system-ui,sans-serif;padding:24px"><p>{text} You can close this window.</p>'
+            '<p><button id="c" hidden onclick="window.close()" style="font:inherit;padding:8px 16px">Close this window</button></p></div>'
+            '<script>var d={type:"tf.outreach.channel",status:"__STATUS__",provider:"__PROVIDER__"};'
+            'try{window.opener&&window.opener.postMessage(d,window.location.origin)}catch(e){}'
+            'try{var b=new BroadcastChannel("tf-outreach-channel");b.postMessage(d);b.close()}catch(e){}'
+            'window.close();setTimeout(function(){document.getElementById("c").hidden=false},400);</script>'
+        ).replace("__STATUS__", status).replace("__PROVIDER__", provider)
         return Response(page, mimetype="text/html", headers={"Cache-Control": "no-store"})
     return redirect("/?outreach=connected", code=302)
 
@@ -1560,6 +1566,23 @@ def _channel_refusal(exc: "oc.OutreachError") -> _Http:
     return _Http(exc.message, exc.status if exc.status in (400, 403, 404) else 502, code or None)
 
 
+def _connected_networks(client: "oc.OutreachClient") -> tuple[list[str] | None, bool]:
+    """(networks, simulated): the networks the user has a working connection to, from Outreach's channel list. The list is None
+    when Outreach cannot say (it does not have the channel actions yet, or did not answer), so the caller falls back to what the
+    wallet reported. `simulated` is True for a test key, whose sample accounts are not the user's."""
+    try:
+        raw = client.channel_list()
+    except oc.OutreachError:
+        return None, False
+    if isinstance(raw, dict) and raw.get("simulated"):
+        return [], True
+    out: list[str] = []
+    for c in oc.channel_list_summary(raw):
+        if c["status"] == "connected" and c["provider"] not in out:
+            out.append(c["provider"])
+    return out, False
+
+
 @growth_bp.get("/api/growth/social/channels")
 def growth_social_channels():
     """The networks that can be connected and the accounts the user has connected. {"supported": false} when Outreach has not
@@ -1570,7 +1593,12 @@ def growth_social_channels():
                            "outreach_origin": "/".join(base.split("/")[:3]) if base.startswith("http") else ""}
     try:
         out["providers"] = oc.channel_providers_summary(client.channel_providers())
-        out["channels"] = oc.channel_list_summary(client.channel_list(refresh=_flag(request.args.get("refresh"))))
+        listed = client.channel_list(refresh=_flag(request.args.get("refresh")))
+        out["channels"] = oc.channel_list_summary(listed)
+        # a test key lists sample accounts (simulated: true) that are always there; the page says so instead of letting them pass for real ones
+        out["simulated"] = bool(listed.get("simulated")) if isinstance(listed, dict) else False
+        if out["simulated"]:
+            out["channels"] = []  # they are not the user's accounts, so none is shown as connected
     except oc.OutreachError as exc:
         if exc.status in _CHANNEL_NOT_THERE:
             return jsonify({**out, "supported": False})
@@ -2243,8 +2271,15 @@ def growth_social_create():
     client = _outreach_client()
     wallet = _wallet_for_channels(client)
     allowed = wallet["social_channels"]
-    if not allowed and (wallet.get("connected") or {}).get("social_channels") == 0:
-        raise _Http("No social channel is connected. Connect one under Connections, Social, then try again.", 409)
+    if not allowed:
+        # the wallet does not always list them (a test key's sample accounts are only in the channel list), so ask that too
+        networks, simulated = _connected_networks(client)
+        if simulated:
+            pass  # a test key: posts are pretend too, so any of the usual networks may be chosen
+        elif networks:
+            allowed = networks
+        elif networks == [] or (wallet.get("connected") or {}).get("social_channels") == 0:
+            raise _Http("No social channel is connected. Connect one under Connections, Social, then try again.", 409)
     # "write it myself": the user's own caption. It is the prompt, either to be polished by the AI (polish: true) or to be
     # used as it is (the browser then sets it on the post by hand once Outreach has finished writing). The user's own
     # picture is likewise set by hand afterwards (PATCH), so the AI is never asked to draw one.

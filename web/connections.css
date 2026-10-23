@@ -20,6 +20,7 @@
 .cx-label { margin: 12px 0 2px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--slate); }
 .cx-line { margin: 4px 0; font-size: 13px; }
 .cx-line--bad { color: var(--gs-neg, #b42318); }
+.cx-line--note { padding: 8px 10px; border-radius: 8px; background: var(--gs-gold-soft, #fff3d6); }
 .cx-list { list-style: none; margin: 4px 0 0; padding: 0; }
 .cx-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 5px 0; border-top: 1px solid var(--line); font-size: 13px; }
 .cx-list li:first-child { border-top: 0; }
@@ -101,9 +102,6 @@ select.cx-input { appearance: auto; }
 .cx-soon li { justify-content: space-between; }
 @media (max-width: 819px) {
   .cx-hub { grid-template-columns: minmax(0, 1fr); }
-  .cx-hub--detail .cx-hub__list { display: none; }
-  .cx-hub:not(.cx-hub--detail) .cx-hub__detail { display: none; }
-  .cx-back { display: inline-flex; }
   .cx-overlay { padding-top: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .cx-bar > i { transition: none; } }
@@ -152,3 +150,32 @@ body.tf-shell #connectionsModal .cx-foot { margin-top: 16px; }
 .cx-step__title { font-weight: 600; font-size: 14px; margin: 3px 0 4px; }
 .cx-step__body { min-width: 0; }
 .cx-btn--sm { padding: 3px 10px; font-size: 12px; margin-left: auto; }
+
+/* The page: what is set up on the left, Outreach and its three steps on the right */
+.cx-ocard { padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+.cx-ocard__head { display: flex; gap: 12px; align-items: flex-start; }
+.cx-ocard__txt { flex: 1; min-width: 0; }
+.cx-ocard__row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 2px; }
+.cx-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.cx-chip { padding: 3px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12px; }
+.cx-dot { color: var(--gs-faint, #8b93a6); font-size: 11px; }
+.cx-dot.is-on { color: var(--pos, #1b7a4b); }
+.cx-other { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.cx-other li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); }
+.cx-other li:first-child { border-top: 0; }
+.cx-mainhead { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px 14px; margin-bottom: 4px; }
+.cx-mainhead__t { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.cx-mainhead__act { display: flex; flex-wrap: wrap; gap: 8px; }
+.cx-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 10px; }
+.cx-tab { appearance: none; display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.cx-tab:hover { background: var(--paper); }
+.cx-tab.is-on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; background: color-mix(in srgb, var(--accent) 9%, var(--panel)); }
+.cx-tab:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px; }
+.cx-tab .cx-pill { font-weight: 600; font-size: 11px; }
+.cx-tabpanel { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.cx-chhead { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.cx-chname { font-weight: 600; }
+.cx-flag { margin-left: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--slate); }
+.cx-flag--need { color: var(--gold, #b0800a); }
+.cx-chbody { padding-top: 12px; min-width: 0; }
+.cx-chbody .cx-card { border: 0; padding: 0; background: none; }

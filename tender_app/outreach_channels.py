@@ -116,7 +116,7 @@ def channel_problems(channels: Any, allowed: Iterable[str] | None) -> tuple[list
         ok = [a for a in (allowed or [])] or list(DEFAULT_CHANNELS)
         bad = [c for c in picked if c not in ok]
         if bad:
-            problems.append("Not connected in Outreach: " + ", ".join(bad) + ". Connect it there, or choose another channel.")
+            problems.append("Not connected in Outreach: " + ", ".join(bad) + ". Connect it under Connections, Social, or choose another channel.")
     return problems, picked
 
 

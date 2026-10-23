@@ -330,9 +330,14 @@ class OutreachClient:
 
     # ── connecting social accounts from the partner's own page (`social` plugin, POST /v1/run) ──────
 
-    def run(self, plugin: str, action: str, data: Mapping[str, Any] | None = None, idempotency_key: str | None = None) -> dict[str, Any]:
-        """One call of Outreach's single entry point: POST /v1/run {"plugin", "action", "data"}, with the user's key."""
+    def run(self, plugin: str, action: str, data: Mapping[str, Any] | None = None, idempotency_key: str | None = None,
+            item_id: str | None = None) -> dict[str, Any]:
+        """One call of Outreach's single entry point: POST /v1/run {"plugin", "action", "data"}, with the user's key.
+        `item_id` is the id of something that already exists (a channel to disconnect): Outreach reads it from the top level of
+        the request, not from `data` (it answers `id_required` otherwise)."""
         body: dict[str, Any] = {"plugin": plugin, "action": action}
+        if item_id is not None:
+            body["id"] = item_id
         if data is not None:
             body["data"] = dict(data)
         return self._call("POST", "/v1/run", body, idempotency_key)
@@ -354,7 +359,7 @@ class OutreachClient:
     def channel_disconnect(self, channel_id: str) -> dict[str, Any]:
         if not _ID_RE.match(channel_id or ""):
             raise OutreachError("That is not an Outreach channel id.", 400, "invalid_request")
-        return self.run("social", "channel.disconnect", {"id": channel_id})
+        return self.run("social", "channel.disconnect", item_id=channel_id)
 
     def update_social_post(self, post_id: str, payload: Mapping[str, Any], idempotency_key: str) -> dict[str, Any]:
         """Change a post: its publish time, or ask the AI to write the text, the picture or both again. Outreach sends a

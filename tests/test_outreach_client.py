@@ -61,7 +61,8 @@ def test_social_channel_calls_go_through_run_with_the_users_key():
     assert bodies[1] == {"plugin": "social", "action": "channel.list"}
     assert bodies[2] == {"plugin": "social", "action": "channel.list", "data": {"refresh": True}}
     assert bodies[3] == {"plugin": "social", "action": "channel.connect", "data": {"provider": "linkedin", "return_url": "https://app.example/outreach/connected"}}
-    assert bodies[4] == {"plugin": "social", "action": "channel.disconnect", "data": {"id": "ch_5b3e92a1"}}
+    # the id of something that already exists goes at the top level: Outreach answers id_required when it is inside data
+    assert bodies[4] == {"plugin": "social", "action": "channel.disconnect", "id": "ch_5b3e92a1"}
     assert all(x["headers"]["Authorization"] == f"Bearer {KEY}" for x in fake.calls)
 
 

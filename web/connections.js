@@ -256,7 +256,7 @@
     );
   }
 
-  function mailCard(m) {
+  function mailParts(m) {
     const mm = m || {};
     const state = mailState(m);
     const info = mm.info || {};
@@ -292,6 +292,11 @@
           ? `<p class="cx-sub cx-hint">Choose the address under Send from when you send mail in Growth Studio. When you do not choose, the default one is used. Replies arrive in the mailbox an email was sent from.</p>`
           : `<p class="cx-sub cx-hint">Choose this address under Send from when you send mail in Growth Studio. Replies arrive in this mailbox${a.reply_to ? ` (replies are asked to go to ${esc(a.reply_to)})` : ""}.</p>`);
     }
+    return { state, tone, text, body, actions, failing, many };
+  }
+
+  function mailCard(m) {
+    const { state, tone, text, body, actions, failing, many } = mailParts(m);
     return (
       `<section class="cx-card cx-card--${state === "ok" && !failing ? "ok" : state === "ok" ? "attention" : state}" data-card="mail" aria-label="${many ? "Email accounts" : "Email account"}">` +
       `<div class="cx-card__head"><span class="cx-ico" aria-hidden="true"><i class="ti ti-mail"></i></span>` +
@@ -303,20 +308,19 @@
     );
   }
 
-  // ── the hub: one row per channel on the left, the chosen channel's panel on the right (one at a time on a phone) ───────────
-  // Outreach covers email, calls and social in one sign-in, so it is one banner, not a tile in every channel.
-  // Apps TenderFlow cannot connect yet are listed as "Coming soon" so nobody hunts for a button that does nothing.
+  // ── the page: what is set up on the left, Outreach with its three steps on the right ───────────────────────────────────────
+  // Outreach is one sign-in for email, calls and social posts, so it is one panel: step 1 signs in, step 2 sets up each channel
+  // (Email, Calls, Social as tabs), step 3 points at Growth Studio. Email also works without Outreach (the user's own account).
   const CHANNELS = [
-    { id: "email", name: "Email", icon: "ti-mail", needed: true, unlock: "Send campaign emails and read replies.", soon: [["Sign in with Google", "Gmail / Google Workspace"], ["Sign in with Microsoft", "Outlook / Microsoft 365"]] },
-    { id: "calls", name: "Calls", icon: "ti-phone", unlock: "Run call steps in campaigns and log the outcome.", soon: [["Sign in", "Aircall"], ["Account details", "Twilio"], ["Tasks in your Inbox", "I'll make calls myself"]] },
-    { id: "social", name: "Social", icon: "ti-share", unlock: "Schedule and publish company posts after you approve them.", soon: [["Sign in", "Buffer"]] },
-    { id: "meetings", name: "Calendar", icon: "ti-calendar", unlock: "Add a booking link to messages and spot booked meetings.", soon: [["Sign in with Google", "Google Calendar"], ["Sign in", "Calendly"]], onlySoon: true },
-    { id: "crm", name: "CRM", icon: "ti-address-book", unlock: "Copy contacts, activity and deals to your CRM.", soon: [["Sign in", "HubSpot"], ["Sign in", "Pipedrive"]], onlySoon: true },
+    { id: "email", name: "Email", needed: true, unlock: "Send campaign emails and read replies." },
+    { id: "calls", name: "Calls", unlock: "Run call steps in campaigns and log the outcome." },
+    { id: "social", name: "Social", unlock: "Schedule and publish company posts after you approve them." },
   ];
+  // Apps TenderFlow cannot connect yet are listed so nobody hunts for a button that does nothing.
+  const OTHER_APPS = [["Calendar", "Add a booking link to messages and spot booked meetings."], ["CRM", "Copy contacts, activity and deals to your CRM."]];
 
-  // What each channel is connected through right now, from the answers the two status calls gave.
+  // What each channel is connected through right now, from the answers the status calls gave.
   function channelStatus(c, m) {
-    if (c.onlySoon) return { on: false, soon: true, text: "Coming soon" };
     const info = (m && m.info) || {};
     const w = info.wallet || {};
     const out = outreachState(m) === "ok";
@@ -341,20 +345,9 @@
     return { on: false, text: "Not connected" };
   }
 
-  function chanRow(c, st, selected) {
-    const chip = st.on ? `<span class="cx-pill cx-pill--${st.attention ? "warn" : "good"}">${esc(st.attention ? "Needs attention" : st.text)}</span>`
-      : `<span class="cx-pill cx-pill--muted">${esc(st.text)}</span>`;
-    return `<button type="button" class="cx-chan${selected ? " is-on" : ""}" data-cx="row" data-view="${c.id}" aria-current="${selected ? "true" : "false"}">` +
-      `<span class="cx-ico" aria-hidden="true"><i class="ti ${c.icon}"></i></span>` +
-      `<span class="cx-chan__txt"><span class="cx-chan__name">${esc(c.name)} ${c.needed ? `<span class="cx-req">Needed to send</span>` : c.onlySoon ? "" : `<span class="cx-opt">Optional</span>`}</span>` +
-      `<span class="cx-sub">${esc(c.unlock)}</span>${st.on && st.text !== c.name ? `<span class="cx-chan__via">${esc(st.text)}</span>` : ""}</span>` +
-      `<span class="cx-chan__end">${st.on && !st.attention ? `<span class="cx-pill cx-pill--good">Connected</span>` : chip}</span></button>`;
-  }
-
-  function soonTiles(list) {
-    return `<div class="cx-label">Other apps</div><ul class="cx-list cx-soon">` + list.map(([how, name]) =>
-      `<li><span class="cx-mail">${esc(name)}</span> <span class="cx-sub">${esc(how)}</span> <span class="cx-pill cx-pill--muted">Coming soon</span></li>`).join("") + `</ul>`;
-  }
+  const chanPill = (st) => st.on
+    ? `<span class="cx-pill cx-pill--${st.attention ? "warn" : "good"}">${st.attention ? "Needs attention" : "Connected"}</span>`
+    : `<span class="cx-pill cx-pill--muted">Not connected</span>`;
 
   const OUTREACH_WEB = "https://outreach.aivhub.com";
   const NETWORKS = ["LinkedIn", "Facebook", "Instagram", "X"];
@@ -364,8 +357,6 @@
       `<div class="cx-step__body"><div class="cx-step__title">${esc(title)}${done ? ` <span class="cx-pill cx-pill--good">Done</span>` : ""}</div>${inner}</div></li>`;
   }
 
-  // Calls and Social set up right here: sign in to Outreach (step 1), link the accounts or number (step 2, done inside
-  // Outreach because its public API cannot add them), then start using it in Growth Studio (step 3).
   const CH_PILL = { connected: ["Connected", "good"], needs_reauth: ["Needs reconnecting", "warn"], error: ["Problem", "warn"] };
 
   // The networks Outreach can connect from here, one row per network (a row per account once connected). Each Connect opens the
@@ -394,82 +385,105 @@
       `<p class="cx-sub">You sign in on the network's own page, so TenderFlow never sees your password. Posts still wait for your approval before they go live.</p>`;
   }
 
-  function channelSetup(c, m, selected) {
+  // The body of the open channel tab.
+  function channelBody(c, m) {
     const out = outreachState(m) === "ok";
     const info = (m && m.info) || {};
     const w = info.wallet || {};
-    const social = (Array.isArray(w.social_channels) ? w.social_channels : []).filter(Boolean);
-    const phones = Number.isFinite(w.phone_numbers) ? w.phone_numbers : 0;
-    const have = (net) => social.some((s) => channelName(s) === net);
-    const sc = c.id === "social" && m && m.social && m.social.supported ? m.social : null;
-    const linked = c.id === "social" ? (sc ? (sc.channels || []).some((x) => x.status === "connected") : social.length > 0) : phones > 0;
-    const s1 = out
-      ? step(1, true, "Sign in to Outreach", `<p class="cx-sub">${via(info) || "Connected."}</p>`)
-      : step(1, false, "Sign in to Outreach",
-        `<p class="cx-sub">One sign-in covers email, calls and social posts. No Outreach account yet? Choose Create account.</p>` +
-        (selected ? (() => { const p = outreachParts(m); return p.body + (p.actions ? `<div class="cx-actions cx-actions--flush">${p.actions}</div>` : ""); })() : ""));
-    let inner;
-    if (!out) inner = `<p class="cx-sub">Available once you have signed in.</p>`;
-    else if (sc) inner = socialList(sc);
-    else if (c.id === "social") {
-      inner = `<ul class="cx-list">` + NETWORKS.map((n) => `<li><span class="cx-mail">${n}</span> ` +
-        (have(n) ? `<span class="cx-pill cx-pill--good">Linked</span>` : `<span class="cx-pill cx-pill--muted">Not linked</span> <button type="button" class="cx-btn cx-btn--sm" data-cx="connect-social" data-network="${esc(n)}" data-tip="Opens Outreach in a small window so you can approve ${esc(n)}. Come back here when you are done.">Connect ${esc(n)}</button>`) + `</li>`).join("") + `</ul>` +
-        `<div class="cx-actions cx-actions--flush">` +
-        `<button type="button" class="cx-btn" data-action="outreach-check"${m && m.status === "loading" ? " disabled" : ""}>${m && m.status === "loading" ? "Checking…" : "Check again"}</button></div>` +
-        `<p class="cx-sub">Social accounts linked to your Outreach account show here.</p>`;
-    } else {
-      inner = `<p class="cx-line">${phones > 0 ? esc(plural(phones, "phone number")) + " in your Outreach account." : "No phone number in your Outreach account yet."}</p>` +
-        `<div class="cx-actions cx-actions--flush">` +
-        `<button type="button" class="cx-btn" data-action="outreach-check"${m && m.status === "loading" ? " disabled" : ""}>${m && m.status === "loading" ? "Checking…" : "Check again"}</button></div>` +
+    const checking = m && m.status === "loading";
+    const check = `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn" data-action="outreach-check"${checking ? " disabled" : ""}>${checking ? "Checking…" : "Check again"}</button></div>`;
+    if (c.id === "email") {
+      const p = mailParts(m && m.mail);
+      const boxes = (Array.isArray(w.mailboxes) ? w.mailboxes : []).filter((x) => x && x.email);
+      return p.body + (p.actions ? `<div class="cx-actions">${p.actions}</div>` : "") +
+        (out ? `<p class="cx-sub cx-hint">${boxes.length
+          ? `Outreach is connected, so Growth Studio can also send through its mailbox${boxes.length > 1 ? "es" : ""}: ${boxes.map((b) => esc(b.email)).join(", ")}.`
+          : "Your Outreach account has no mailbox, so email goes out from your own account."}</p>` : "");
+    }
+    if (!out) return `<p class="cx-sub">Available once you have signed in to Outreach (step 1).</p>`;
+    if (c.id === "calls") {
+      const phones = Number.isFinite(w.phone_numbers) ? w.phone_numbers : 0;
+      return `<p class="cx-line">${phones > 0 ? esc(plural(phones, "phone number")) + " in your Outreach account." : "No phone number in your Outreach account yet."}</p>` + check +
         `<p class="cx-sub">Outreach's AI makes the calls from that number, to UK landlines only. Phone numbers in your Outreach account show here.</p>`;
     }
-    const s2 = step(2, out && linked, c.id === "social" ? "Link your social accounts" : "Add a phone number", inner);
-    const tab = c.id === "social" ? "Social" : "Calls";
-    const s3 = step(3, false, `Use ${tab} in Growth Studio`, out && linked
-      ? `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn cx-btn--primary" data-cx="open-growth" data-tab="${c.id}">Open ${tab} in Growth Studio</button></div>`
-      : `<p class="cx-sub">${c.id === "social" ? "Write a post, check the preview, then approve it to publish." : "Pick a buyer, check the script, then start the call."}</p>`);
-    return `<ol class="cx-steps">${s1}${s2}${s3}</ol>`;
-  }
-
-  function viaOutreach(c, m) {
-    const out = outreachState(m) === "ok";
-    return out
-      ? `<p class="cx-line">Outreach is connected, so this channel uses its mailboxes.</p><div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn" data-cx="goto" data-view="outreach">Manage Outreach</button></div>`
-      : `<p class="cx-line">Outreach covers this channel as well as calls and social posts, with one sign-in.</p><div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn cx-btn--primary" data-cx="goto" data-view="outreach">Connect Outreach</button></div>`;
-  }
-
-  function pane(view, selected, title, inner) {
-    return `<div class="cx-pane" data-pane="${view}"${selected ? "" : " hidden"}>` +
-      `<button type="button" class="cx-back" data-cx="back"><i class="ti ti-arrow-left" aria-hidden="true"></i> All connections</button>` +
-      `<h3 class="cx-pane__title" tabindex="-1">${esc(title)}</h3>${inner}</div>`;
+    const sc = m && m.social && m.social.supported ? m.social : null;
+    if (sc) return socialList(sc);
+    const social = (Array.isArray(w.social_channels) ? w.social_channels : []).filter(Boolean);
+    const have = (net) => social.some((s) => channelName(s) === net);
+    // Outreach has not shipped the connect actions (or has not been asked yet): the older way, on Outreach's own site
+    return `<ul class="cx-list">` + NETWORKS.map((n) => `<li><span class="cx-mail">${n}</span> ` +
+      (have(n) ? `<span class="cx-pill cx-pill--good">Linked</span>` : `<span class="cx-pill cx-pill--muted">Not linked</span> <button type="button" class="cx-btn cx-btn--sm" data-cx="connect-social" data-network="${esc(n)}" data-tip="Opens Outreach in a small window so you can approve ${esc(n)}. Come back here when you are done.">Connect ${esc(n)}</button>`) + `</li>`).join("") + `</ul>` +
+      check + `<p class="cx-sub">Social accounts linked to your Outreach account show here.</p>`;
   }
 
   function hubHtml(m, view) {
-    const sel = view || null;
+    const tab = CHANNELS.some((c) => c.id === view) ? view : "email";
+    const info = (m && m.info) || {};
+    const state = outreachState(m);
+    const out = state === "ok";
+    const [pillText, tone] = PILL[state];
     const statuses = CHANNELS.map((c) => [c, channelStatus(c, m)]);
-    const sendable = statuses.filter(([c]) => !c.onlySoon);
-    const done = sendable.filter(([, st]) => st.on).length;
+    const done = statuses.filter(([, st]) => st.on).length;
     const emailOn = statuses[0][1].on;
-    const outOk = outreachState(m) === "ok";
+    const busy = !!(m && m.busy);
+
+    // left: how far along, the Outreach card, the apps that are not here yet
     const progress =
-      `<div class="cx-progress"><div class="cx-progress__top"><strong>${done} of ${sendable.length} channels connected</strong>` +
-      `<span class="cx-sub">${emailOn ? (done === sendable.length ? "Everything you can connect is connected." : "Email is ready. Calls and social are optional.") : "Connect email first so campaigns can be sent."}</span></div>` +
-      `<div class="cx-bar"><i style="width:${Math.round((done / sendable.length) * 100)}%"></i></div></div>`;
-    const banner = outOk
-      ? `<div class="cx-reco"><span class="cx-ico" aria-hidden="true"><i class="ti ti-send"></i></span><div class="cx-reco__txt"><strong>Outreach is connected</strong><span class="cx-sub">Email, calls and social posts can run through it.</span></div><button type="button" class="cx-btn" data-cx="goto" data-view="outreach">Manage</button></div>`
-      : `<div class="cx-reco"><span class="cx-ico" aria-hidden="true"><i class="ti ti-send"></i></span><div class="cx-reco__txt"><strong>Recommended: connect Outreach once</strong><span class="cx-sub">One sign-in covers email, AI calls and social posts.</span></div><button type="button" class="cx-btn cx-btn--primary" data-cx="goto" data-view="outreach">Connect Outreach</button></div>`;
-    const rows = statuses.map(([c, st]) => chanRow(c, st, sel === c.id)).join("");
-    const emailPane =
-      mailCard(m && m.mail) + `<div class="cx-label">Or use Outreach</div>` + viaOutreach(CHANNELS[0], m);
-    const panes =
-      `<section data-card="outreach">` + pane("outreach", sel === "outreach", "Outreach", outreachCard(m, sel !== "outreach")) + `</section>` +
-      pane("email", sel === "email", "Email", emailPane) +
-      pane("calls", sel === "calls", "Calls", `<p class="cx-sub">${esc(CHANNELS[1].unlock)}</p>` + channelSetup(CHANNELS[1], m, sel === "calls") + soonTiles(CHANNELS[1].soon)) +
-      pane("social", sel === "social", "Social", `<p class="cx-sub">${esc(CHANNELS[2].unlock)}</p>` + channelSetup(CHANNELS[2], m, sel === "social") + soonTiles(CHANNELS[2].soon)) +
-      pane("meetings", sel === "meetings", "Calendar", `<p class="cx-sub">${esc(CHANNELS[3].unlock)}</p>` + soonTiles(CHANNELS[3].soon)) +
-      pane("crm", sel === "crm", "CRM", `<p class="cx-sub">${esc(CHANNELS[4].unlock)}</p>` + soonTiles(CHANNELS[4].soon));
-    return `<div class="cx-hub${sel ? " cx-hub--detail" : ""}"><div class="cx-hub__list">${progress}${banner}<div class="cx-chans">${rows}</div></div>` +
-      `<div class="cx-hub__detail">${sel ? "" : `<p class="cx-sub cx-hub__empty">Choose a channel to connect it or see how it is set up.</p>`}${panes}</div></div>`;
+      `<div class="cx-progress"><div class="cx-progress__top"><strong>Outreach: ${done} of ${CHANNELS.length} channels set up</strong>` +
+      `<span class="cx-sub">${emailOn ? (done === CHANNELS.length ? "Everything you can connect is connected." : "Email is ready. Calls and social are optional.") : "Set up email first so campaigns can be sent."}</span></div>` +
+      `<div class="cx-bar"><i style="width:${Math.round((done / CHANNELS.length) * 100)}%"></i></div></div>`;
+    const chips = statuses.map(([c, st]) => `<span class="cx-chip"><span class="cx-dot${st.on ? " is-on" : ""}" aria-hidden="true">●</span> ${esc(c.name)}</span>`).join("");
+    const card =
+      `<section class="cx-ocard" data-card="outreach" aria-label="Outreach"><div class="cx-ocard__head"><span class="cx-ico" aria-hidden="true"><i class="ti ti-send"></i></span>` +
+      `<div class="cx-ocard__txt"><div class="cx-ocard__row"><span class="cx-name">Outreach</span><span class="cx-pill cx-pill--${tone}">${esc(pillText)}</span></div>` +
+      `<div class="cx-sub">${out ? "Email, calls and social posts, all in one connection." : "One sign-in covers email, AI calls and social posts."}</div></div></div>` +
+      `<div class="cx-chips">${chips}</div></section>`;
+    const others =
+      `<div class="cx-label">Other apps</div><ul class="cx-other">` +
+      OTHER_APPS.map(([name, text]) => `<li><div><div class="cx-mail">${esc(name)}</div><div class="cx-sub">${esc(text)}</div></div><span class="cx-pill cx-pill--muted">Coming soon</span></li>`).join("") + `</ul>`;
+
+    // right: Outreach, with Refresh and Disconnect once it is connected
+    const disconnect = `<button type="button" class="cx-btn" data-cx="disconnect"${busy ? " disabled" : ""} data-tip="Forget your Outreach connection in TenderFlow. Nothing already sent or posted is affected, and you can connect again any time.">${busy ? "Disconnecting…" : "Disconnect"}</button>`;
+    const refresh = `<button type="button" class="cx-btn" data-action="outreach-check"${m && m.status === "loading" ? " disabled" : ""}>${m && m.status === "loading" ? "Checking…" : "Refresh"}</button>`;
+    const head =
+      `<div class="cx-mainhead"><div><div class="cx-mainhead__t"><h3 class="cx-pane__title" tabindex="-1">Outreach</h3> <span class="cx-pill cx-pill--${tone}">${esc(pillText)}</span></div>` +
+      `<p class="cx-sub">One sign-in powers campaign emails, call steps and social posts.</p></div>` +
+      (out ? `<div class="cx-mainhead__act">${refresh}${disconnect}</div>` : "") + `</div>`;
+
+    // step 1
+    const testNote = `<p class="cx-line cx-line--note" role="note"><strong>Test mode.</strong> Your Outreach key is a test key, so nothing real is sent, posted or connected. ` +
+      `Connect only pretends, to let you try the window. A live key connects and lists your real accounts.</p>`;
+    let s1;
+    if (out) {
+      s1 = step(1, true, "Sign in to Outreach", `<p class="cx-sub">${via(info) || "Connected."}</p>` +
+        (m && m.error ? `<p class="cx-warn" role="alert">${esc(m.error)}</p>` : "") + (info.mode === "test" ? testNote : ""));
+    } else {
+      const p = outreachParts(m);
+      s1 = step(1, false, "Sign in to Outreach", p.body + (p.actions ? `<div class="cx-actions cx-actions--flush">${p.actions}</div>` : ""));
+    }
+
+    // step 2: Email, Calls and Social as tabs
+    const tabs = `<div class="cx-tabs" role="tablist" aria-label="Channels">` + statuses.map(([c, st]) =>
+      `<button type="button" role="tab" class="cx-tab${c.id === tab ? " is-on" : ""}" data-cx="row" data-view="${c.id}" aria-selected="${c.id === tab}">${esc(c.name)} ${chanPill(st)}</button>`).join("") + `</div>`;
+    const cur = CHANNELS.find((c) => c.id === tab);
+    const curSt = statuses.find(([c]) => c.id === tab)[1];
+    const panel =
+      `<div class="cx-tabpanel" role="tabpanel" data-pane="${tab}"><div class="cx-chhead"><div><div class="cx-chname">${esc(cur.name)} ` +
+      `<span class="cx-flag${cur.needed ? " cx-flag--need" : ""}">${cur.needed ? "Needed to send" : "Optional"}</span></div><p class="cx-sub">${esc(cur.unlock)}</p></div>${chanPill(curSt)}</div>` +
+      `<div class="cx-chbody">${channelBody(cur, m)}</div></div>`;
+    const s2 = step(2, done === CHANNELS.length, "Choose how Outreach reaches people", `<p class="cx-sub">Set up each channel below. Only email is needed to send.</p>${tabs}${panel}`);
+
+    // step 3
+    const social = statuses[2][1].on;
+    const calls = statuses[1][1].on;
+    const go = (done ? `<button type="button" class="cx-btn cx-btn--primary" data-cx="open-growth" data-tab="home">Open Growth Studio</button>` : "") +
+      (social ? `<button type="button" class="cx-btn" data-cx="open-growth" data-tab="social">Open Social</button>` : "") +
+      (calls ? `<button type="button" class="cx-btn" data-cx="open-growth" data-tab="calls">Open Calls</button>` : "");
+    const s3 = step(3, false, "Use Outreach in Growth Studio",
+      `<p class="cx-sub">Build a campaign with email, call and social steps, check the preview, then approve it to go out.</p>` + (go ? `<div class="cx-actions cx-actions--flush">${go}</div>` : ""));
+
+    return `<div class="cx-hub"><div class="cx-hub__list">${progress}${card}${others}</div>` +
+      `<div class="cx-hub__detail">${head}<ol class="cx-steps">${s1}${s2}${s3}</ol></div></div>`;
   }
 
   function connectionsHtml(m, view) {
@@ -640,7 +654,7 @@
     if (!quiet) render();
     try {
       const r = await call("GET", "/api/growth/social/channels");
-      Object.assign(sc, { status: "ok", supported: r.supported !== false, providers: r.providers || [], channels: r.channels || [], origin: r.outreach_origin || "", error: keepMessage ? sc.error : null });
+      Object.assign(sc, { status: "ok", supported: r.supported !== false, providers: r.providers || [], channels: r.channels || [], origin: r.outreach_origin || "", simulated: !!r.simulated, error: keepMessage ? sc.error : null });
     } catch (e) {
       Object.assign(sc, { status: "error", supported: null, error: null }); // Outreach is not connected or not reachable: the older steps still show
     }
@@ -655,7 +669,7 @@
     sc.busy = provider;
     sc.error = sc.notice = null;
     render();
-    const w = root.open("about:blank", "outreachSocial", "popup=yes,width=560,height=760");
+    const w = root.open("about:blank", "outreachSocial" + Date.now(), "popup=yes,width=560,height=760");
     try {
       const r = await call("POST", "/api/growth/social/channels/connect", { provider });
       if (w && !w.closed) {
@@ -696,7 +710,9 @@
     render();
     try {
       await call("DELETE", `/api/growth/social/channels/${encodeURIComponent(id)}`);
-      sc.notice = "Disconnected. You can connect it again whenever you like.";
+      sc.notice = sc.simulated
+        ? "Outreach accepted that, but in test mode its sample accounts always show. Nothing real was disconnected."
+        : "Disconnected. You can connect it again whenever you like.";
       model.changed = true;
     } catch (e) {
       sc.error = e.message;
@@ -707,16 +723,29 @@
   }
 
   // The sign-in window tells this page when it is finished: Outreach's own message, or the page TenderFlow shows at the end.
+  function channelDone(d) {
+    const name = channelName(d.provider);
+    model.social.notice = d.status === "connected" ? `${name} is connected.` : `${name} could not be connected. Try again.`;
+    afterChannelWindow();
+  }
   root.addEventListener("message", (e) => {
     const d = e && e.data;
     if (!d || typeof d !== "object" || typeof d.type !== "string") return;
     const fromOutreach = d.type === "outreach.channel" && (e.origin === model.social.origin || e.origin === OUTREACH_WEB);
     const fromHere = d.type === "tf.outreach.channel" && e.origin === root.location.origin;
-    if (!fromOutreach && !fromHere) return;
-    const name = channelName(d.provider);
-    model.social.notice = d.status === "connected" ? `${name} is connected.` : `${name} could not be connected. Try again.`;
-    afterChannelWindow();
+    if (fromOutreach || fromHere) channelDone(d);
   });
+  // The page the window ends on also broadcasts to every tab of this site (BroadcastChannel never leaves the origin), so the answer
+  // arrives even when the browser has cut the window's link back to this page.
+  if (root.BroadcastChannel) {
+    try {
+      new root.BroadcastChannel("tf-outreach-channel").onmessage = (e) => {
+        if (e && e.data && e.data.type === "tf.outreach.channel") channelDone(e.data);
+      };
+    } catch (err) {
+      /* an older browser: the window's own message and the closing of the window still refresh the list */
+    }
+  }
 
   // leave Connections and land on the Social or Calls tab of Growth Studio
   function openGrowth(tab) {
@@ -724,7 +753,8 @@
     const byId = (id) => document.getElementById(id);
     const btn = byId("btnGrowthStudio");
     if (btn) btn.click();
-    root.setTimeout(() => { const t = byId(tab === "calls" ? "gsTabCalls" : "gsTabSocial"); if (t) t.click(); }, 150);
+    const id = tab === "calls" ? "gsTabCalls" : tab === "social" ? "gsTabSocial" : null; // "home" just opens Growth Studio where it was
+    if (id) root.setTimeout(() => { const t = byId(id); if (t) t.click(); }, 150);
   }
 
   function setView(view) {
@@ -732,9 +762,8 @@
     render();
     if (view === "social" && outreachState(model) === "ok" && model.social.status !== "loading") loadSocial(true);
     const panel = document.getElementById("connectionsPanel");
-    const target = panel && (view ? panel.querySelector(`[data-pane="${view}"] .cx-pane__title`) : panel.querySelector(".cx-chan"));
+    const target = panel && (panel.querySelector(`.cx-tab[data-view="${view}"]`) || panel.querySelector(".cx-pane__title"));
     if (target) target.focus();
-    if (panel && panel.scrollIntoView) panel.scrollTop = 0;
   }
 
   function render() {

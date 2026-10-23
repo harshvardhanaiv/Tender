@@ -142,6 +142,44 @@ def test_no_connected_social_channel_is_said_plainly():
     assert code == 409 and "No social channel is connected" in body["error"] and only("POST", "/v1/social/posts") == []
 
 
+def test_a_test_key_does_not_block_posting_because_its_sample_accounts_are_not_listed():
+    """A test key's channel list is only samples (simulated: true) and the wallet lists none: posts are pretend too."""
+    def channels(method, url, headers, data):
+        if method == "POST" and url.endswith("/v1/run") and json.loads(data).get("action") == "channel.list":
+            return 200, {"channels": [{"id": "sim_linkedin", "provider": "linkedin", "status": "connected"}], "simulated": True}
+        return None
+    use(social=(), extra=channels)
+    c = client(USER_A)
+    for network in ("linkedin", "facebook"):
+        code, body, _ = make_post(c, channels=[network])
+        assert code in (200, 201), (network, body)
+
+
+def test_networks_connected_through_the_channel_list_count_even_when_the_wallet_lists_none():
+    """A real account is only in Outreach's channel list when the wallet does not say; only a working one counts."""
+    def channels(method, url, headers, data):
+        if method == "POST" and url.endswith("/v1/run") and json.loads(data).get("action") == "channel.list":
+            return 200, {"channels": [{"id": "ch_1", "provider": "linkedin", "status": "connected"},
+                                      {"id": "ch_2", "provider": "facebook", "status": "needs_reauth"}]}
+        return None
+    use(social=(), extra=channels)
+    c = client(USER_A)
+    code, body, _ = make_post(c)
+    assert code in (200, 201), body
+    code, body, _ = make_post(c, channels=["facebook"])
+    assert code == 400 and "Not connected in Outreach: facebook" in body["error"], "a connection that needs reconnecting is not a working one"
+
+
+def test_a_channel_list_with_nothing_connected_still_says_so_plainly():
+    def channels(method, url, headers, data):
+        if method == "POST" and url.endswith("/v1/run") and json.loads(data).get("action") == "channel.list":
+            return 200, {"channels": []}
+        return None
+    use(social=(), extra=channels)
+    code, body, _ = make_post(client(USER_A))
+    assert code == 409 and "No social channel is connected" in body["error"] and only("POST", "/v1/social/posts") == []
+
+
 def test_a_double_click_is_the_same_request_to_outreach():
     use()
     c = client(USER_A)
