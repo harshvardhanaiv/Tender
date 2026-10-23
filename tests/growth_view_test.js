@@ -502,6 +502,16 @@ test("funnel bars: a small count is still visible and an empty step is empty", (
 });
 
 // ── runner ────────────────────────────────────────────────────────────────────────────────────
+test("the builder says so when the category filter is not the open campaign's category", () => {
+  const same = builder({ filterCategory: "Housing repairs & gas servicing" });
+  assert.ok(!/gs-builder__notice/.test(same), "same category: no notice");
+  assert.ok(!/gs-builder__notice/.test(builder()), "no filter known: no notice");
+  const other = builder({ filterCategory: "Cloud & hosting" });
+  assert.match(other, /This campaign is for Housing repairs &amp; gas servicing\. Your filter is Cloud &amp; hosting/);
+  assert.match(other, /data-action="goto-signals"/);
+  assert.ok(!/<img src=x/.test(builder({ filterCategory: EVIL })), "the filter name is escaped");
+});
+
 let failed = 0;
 test("a recently funded card names the company, the funder and the grant, and starts a campaign", () => {
   const html = V.signalCard(funding(), ctx());

@@ -252,9 +252,16 @@ test("everything from the server is escaped", () => {
   assert.ok(!/<img src=x/.test(C.outreachCard({ status: "error", info: null, error: evil })));
 });
 
+test("each way to connect has its own box with a title, under tabs that look like the channel tabs", () => {
+  const f = C.hubHtml(notConnected({ partner_signup: true, partner_enabled: true, can_key: true }), "email");
+  assert.match(f, /class="cx-tabpanel cx-formbox"[^>]*data-mode-pane="signin"/);
+  assert.match(f, /Sign in with your Outreach account/);
+  assert.match(f, /data-cx="mode" data-mode="signup"/, "the other ways stay one click away");
+});
+
 const html = fs.readFileSync(path.join(__dirname, "..", "web", "index.html"), "utf8");
-test("index.html has the top bar button, the Account menu item and loads the files", () => {
-  assert.match(html, /<button id="btnConnections" class="topbar-btn topbar-btn--connections" type="button">/);
+test("index.html has the Account menu item, no top bar button, and loads the files", () => {
+  assert.ok(!/id="btnConnections"/.test(html), "Connections is opened from the side menu, not the top bar");
   assert.match(html, /<button id="btnConnectionsNav" class="tf-nav" type="button" title="Connected apps">/);
   assert.match(html, /<link rel="stylesheet" href="\/connections\.css\?v=\d+" \/>/);
   assert.match(html, /<script src="\/connections\.js\?v=\d+"><\/script>/);

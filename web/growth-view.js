@@ -674,10 +674,16 @@
     const moreMenu =
       `<details class="gs-menu"><summary class="gs-btn gs-btn--ghost gs-btn--sm" aria-label="More actions" data-tip="More actions for this campaign.">⋯</summary><div class="gs-menu__list">` +
       `<button type="button" class="gs-btn gs-btn--ghost gs-btn--danger gs-btn--sm" data-action="delete-campaign">Delete campaign</button></div></details>`;
+    // The builder shows the campaign that is open. Changing the category filter does not change it: say so, and offer Signals.
+    const other = m.filterCategory && c.category_label && m.filterCategory !== c.category_label;
+    const notice = other
+      ? `<div class="gs-hint gs-hint--warn gs-builder__notice">This campaign is for ${esc(c.category_label)}. Your filter is ${esc(m.filterCategory)}, which does not change a campaign that is already open. ` +
+        `<button type="button" class="gs-btn gs-btn--sm" data-action="goto-signals">Choose ${esc(m.filterCategory)} buyers in Signals</button></div>`
+      : "";
     return (
+      notice +
       `<div class="gs-builder__head"><div class="gs-builder__title"><label class="visually-hidden" for="gsCampaignName">Campaign name</label>` +
-      `<input id="gsCampaignName" class="gs-input gs-input--title" data-field="campaign-name" value="${esc(c.name)}" maxlength="120">` +
-      `<div class="gs-hint">${esc(c.category_label || "")}${c.profile_name ? ` · ${esc(c.profile_name)}` : ""}</div></div>` +
+      `<input id="gsCampaignName" class="gs-input gs-input--title" data-field="campaign-name" value="${esc(c.name)}" maxlength="120"></div>` +
       `<div class="gs-builder__meta"><label class="gs-inline">Channel <select class="gs-select gs-select--sm" data-field="campaign-channel">${channels
         .map((ch) => `<option value="${esc(ch.id)}"${ch.id === c.channel ? " selected" : ""}>${esc(ch.label)}</option>`)
         .join("")}</select></label>` +

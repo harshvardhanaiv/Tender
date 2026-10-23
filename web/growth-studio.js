@@ -216,7 +216,7 @@
     keepFocus(() => {
       byId(PANES.builder).innerHTML = V.builderPane({
         status: b.status, error: b.error, detail: b.detail, draft: b.draft, dirty: b.dirty, preview: b.preview, previewTarget: b.previewTarget,
-        warnings: b.warnings, drafting: b.drafting, options: state.options, aiNote: b.aiNote, outreach: b.outreach, profiles: state.profiles,
+        warnings: b.warnings, drafting: b.drafting, options: state.options, aiNote: b.aiNote, outreach: b.outreach, profiles: state.profiles, filterCategory: state.categoryLabel,
       });
       V.fillRich(byId(PANES.builder));
     });
@@ -890,6 +890,7 @@
       btn.setAttribute("aria-selected", String(on));
       btn.tabIndex = on ? 0 : -1;
     });
+    if (tab === "builder") renderBuilder(); // the filter may have changed since it was last drawn
     if (tab === "signals" && !state.signals.data && V.hasCategory(state.filters)) loadSignals();
     if (tab === "campaigns") loadCampaigns();
     if (tab === "performance") loadPerformance();

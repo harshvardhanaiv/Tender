@@ -75,6 +75,8 @@
   // The forms that connect Outreach: sign in to the user's own account, create one, paste a key, or use the organisation's
   // connection. Which of them are offered depends on what the server is set up for.
   const MODE_LABEL = { signin: "Sign in", signup: "Create account", key: "Use a key" };
+  const MODE_TITLE = { signin: "Sign in with your Outreach account", signup: "Create an Outreach account", key: "Connect with an API key" };
+  const MODE_HELP = { signin: "Already use Outreach? Enter the email and password you use there.", signup: "New to Outreach? We create the account for your company.", key: "For advanced use: paste a key from your Outreach account." };
 
   function modesFor(info) {
     const out = [];
@@ -131,9 +133,10 @@
       submit = busy ? "Connecting…" : "Connect";
     }
     return (
-      `<form class="cx-form" data-cx="connect-form" data-mode="${mode}" autocomplete="off">` + tabs + note + fields + err +
+      `<form class="cx-form" data-cx="connect-form" data-mode="${mode}" autocomplete="off">` + tabs +
+      `<div class="cx-tabpanel cx-formbox" role="tabpanel" data-mode-pane="${mode}"><div class="cx-chname">${MODE_TITLE[mode]}</div><p class="cx-sub">${MODE_HELP[mode]}</p>` + note + fields + err +
       (needVersion ? `<p class="cx-warn" role="alert">Signing in to Outreach isn't available just now. Try pasting an API key instead, or export your campaign list and send it yourself.</p>` : "") +
-      `<div class="cx-actions cx-actions--flush"><button type="submit" class="cx-btn cx-btn--primary" data-cx="connect"${busy || needVersion ? " disabled" : ""}>${submit}</button>${shared}</div></form>`
+      `<div class="cx-actions cx-actions--flush"><button type="submit" class="cx-btn cx-btn--primary" data-cx="connect"${busy || needVersion ? " disabled" : ""}>${submit}</button>${shared}</div></div></form>`
     );
   }
 

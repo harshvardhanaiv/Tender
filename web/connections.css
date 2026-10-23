@@ -51,11 +51,6 @@
 .cx-card code { font-size: 12px; padding: 1px 5px; border-radius: 4px; background: var(--paper); }
 
 /* Sign in / create account / key */
-.cx-modes { display: inline-flex; flex-wrap: wrap; margin: 0 0 10px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-.cx-mode { appearance: none; border: 0; border-right: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; padding: 6px 14px; cursor: pointer; }
-.cx-mode:last-child { border-right: 0; }
-.cx-mode:hover { background: var(--paper); }
-.cx-mode.is-active { background: var(--accent); color: #fff; font-weight: 600; }
 .cx-mode:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: -2px; }
 .cx-label--field { margin-top: 10px; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--ink); font-weight: 500; display: block; }
 .cx-note { margin: 6px 0; padding: 8px 10px; border-radius: 6px; font-size: 13px; background: color-mix(in srgb, var(--pos, #1b7a4b) 12%, var(--panel)); color: var(--ink); }
@@ -179,3 +174,14 @@ body.tf-shell #connectionsModal .cx-foot { margin-top: 16px; }
 .cx-flag--need { color: var(--gold, #b0800a); }
 .cx-chbody { padding-top: 12px; min-width: 0; }
 .cx-chbody .cx-card { border: 0; padding: 0; background: none; }
+
+/* Each choice is a tab with its own box: Sign in / Create account / Use a key, and Email / Calls / Social */
+.cx-modes { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.cx-mode { appearance: none; padding: 8px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.cx-mode:hover { background: var(--paper); }
+.cx-mode.is-active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; background: color-mix(in srgb, var(--accent) 9%, var(--panel)); }
+.cx-mode:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px; }
+.cx-tabpanel { border-top: 3px solid var(--accent); padding: 18px 20px; background: var(--panel); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); }
+.cx-formbox .cx-input, .cx-chbody .cx-input { max-width: 560px; }
+.cx-formbox > .cx-sub { margin: 2px 0 12px; }
+.cx-formbox .cx-chname { font-size: 15px; }

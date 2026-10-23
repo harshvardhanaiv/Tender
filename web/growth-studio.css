@@ -206,7 +206,8 @@ body.tf-shell #growthFilterBar select.tf-chip--select { flex: none; width: auto;
 .gs-spacer { flex: 1 1 0; }
 
 /* the four steps */
-.gs-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0 0 16px; }
+.gs-steps { position: sticky; top: 0; z-index: 14; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0 0 16px; padding: 8px 0;
+  background: var(--paper, var(--panel)); box-shadow: 0 1px 0 var(--line); }
 .gs-step { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 12px; text-align: left; font: inherit; color: var(--ink);
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
 .gs-step:hover { background: var(--panel-2); }
