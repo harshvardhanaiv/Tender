@@ -61,10 +61,14 @@
       (boxes.length
         ? `<ul class="cx-list">${rows}</ul>`
         : `<p class="cx-warn">No email account is connected in your Outreach account yet, so nothing can be sent.</p>`) +
+      `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn cx-btn--sm" data-cx="open-outreach" data-tip="Opens Outreach in a small window so you can add a mailbox. Come back here when you are done.">＋ Add email in Outreach</button>` +
+      `<button type="button" class="cx-btn cx-btn--sm" data-cx="goto" data-view="email" data-tip="Send from your own address instead, without an Outreach mailbox.">Use my own email account</button></div>` +
       `<div class="cx-label">Social posts</div>` +
       `<p class="cx-line">${social.length ? esc(social.map(channelName).join(", ")) : `<span class="cx-sub">No social channel connected.</span>`}</p>` +
+      `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn cx-btn--sm" data-cx="goto" data-view="social">＋ Add social account</button></div>` +
       `<div class="cx-label">Calls</div>` +
-      `<p class="cx-line">${phones == null ? `<span class="cx-sub">Outreach did not say.</span>` : phones > 0 ? esc(plural(phones, "phone number")) : `<span class="cx-sub">No phone number connected.</span>`}</p>`
+      `<p class="cx-line">${phones == null ? `<span class="cx-sub">Outreach did not say.</span>` : phones > 0 ? esc(plural(phones, "phone number")) : `<span class="cx-sub">No phone number connected.</span>`}</p>` +
+      `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn cx-btn--sm" data-cx="open-outreach" data-tip="Opens Outreach in a small window so you can add a phone number. Come back here when you are done.">＋ Add phone number in Outreach</button></div>`
     );
   }
 
@@ -154,7 +158,7 @@
       body = `<p class="cx-warn" role="alert">${esc(info.problem || "Outreach did not accept the connection.")}</p>` + formFor(info, m && m.form);
       actions = `<button type="button" class="cx-btn" data-action="outreach-check">Check again</button>` + disconnect;
     } else {
-      body = detailsHtml(info) + `<p class="cx-sub cx-hint">Mailboxes, social channels and phone numbers in your Outreach account show here. To send email without an Outreach mailbox, set up your own email account below.</p>`;
+      body = (m && m.error ? `<p class="cx-warn" role="alert">${esc(m.error)}</p>` : "") + detailsHtml(info) + `<p class="cx-sub cx-hint">Mailboxes, social channels and phone numbers in your Outreach account show here. To send email without an Outreach mailbox, set up your own email account below.</p>`;
       actions = `<button type="button" class="cx-btn" data-action="outreach-check"${m.status === "loading" ? " disabled" : ""}>${m.status === "loading" ? "Checking…" : "Refresh"}</button>` + disconnect;
     }
     return { state, tone, pillText, body, actions };
@@ -544,6 +548,7 @@
       else if (hit('[data-cx="social-connect"]')) connectChannel(hit('[data-cx="social-connect"]').getAttribute("data-provider"));
       else if (hit('[data-cx="social-disconnect"]')) disconnectChannel(hit('[data-cx="social-disconnect"]').getAttribute("data-id"));
       else if (hit('[data-cx="social-reload"]')) { load(); loadSocial(); }
+      else if (hit('[data-cx="open-outreach"]')) openOutreach();
       else if (hit('[data-cx="connect-social"]')) connectSocial(hit('[data-cx="connect-social"]').getAttribute("data-network"));
       else if (hit('[data-cx="open-growth"]')) openGrowth(hit('[data-cx="open-growth"]').getAttribute("data-tab"));
       else if (hit('[data-action="outreach-check"]')) load();
@@ -608,9 +613,20 @@
   // Open one channel's panel (null goes back to the list). The panel's heading takes focus so a keyboard user lands in it.
   // Each network is approved on Outreach's own page (its public API cannot link one), so open it in a small window;
   // coming back to this tab re-reads the account.
+  function outreachBase() {
+    const info = model.info || {};
+    return /^https:\/\//.test(String(info.web_url || "")) ? info.web_url : OUTREACH_WEB;
+  }
+
+  // Outreach's own site, for the things its public API cannot add (a mailbox, a phone number); coming back re-reads the account.
+  function openOutreach() {
+    const url = outreachBase();
+    const w = root.open(url, "outreachSite", "popup=yes,width=960,height=760");
+    if (!w) root.open(url, "_blank", "noopener");
+  }
+
   function connectSocial(network) {
-    const info = (model.info) || {};
-    const base = /^https:\/\//.test(String(info.web_url || "")) ? info.web_url : "https://outreach.aivhub.com";
+    const base = outreachBase();
     const url = /#/.test(base) ? base : `${base.replace(/\/+$/, "")}/#/social`;
     const w = root.open(url, "outreachSocial", "popup=yes,width=560,height=760");
     if (!w) root.open(url, "_blank", "noopener");
@@ -659,6 +675,11 @@
     }
     sc.busy = null;
     render();
+  }
+
+  // Outreach was connected or disconnected: what was read about its social channels belongs to the old connection
+  function resetSocial() {
+    Object.assign(model.social, { status: "idle", supported: null, providers: [], channels: [], busy: null, notice: null, error: null });
   }
 
   function afterChannelWindow() {
@@ -895,6 +916,8 @@
         model.info = res;
         model.status = "ok";
         model.changed = true;
+        resetSocial();
+        if (outreachState(model) === "ok") loadSocial(true);
         f.email = f.company = f.name = "";
         f.consent = false;
       }
@@ -940,6 +963,8 @@
       model.status = "ok";
       model.changed = true;
       f.key = "";
+      resetSocial();
+      if (outreachState(model) === "ok") loadSocial(true);
     } catch (e) {
       f.error = e.message;
     }
@@ -957,6 +982,8 @@
       model.status = "ok";
       model.changed = true;
       model.error = null;
+      model.form.error = null;
+      resetSocial();
     } catch (e) {
       model.error = e.message;
       model.form.error = e.message;
@@ -1010,7 +1037,9 @@
     }
     // back from Outreach's own site after linking an account or number: look again without a click
     root.addEventListener("focus", () => {
-      if (model.open && (model.view === "social" || model.view === "calls") && model.status !== "loading") load();
+      if (!model.open || !["social", "calls", "email", "outreach"].includes(model.view)) return;
+      if (model.status !== "loading") load();
+      if (model.view === "social" && model.social.status !== "loading") loadSocial(true);
     });
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && model.open) { e.stopPropagation(); close(); }
