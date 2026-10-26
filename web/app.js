@@ -19454,10 +19454,17 @@ function grantsPanelHtml(g, mode) {
 // ── Invite subcontractors (Supplier Intelligence) ───────────────────────────────────────────────
 // Lists suppliers that have won similar work (same CPV divisions) to the one open, split into those with a Companies House
 // number ("registered") and those without. Nothing is sent from TenderFlow: each draft opens in the user's own email app.
-const _subInvite = { supplierId: null, data: null, tab: "registered", picked: new Set(), dirty: false, opener: null };
+// The same window serves a supplier's profile (similar suppliers, to invite as subcontractors) and a buyer's profile (suppliers
+// that have won from that buyer, to invite to take part); `buyer` is set in the second case.
+const _subInvite = { key: null, buyer: null, data: null, tab: "registered", picked: new Set(), dirty: false, opener: null };
 
 function subInviteTemplate(company, opportunity, sector) {
   const who = company || "[your company]";
+  if (_subInvite.buyer) {
+    const what = opportunity ? `We are putting together a bid for ${opportunity}` : `We are putting together a bid for work with ${_subInvite.buyer}`;
+    return `Hello {name},\n\n${what}, and we are looking for suppliers to take part. You have delivered work for ${_subInvite.buyer} before, so we would like to hear whether you would be open to joining us.\n\n` +
+      `Would you be free for a short call to talk it through? If this is not relevant to you, just reply and we will not contact you again.\n\nKind regards,\n${who}`;
+  }
   const what = opportunity ? `We are bidding for ${opportunity} and are looking for subcontractors to take part.` : "We are preparing a bid and are looking for subcontractors to take part.";
   return `Hello {name},\n\n${what} Your track record in ${sector || "this kind of work"} stands out, so we would like to hear whether you would be open to taking part.\n\n` +
     `Would you be free for a short call to talk it through? If this is not relevant to you, just reply and we will not contact you again.\n\nKind regards,\n${who}`;
@@ -19528,7 +19535,7 @@ function subInviteRenderList() {
       <input type="checkbox" class="sub-invite__pick" data-id="${r.supplier_id}"${checked} aria-label="Select ${esc(displayName(r.name))}" />
       <div class="sub-invite__who">
         <div class="sub-invite__name">${esc(displayName(r.name))} ${size}${vcse}</div>
-        <div class="sub-invite__meta">${r.company_number ? `#${esc(r.company_number)} · ` : ""}${esc(r.region || "UK")} · ${r.similar_awards} similar award${r.similar_awards === 1 ? "" : "s"}${r.latest_award ? ` · latest ${esc(r.latest_award)}` : ""}</div>
+        <div class="sub-invite__meta">${r.company_number ? `#${esc(r.company_number)} · ` : ""}${esc(r.region || "UK")} · ${r.similar_awards} ${_subInvite.buyer ? "award" : "similar award"}${r.similar_awards === 1 ? "" : "s"}${_subInvite.buyer ? " from this buyer" : ""}${r.latest_award ? ` · latest ${esc(r.latest_award)}` : ""}</div>
         <div class="sub-invite__meta">${contact}${site}</div>
       </div>
       <button type="button" class="btn btn--secondary btn--small" data-draft="${r.supplier_id}"${r.email ? "" : " disabled"} title="${r.email ? "Open an email draft to this supplier in your email app" : "No email address on record for this supplier"}">Draft email</button>
@@ -19549,19 +19556,19 @@ function subInviteRenderList() {
 
 function subInviteRenderShell(d) {
   const sector = (d.divisions[0] && d.divisions[0].description) || "";
-  const chips = d.divisions.map(x => `<span class="sub-invite__chip" title="CPV division ${esc(x.code)}">${esc(x.code)}${x.description ? ` · ${esc(x.description)}` : ""}</span>`).join("");
+  const chips = _subInvite.buyer ? "" : d.divisions.map(x => `<span class="sub-invite__chip" title="CPV division ${esc(x.code)}">${esc(x.code)}${x.description ? ` · ${esc(x.description)}` : ""}</span>`).join("");
   const profiles = (typeof state !== "undefined" && state.companyProfiles) || [];
   const mine = profiles.find(p => p.is_default) || profiles[0];
   const company = mine && mine.name ? mine.name : "";
   $("subInviteBody-wrap").innerHTML = `
-    <div class="sub-invite__intro">Suppliers that have won work in the same sectors as <strong>${esc(displayName(d.supplier.name))}</strong>:</div>
+    <div class="sub-invite__intro">${_subInvite.buyer ? "Suppliers that have won contracts from" : "Suppliers that have won work in the same sectors as"} <strong>${esc(displayName(d.supplier.name))}</strong>:</div>
     <div class="sub-invite__chips">${chips}</div>
     <details class="sub-invite__compose"${company ? "" : " open"}>
       <summary>Your invitation: company, subject and message (tap to edit)</summary>
       <div class="sub-invite__grid">
         <label>Your company<input type="text" id="subInviteCompany" class="input" maxlength="120" value="${esc(company)}" autocomplete="organization" /></label>
         <label>What you are inviting them to <input type="text" id="subInviteOpp" class="input" maxlength="160" placeholder="e.g. the Ministry of Defence hull maintenance contract" /></label>
-        <label class="sub-invite__wide">Subject<input type="text" id="subInviteSubject" class="input" maxlength="160" value="Invitation to take part as a subcontractor" /></label>
+        <label class="sub-invite__wide">Subject<input type="text" id="subInviteSubject" class="input" maxlength="160" value="${_subInvite.buyer ? "Invitation to take part in a bid" : "Invitation to take part as a subcontractor"}" /></label>
         <label class="sub-invite__wide">Message <span class="sub-invite__hint">{name} is replaced with each supplier's name</span>
           <textarea id="subInviteBody" class="input" rows="9" maxlength="3000"></textarea></label>
       </div>
@@ -19593,6 +19600,7 @@ function closeSubcontractorInvite() {
   const m = $("subInviteModal");
   if (m) m.classList.add("hidden");
   document.removeEventListener("keydown", subInviteKeydown, true);
+  _subInvite.key = null;
   const opener = _subInvite.opener;
   _subInvite.opener = null;
   if (opener && document.contains(opener)) opener.focus();
@@ -19697,7 +19705,7 @@ function subInviteEnsureModal() {
     ].map(cell).join(",")));
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" }));
-    a.download = `subcontractor_candidates_${d.supplier.id}.csv`;
+    a.download = _subInvite.buyer ? `buyer_suppliers_${d.supplier.name.replace(/[^A-Za-z0-9]+/g, "_").slice(0, 40)}.csv` : `subcontractor_candidates_${d.supplier.id}.csv`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     subInviteSay(`Downloaded ${rows.length} supplier${rows.length === 1 ? "" : "s"}${chosen.length ? " (your selection)" : " (this tab)"}.`);
@@ -19707,17 +19715,33 @@ function subInviteEnsureModal() {
 
 async function openSubcontractorInvite(supplierId) {
   const m = subInviteEnsureModal();
-  Object.assign(_subInvite, { supplierId, data: null, tab: "registered", picked: new Set(), dirty: false, opener: document.activeElement });
+  Object.assign(_subInvite, { key: `s:${supplierId}`, buyer: null, data: null, tab: "registered", picked: new Set(), dirty: false, opener: document.activeElement });
+  return subInviteLoad(m, `/api/suppliers/${encodeURIComponent(supplierId)}/subcontractor-candidates`, "Invite subcontractors", "Similar suppliers, registered and not registered");
+}
+
+async function openBuyerSupplierInvite(authorityName) {
+  const name = String(authorityName || "").trim();
+  if (!name) return;
+  const m = subInviteEnsureModal();
+  Object.assign(_subInvite, { key: `b:${name}`, buyer: name, data: null, tab: "registered", picked: new Set(), dirty: false, opener: document.activeElement });
+  return subInviteLoad(m, `/api/suppliers/buyer-candidates?authority=${encodeURIComponent(name)}`, "Invite suppliers", "Suppliers that have won from this buyer, registered and not registered");
+}
+window.openBuyerSupplierInvite = openBuyerSupplierInvite;
+
+async function subInviteLoad(m, url, title, sub) {
+  const key = _subInvite.key;
+  $("subInviteTitle").textContent = title;
+  m.querySelector(".profile-header__sub").textContent = sub;
   subInviteSay("");
   $("subInviteBody-wrap").innerHTML = `<div class="sub-invite__loading">Finding suppliers that have won similar work…</div>`;
   m.classList.remove("hidden");
   document.addEventListener("keydown", subInviteKeydown, true);
   $("subInviteClose").focus();
   try {
-    const res = await fetch(`/api/suppliers/${encodeURIComponent(supplierId)}/subcontractor-candidates`);
+    const res = await fetch(url);
     const d = await res.json().catch(() => ({}));
-    if (!res.ok || !d.ok) throw new Error(d.error || "Could not load similar suppliers");
-    if (_subInvite.supplierId !== supplierId) return;   // closed or switched while loading
+    if (!res.ok || !d.ok) throw new Error(d.error || "Could not load suppliers");
+    if (_subInvite.key !== key) return;   // closed or switched while loading
     _subInvite.data = d;
     if (!d.divisions.length) {
       $("subInviteBody-wrap").innerHTML = `<div class="sub-invite__loading">${esc(d.message || "No similar suppliers could be found.")}</div>`;
@@ -21249,6 +21273,8 @@ function openBuyerProfileDrawer(authorityName) {
   if (window.RecentViews) window.RecentViews.record("buyer", String(authorityName).toUpperCase(), authorityName, "");
   const watchSlot = $("drawerBuyerWatch");
   if (watchSlot && window.TFWatch) watchSlot.innerHTML = window.TFWatch.buttonHtml("buyer", authorityName, authorityName, "buyer_intelligence", { label: true });
+  const inviteBtn = $("drawerInviteSuppliers");
+  if (inviteBtn) inviteBtn.onclick = () => openBuyerSupplierInvite(authorityName);
   drawerModal.classList.remove("hidden");
   // Cover the stats/tables while the real numbers load — without this the drawer briefly
   // shows whichever buyer was viewed last (or the static "£0" placeholders on first open),

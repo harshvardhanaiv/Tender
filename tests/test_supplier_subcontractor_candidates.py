@@ -67,6 +67,27 @@ def test_unknown_supplier_and_bad_cpv():
     assert [x["code"] for x in one["divisions"]] == [own[0]["code"]]
 
 
+def test_buyer_candidates_are_suppliers_that_won_from_that_buyer():
+    c = client()
+    from tender_app.blueprints import suppliers_bp as sb
+    conn = sb._get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""SELECT authority_name FROM contract_awards WHERE supplier_id IS NOT NULL AND authority_name <> ''
+                       GROUP BY authority_name ORDER BY COUNT(DISTINCT supplier_id) DESC LIMIT 1""")
+        authority = cur.fetchone()[0]
+    finally:
+        conn.close()
+    assert c.get("/api/suppliers/buyer-candidates").status_code == 400
+    d = c.get("/api/suppliers/buyer-candidates", query_string={"authority": authority}).get_json()
+    assert d["ok"] and d["mode"] == "buyer" and d["registered"] and d["totals"]["registered"] >= len(d["registered"])
+    from tender_app.ch_matcher import normalize_ch_company_number
+    assert all(normalize_ch_company_number(x["company_number"]) for x in d["registered"])
+    assert all(not x["company_number"] for x in d["unregistered"])
+    nobody = c.get("/api/suppliers/buyer-candidates", query_string={"authority": "zz no such buyer"}).get_json()
+    assert nobody["ok"] and nobody["registered"] == [] and nobody["unregistered"] == []
+
+
 if __name__ == "__main__":
     try:
         client().get("/api/me")
