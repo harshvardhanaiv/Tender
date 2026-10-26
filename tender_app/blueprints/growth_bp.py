@@ -1533,7 +1533,9 @@ def growth_outreach_connected():
     provider = re.sub(r"[^a-z0-9_]", "", (request.args.get("provider") or "").lower())[:30]
     if provider:
         status = "connected" if request.args.get("status") == "connected" else "error"
-        text = f"{provider.title()} is connected." if status == "connected" else f"{provider.title()} could not be connected."
+        what = "Your phone number request" if provider == "number" else provider.title()
+        text = f"{what} was received." if provider == "number" and status == "connected" else (
+            f"{provider.title()} is connected." if status == "connected" else (f"{what} could not be completed." if provider == "number" else f"{what} could not be connected."))
         # told to the page that opened this window, and broadcast to every tab of this site (that still works when the browser has cut
         # the window's link back); a browser that will not close the window gets a Close button instead of a dead end
         page = (
@@ -1634,6 +1636,49 @@ def growth_social_channel_disconnect(channel_id: str):
     except oc.OutreachError as exc:
         raise _channel_refusal(exc)
     return jsonify({"disconnected": channel_id})
+
+
+# ── phone numbers for calls (Outreach's `numbers` plugin): bought and verified in Outreach's own popup ──
+
+@growth_bp.get("/api/growth/numbers")
+def growth_numbers():
+    """The user's phone numbers and their status. {"supported": false} when Outreach does not know the numbers actions."""
+    client = _outreach_client()
+    out: dict[str, Any] = {"supported": True, "numbers": [], "return_url": _partner_return_url()}
+    try:
+        listed = client.number_list()
+        out["numbers"] = oc.number_list_summary(listed)
+        out["simulated"] = bool(listed.get("simulated")) if isinstance(listed, dict) else False
+    except oc.OutreachError as exc:
+        if exc.status in _CHANNEL_NOT_THERE:
+            return jsonify({**out, "supported": False})
+        raise _channel_refusal(exc)
+    return jsonify(out)
+
+
+@growth_bp.post("/api/growth/numbers/connect")
+def growth_number_connect():
+    """Start getting a number: the answer is the link to open in a small window."""
+    client = _outreach_client()
+    try:
+        answer = oc.connect_summary(client.number_connect(_partner_return_url()))
+    except oc.OutreachError as exc:
+        if exc.status in _CHANNEL_NOT_THERE and exc.code not in ("origin_not_allowed", "return_url_not_allowed"):
+            raise _Http(f"A phone number cannot be added from here yet. {exc.message}", 409, "not_available")
+        raise _channel_refusal(exc)
+    if not answer["auth_url"]:
+        raise _Http("Outreach did not give a link. Try again, or ask your administrator.", 502, "bad_response")
+    return jsonify({"auth_url": answer["auth_url"], "connected": answer["connected"]})
+
+
+@growth_bp.delete("/api/growth/numbers/<number_id>")
+def growth_number_release(number_id: str):
+    client = _outreach_client()
+    try:
+        client.number_release(number_id)
+    except oc.OutreachError as exc:
+        raise _channel_refusal(exc)
+    return jsonify({"released": number_id})
 
 
 @growth_bp.delete("/api/growth/outreach/connect")
@@ -2603,8 +2648,12 @@ def growth_voice_call_make():
                 raise _Http("This number was already called in the last 24 hours. Wait before calling it again.", 409)
         client = _outreach_client()
         wallet = _wallet_for_channels(client)
-        if wallet.get("phone_numbers") == 0:
-            raise _Http("No phone number is connected in Outreach, so the AI has no line to call from. Add one there first.", 409)
+        status = wallet.get("phone_status")
+        if wallet.get("phone_numbers") == 0 or (isinstance(status, dict) and "active" in status and status["active"] == 0):
+            waiting = isinstance(status, dict) and (status.get("pending", 0) or status.get("verification_pending", 0) or status.get("held", 0))
+            raise _Http("Your phone number is still being checked by Outreach (usually up to 3 days), so there is no line to call from yet."
+                        if waiting else
+                        "No phone number is connected in Outreach, so the AI has no line to call from. Add one under Connections, Calls.", 409)
         try:
             made = oc.call_summary(client.make_call(och.build_call_payload(fields), och.attempt_key(username, "call", attempt)))
         except oc.OutreachError as exc:

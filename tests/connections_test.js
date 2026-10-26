@@ -629,6 +629,26 @@ test("the controller opens the sign-in in a small window, never a tab, checks wh
   assert.ok(!/password|token/i.test(src.slice(src.indexOf("async function connectChannel"), src.indexOf("function afterChannelWindow"))), "no credential is handled here");
 });
 
+const numbersState = (o) => Object.assign({ status: "ok", supported: true, numbers: [], busy: null, notice: null, error: null }, o);
+test("the Calls tab offers to get a number, and lists each number with its status and a Release button", () => {
+  const none = C.numbersList(numbersState());
+  assert.match(none, /No phone number in your Outreach account yet/);
+  assert.match(none, /data-cx="number-connect"/);
+  assert.match(none, /Get a phone number/);
+  assert.doesNotMatch(none, /number-release/);
+  const some = C.numbersList(numbersState({ numbers: [
+    { id: "num_1", number: "+441132000111", status: "active" },
+    { id: "num_2", number: "+441132000222", status: "pending" },
+    { id: "num_3", number: "+441132000333", status: "rejected", reason: "<b>Bill too old</b>" } ] }));
+  assert.match(some, /Ready to call/);
+  assert.match(some, /Being checked/);
+  assert.match(some, /Not approved/);
+  assert.match(some, /Add another number/);
+  assert.equal((some.match(/data-cx="number-release"/g) || []).length, 3);
+  assert.doesNotMatch(some, /<b>Bill too old/, "what Outreach says is escaped");
+  assert.match(some, /5 Voice credits/);
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try {

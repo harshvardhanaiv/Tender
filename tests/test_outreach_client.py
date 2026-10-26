@@ -254,7 +254,7 @@ def test_campaign_summary_is_tolerant():
 
 def test_wallet_summary():
     w = oc.wallet_summary({"credits": 42, "connected": {"mailboxes": 1}, "livemode": False})
-    assert w == {"credits": 42, "connected": {"mailboxes": 1}, "mailboxes": [], "social_channels": [], "phone_numbers": None,
+    assert w == {"credits": 42, "connected": {"mailboxes": 1}, "mailboxes": [], "social_channels": [], "phone_numbers": None, "phone_status": None,
                  "livemode": False}
     # whatever else the answer carries is not passed on to the browser, only counts and flags
     w = oc.wallet_summary({"credits": 1, "connected": {"mailboxes": [{"email": "a@x.test", "token": "sk-secret"}],

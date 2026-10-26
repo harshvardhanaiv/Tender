@@ -334,7 +334,9 @@
       const boxes = (Array.isArray(w.mailboxes) ? w.mailboxes : []).filter((x) => x && x.email);
       if (out && boxes.length) return { on: true, text: "Outreach mailbox" };
     } else if (c.id === "calls") {
-      if (out && Number.isFinite(w.phone_numbers) && w.phone_numbers > 0) return { on: true, text: `Outreach · ${plural(w.phone_numbers, "number")}` };
+      const ready = w.phone_status && Number.isFinite(w.phone_status.active) ? w.phone_status.active : w.phone_numbers;
+      if (out && Number.isFinite(ready) && ready > 0) return { on: true, text: `Outreach · ${plural(ready, "number")}` };
+      if (out && w.phone_status && (w.phone_status.pending > 0 || w.phone_status.verification_pending > 0)) return { on: false, text: "Number being checked" };
     } else if (c.id === "social") {
       const sc = m && m.social;
       if (out && sc && sc.supported) {
@@ -388,6 +390,28 @@
       `<p class="cx-sub">You sign in on the network's own page, so TenderFlow never sees your password. Posts still wait for your approval before they go live.</p>`;
   }
 
+  const NUM_PILL = { active: ["Ready to call", "good"], pending: ["Being checked", "warn"], rejected: ["Not approved", "warn"] };
+
+  // The user's phone numbers. Getting one happens in Outreach's own small window (search, buy, upload the business documents),
+  // so no document or card detail passes through TenderFlow. A number is only "Ready to call" once Outreach has approved it.
+  function numbersList(nm) {
+    const busy = !!nm.busy;
+    const rows = (nm.numbers || []).map((n) => {
+      const [text, tone] = NUM_PILL[n.status] || NUM_PILL.pending;
+      return `<li><span class="cx-mail">${esc(n.number)}</span> <span class="cx-pill cx-pill--${tone}">${esc(text)}</span>` +
+        (n.status === "rejected" && n.reason ? ` <span class="cx-sub">${esc(n.reason)}</span>` : "") + ` ` +
+        `<button type="button" class="cx-btn cx-btn--sm" data-cx="number-release" data-id="${esc(n.id)}"${busy ? " disabled" : ""} data-tip="Give this number back to Outreach. Calls can no longer go out from it.">Release</button></li>`;
+    }).join("");
+    const has = (nm.numbers || []).length > 0;
+    return (has ? `<ul class="cx-list">${rows}</ul>` : `<p class="cx-line">No phone number in your Outreach account yet.</p>`) +
+      (nm.notice ? `<p class="cx-line" role="status">${esc(nm.notice)}</p>` : "") +
+      (nm.error ? `<p class="cx-line cx-line--bad" role="alert">${esc(nm.error)}</p>` : "") +
+      `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn${has ? "" : " cx-btn--primary"}" data-cx="number-connect"${busy ? " disabled" : ""} ` +
+      `data-tip="Opens Outreach in a small window to choose a UK number and upload your business documents. You never type a card or document detail here.">${nm.busy === "connect" ? "Opening…" : has ? "＋ Add another number" : "＋ Get a phone number"}</button>` +
+      `<button type="button" class="cx-btn" data-cx="number-reload"${nm.status === "loading" ? " disabled" : ""}>${nm.status === "loading" ? "Checking…" : "Check again"}</button></div>` +
+      `<p class="cx-sub">Outreach's AI makes the calls from that number, to UK landlines only. A number costs 5 Voice credits to set up, then 1 a month. UK rules mean Outreach checks who will use it (company certificate or photo ID, plus a utility bill under 3 months old): this usually takes up to 3 days, and the number shows Ready to call once approved.</p>`;
+  }
+
   // The body of the open channel tab.
   function channelBody(c, m) {
     const out = outreachState(m) === "ok";
@@ -404,10 +428,13 @@
           : "Your Outreach account has no mailbox, so email goes out from your own account."}</p>` : "");
     }
     if (!out) return `<p class="cx-sub">Available once you have signed in to Outreach (step 1).</p>`;
+    if (c.id === "calls" && m && m.numbers && m.numbers.supported) return numbersList(m.numbers);
     if (c.id === "calls") {
       const phones = Number.isFinite(w.phone_numbers) ? w.phone_numbers : 0;
-      return `<p class="cx-line">${phones > 0 ? esc(plural(phones, "phone number")) + " in your Outreach account." : "No phone number in your Outreach account yet."}</p>` + check +
-        `<p class="cx-sub">Outreach's AI makes the calls from that number, to UK landlines only. Phone numbers in your Outreach account show here.</p>`;
+      const add = `<button type="button" class="cx-btn${phones > 0 ? "" : " cx-btn--primary"}" data-cx="open-outreach" data-path="/voice/numbers" data-tip="Opens Outreach's Phone numbers page in a small window so you can ${phones > 0 ? "add another" : "get a"} phone number. Come back here and press Check again.">\uff0b ${phones > 0 ? "Add another number" : "Add phone number"} in Outreach</button>`;
+      return `<p class="cx-line">${phones > 0 ? esc(plural(phones, "phone number")) + " in your Outreach account." : "No phone number in your Outreach account yet."}</p>` +
+        `<div class="cx-actions cx-actions--flush">${add}<button type="button" class="cx-btn" data-action="outreach-check"${checking ? " disabled" : ""}>${checking ? "Checking\u2026" : "Check again"}</button></div>` +
+        `<p class="cx-sub">Outreach's AI makes the calls from that number, to UK landlines only. To get one: choose a number on Outreach (5 Voice credits to set up, then 1 a month), upload your business documents there (UK rules; they check within about 3 days), then press Check again.</p>`;
     }
     const sc = m && m.social && m.social.supported ? m.social : null;
     if (sc) return socialList(sc);
@@ -499,7 +526,7 @@
     );
   }
 
-  const api = { esc, CHANNELS, socialList, channelStatus, hubHtml, outreachState, outreachCard, connectionsHtml, detailsHtml, connectForm, modesFor, PILL, mailState, mailCard, mailForm, accountsOf };
+  const api = { esc, CHANNELS, socialList, numbersList, channelStatus, hubHtml, outreachState, outreachCard, connectionsHtml, detailsHtml, connectForm, modesFor, PILL, mailState, mailCard, mailForm, accountsOf };
   root.TFConnections = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document === "undefined") return;
@@ -527,6 +554,8 @@
     mail: { status: "idle", info: null, form: null, busy: null, busyId: null, notice: null, error: null },
     // the social networks Outreach can connect from here (supported stays null until asked, false when Outreach has not shipped it)
     social: { status: "idle", supported: null, providers: [], channels: [], busy: null, notice: null, error: null, origin: "" },
+    // the user's phone numbers (supported stays null until asked, false when Outreach has not shipped the numbers actions)
+    numbers: { status: "idle", supported: null, numbers: [], busy: null, notice: null, error: null },
   };
   let overlay = null;
   let opener = null;
@@ -565,7 +594,10 @@
       else if (hit('[data-cx="social-connect"]')) connectChannel(hit('[data-cx="social-connect"]').getAttribute("data-provider"));
       else if (hit('[data-cx="social-disconnect"]')) disconnectChannel(hit('[data-cx="social-disconnect"]').getAttribute("data-id"));
       else if (hit('[data-cx="social-reload"]')) { load(); loadSocial(); }
-      else if (hit('[data-cx="open-outreach"]')) openOutreach();
+      else if (hit('[data-cx="number-connect"]')) connectNumber();
+      else if (hit('[data-cx="number-release"]')) releaseNumber(hit('[data-cx="number-release"]').getAttribute("data-id"));
+      else if (hit('[data-cx="number-reload"]')) { load(); loadNumbers(); }
+      else if (hit('[data-cx="open-outreach"]')) openOutreach(hit('[data-cx="open-outreach"]').getAttribute("data-path"));
       else if (hit('[data-cx="connect-social"]')) connectSocial(hit('[data-cx="connect-social"]').getAttribute("data-network"));
       else if (hit('[data-cx="open-growth"]')) openGrowth(hit('[data-cx="open-growth"]').getAttribute("data-tab"));
       else if (hit('[data-action="outreach-check"]')) load();
@@ -636,8 +668,10 @@
   }
 
   // Outreach's own site, for the things its public API cannot add (a mailbox, a phone number); coming back re-reads the account.
-  function openOutreach() {
-    const url = outreachBase();
+  function openOutreach(path) {
+    let url = outreachBase();
+    // a page inside Outreach (Phone numbers: choose a number and upload the business documents there); same site only
+    if (/^\/[a-z\/-]+$/.test(String(path || ""))) { try { url = new URL(path, url).href; } catch (_) { /* keep the home page */ } }
     const w = root.open(url, "outreachSite", "popup=yes,width=960,height=760");
     if (!w) root.open(url, "_blank", "noopener");
   }
@@ -694,14 +728,79 @@
     render();
   }
 
-  // Outreach was connected or disconnected: what was read about its social channels belongs to the old connection
+  async function loadNumbers(quiet, keepMessage) {
+    const nm = model.numbers;
+    if (nm.status === "loading") return;
+    nm.status = "loading";
+    if (!quiet) render();
+    try {
+      const r = await call("GET", "/api/growth/numbers");
+      Object.assign(nm, { status: "ok", supported: r.supported !== false, numbers: r.numbers || [], error: keepMessage ? nm.error : null });
+    } catch (e) {
+      Object.assign(nm, { status: "error", supported: null, error: null }); // Outreach is not connected or not reachable: the older steps still show
+    }
+    render();
+  }
+
+  // Open Outreach's number page in a small window (opened inside the click so a pop-up blocker allows it); the link is put in it
+  // once Outreach has answered. When the window closes, or tells us it is done, the numbers are read again.
+  async function connectNumber() {
+    const nm = model.numbers;
+    if (nm.busy) return;
+    nm.busy = "connect";
+    nm.error = nm.notice = null;
+    render();
+    const w = root.open("about:blank", "outreachNumber" + Date.now(), "popup=yes,width=640,height=820");
+    try {
+      const r = await call("POST", "/api/growth/numbers/connect", {});
+      if (w && !w.closed) {
+        w.location.href = r.auth_url;
+        const timer = root.setInterval(() => {
+          if (!w.closed) return;
+          root.clearInterval(timer);
+          afterChannelWindow();
+        }, 700);
+      } else {
+        root.open(r.auth_url, "_blank", "noopener");
+        nm.notice = "Your browser blocked the small window, so it opened in a new tab. When you have finished there, come back here and choose Check again.";
+      }
+    } catch (e) {
+      if (w && !w.closed) w.close();
+      nm.error = e.message;
+    }
+    nm.busy = null;
+    render();
+  }
+
+  async function releaseNumber(id) {
+    const nm = model.numbers;
+    if (nm.busy || !id) return;
+    if (root.confirm && !root.confirm("Release this phone number? Calls can no longer go out from it, and Outreach may not give it back.")) return;
+    nm.busy = id;
+    nm.error = nm.notice = null;
+    render();
+    try {
+      await call("DELETE", `/api/growth/numbers/${encodeURIComponent(id)}`);
+      nm.notice = "Released.";
+      model.changed = true;
+    } catch (e) {
+      nm.error = e.message;
+    }
+    nm.busy = null;
+    await loadNumbers(true, true);
+    load();
+  }
+
+  // Outreach was connected or disconnected: what was read about its social channels and numbers belongs to the old connection
   function resetSocial() {
     Object.assign(model.social, { status: "idle", supported: null, providers: [], channels: [], busy: null, notice: null, error: null });
+    Object.assign(model.numbers, { status: "idle", supported: null, numbers: [], busy: null, notice: null, error: null });
   }
 
   function afterChannelWindow() {
     model.changed = true;
     loadSocial(true);
+    loadNumbers(true);
     load();
   }
 
@@ -727,6 +826,11 @@
 
   // The sign-in window tells this page when it is finished: Outreach's own message, or the page TenderFlow shows at the end.
   function channelDone(d) {
+    if (d.provider === "number") {
+      model.numbers.notice = d.status === "connected" ? "Your phone number request was received. It shows Ready to call once Outreach has checked your business details." : "The phone number could not be set up. Try again.";
+      afterChannelWindow();
+      return;
+    }
     const name = channelName(d.provider);
     model.social.notice = d.status === "connected" ? `${name} is connected.` : `${name} could not be connected. Try again.`;
     afterChannelWindow();
@@ -764,6 +868,7 @@
     model.view = view;
     render();
     if (view === "social" && outreachState(model) === "ok" && model.social.status !== "loading") loadSocial(true);
+    if (view === "calls" && outreachState(model) === "ok" && model.numbers.status !== "loading") loadNumbers(true);
     const panel = document.getElementById("connectionsPanel");
     const target = panel && (panel.querySelector(`.cx-tab[data-view="${view}"]`) || panel.querySelector(".cx-pane__title"));
     if (target) target.focus();
@@ -796,6 +901,7 @@
       model.info = await call("GET", "/api/growth/outreach/status");
       model.status = "ok";
       if (outreachState(model) === "ok" && model.social.status === "idle") loadSocial(true);
+      if (outreachState(model) === "ok" && model.numbers.status === "idle") loadNumbers(true);
     } catch (e) {
       model.status = "error";
       model.error = e.message;
@@ -949,7 +1055,7 @@
         model.status = "ok";
         model.changed = true;
         resetSocial();
-        if (outreachState(model) === "ok") loadSocial(true);
+        if (outreachState(model) === "ok") { loadSocial(true); loadNumbers(true); }
         f.email = f.company = f.name = "";
         f.consent = false;
       }
@@ -996,7 +1102,7 @@
       model.changed = true;
       f.key = "";
       resetSocial();
-      if (outreachState(model) === "ok") loadSocial(true);
+      if (outreachState(model) === "ok") { loadSocial(true); loadNumbers(true); }
     } catch (e) {
       f.error = e.message;
     }
@@ -1072,6 +1178,7 @@
       if (!model.open || !["social", "calls", "email", "outreach"].includes(model.view)) return;
       if (model.status !== "loading") load();
       if (model.view === "social" && model.social.status !== "loading") loadSocial(true);
+      if (model.view === "calls" && model.numbers.status !== "loading") loadNumbers(true);
     });
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && model.open) { e.stopPropagation(); close(); }

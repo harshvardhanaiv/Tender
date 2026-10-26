@@ -361,6 +361,21 @@ class OutreachClient:
             raise OutreachError("That is not an Outreach channel id.", 400, "invalid_request")
         return self.run("social", "channel.disconnect", item_id=channel_id)
 
+    # ── phone numbers (`numbers` plugin): the user buys one and uploads the business documents in Outreach's own popup ──────
+
+    def number_connect(self, return_url: str) -> dict[str, Any]:
+        """Start getting a number. The answer carries `connect_url`, to open in a small window; the search, the purchase and the
+        document upload happen on Outreach's page, so no document or card detail passes through TenderFlow."""
+        return self.run("numbers", "connect", {"return_url": return_url})
+
+    def number_list(self) -> dict[str, Any]:
+        return self.run("numbers", "list")
+
+    def number_release(self, number_id: str) -> dict[str, Any]:
+        if not _ID_RE.match(number_id or ""):
+            raise OutreachError("That is not an Outreach number id.", 400, "invalid_request")
+        return self.run("numbers", "release", item_id=number_id)
+
     def update_social_post(self, post_id: str, payload: Mapping[str, Any], idempotency_key: str) -> dict[str, Any]:
         """Change a post: its publish time, or ask the AI to write the text, the picture or both again. Outreach sends a
         changed post back for approval, so this never publishes anything."""
@@ -529,6 +544,7 @@ def wallet_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
         "mailboxes": mailbox_list(raw, connected),
         "social_channels": social_channel_names(raw),
         "phone_numbers": phone_number_count(raw),
+        "phone_status": phone_number_status(raw),
         "livemode": raw.get("livemode") if isinstance(raw.get("livemode"), bool) else None,
     }
 
@@ -605,6 +621,16 @@ def phone_number_count(raw: Mapping[str, Any]) -> int | None:
             if isinstance(v, int) and not isinstance(v, bool):
                 return v
     return None
+
+
+def phone_number_status(raw: Mapping[str, Any]) -> dict[str, int] | None:
+    """connected.phone_number_status as whole numbers (active, held, pending, verification_pending, verification_rejected);
+    None when /v1/wallets does not carry it."""
+    connected = _find(raw, ("connected", "connections", "channels"))
+    src = connected.get("phone_number_status") if isinstance(connected, dict) else None
+    if not isinstance(src, dict):
+        return None
+    return {k: v for k, v in src.items() if isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool)}
 
 
 def _image_link(raw: Mapping[str, Any]) -> str | None:
@@ -704,11 +730,36 @@ def channel_list_summary(raw: Any) -> list[dict[str, Any]]:
 def connect_summary(raw: Any) -> dict[str, Any]:
     """The answer of channel.connect: the link to open (https only; a test key answers with the return address at once),
     and whether it already counts as connected."""
-    link = _text(_find(raw, ("auth_url", "url", "authorize_url")), 2000)
+    link = _text(_find(raw, ("auth_url", "connect_url", "url", "authorize_url")), 2000)
     url = _https_url(link, 2000)
     if not url and link and re.match(r"^http://(localhost|127\.0\.0\.1)(:\d{1,5})?(/[^\s\"<>\\]*)?$", link.strip()):
         url = link.strip()  # a test key answers with the return address itself, which is plain http on a developer's machine
     return {"auth_url": url, "connected": bool(_find(raw, ("connected", "done"))) if isinstance(raw, dict) else False}
+
+
+_NUMBER_STATUS = {
+    "active": "active", "ready": "active", "connected": "active", "live": "active",
+    "pending": "pending", "pending_verification": "pending", "verification_pending": "pending", "in_review": "pending", "ordered": "pending",
+    "held": "pending", "processing": "pending",
+    "rejected": "rejected", "verification_rejected": "rejected", "failed": "rejected", "error": "rejected",
+}
+
+
+def number_list_summary(raw: Any) -> list[dict[str, Any]]:
+    """[{id, number, status, reason}] for the phone numbers the user has. `status` is active, pending (being set up or checked) or
+    rejected; a number Outreach says is released is left out, and anything unrecognised shows as pending, never as working."""
+    out: list[dict[str, Any]] = []
+    for item in _rows(raw, ("numbers", "phone_numbers", "items"))[:50]:
+        if not isinstance(item, dict):
+            continue
+        nid = _text(_find(item, ("id", "number_id")), 64)
+        number = _text(_find(item, ("number", "phone_number", "e164", "caller_id")), 30)
+        raw_status = str(_find(item, ("status", "state")) or "active").strip().lower()
+        if not nid or not _ID_RE.match(nid) or not number or raw_status in ("released", "deleted", "cancelled", "canceled"):
+            continue
+        out.append({"id": nid, "number": number, "status": _NUMBER_STATUS.get(raw_status, "pending"),
+                    "reason": _text(_find(item, ("reason", "rejection_reason", "verification_reason")), 300)})
+    return out
 
 
 def post_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
