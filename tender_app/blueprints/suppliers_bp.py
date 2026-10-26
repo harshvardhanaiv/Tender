@@ -2499,6 +2499,120 @@ def get_authority_suppliers():
 
 # ── DOWNLOAD ENDPOINT (DOCX) ───────────────────────────────────────────────────
 
+# ── SUBCONTRACTOR CANDIDATES ───────────────────────────────────────────────────────────────────
+
+# A real Companies House number: 8 digits, or 2 letters and 6 digits. CF/UK/BR are this app's own placeholder prefixes
+# (see normalize_ch_company_number), so a supplier carrying one is not registered as far as we can tell.
+_CH_NUMBER_SQL = r"(s.company_number ~ '^[0-9]{8}$' OR (s.company_number ~ '^[A-Z]{2}[0-9]{6}$' AND s.company_number !~ '^(CF|UK|BR)'))"
+SUBCONTRACTOR_GROUP_LIMIT = 50
+
+
+def _supplier_cpv_prefixes(cursor, conn, supplier_id: int, company_number: str | None) -> list[str]:
+    """The 4-digit CPV divisions this supplier has won in, most-won first (at most 5)."""
+    if _is_valid_cnum_for_award_join(company_number):
+        where, params = "(supplier_id = %s OR company_number = %s)", [supplier_id, company_number]
+    else:
+        where, params = "supplier_id = %s", [supplier_id]
+    cursor.execute(f"""
+        SELECT LEFT(cpv_code, 4) AS division, COUNT(*) AS n FROM contract_awards
+        WHERE {where} AND source_portal IN ({_PORTALS_SQL_LIST}) AND cpv_code ~ '^[0-9]{{4}}'
+        GROUP BY 1 ORDER BY n DESC, 1 LIMIT 5;
+    """, params)
+    return [r[0] for r in cursor.fetchall()]
+
+
+def _subcontractor_group(cursor, supplier_id: int, divisions: list[str], registered: bool, limit: int) -> tuple[int, list[dict[str, Any]]]:
+    """Suppliers that have won in the same CPV divisions: all of them with a Companies House number, or all without one.
+    Plain %s placeholders and cursor.execute on purpose: SUPPLIER_NAME_NOT_PLACEHOLDER_SQL holds a literal `?` that _execute would rewrite."""
+    import json as _json
+    reg_sql = _CH_NUMBER_SQL if registered else f"NOT {_CH_NUMBER_SQL}"
+    like_sql = " OR ".join(["a.cpv_code LIKE %s"] * len(divisions))
+    like_params = [f"{d}%" for d in divisions]
+    base = f"""
+        FROM suppliers s
+        JOIN contract_awards a ON a.supplier_id = s.id
+        LEFT JOIN supplier_contact_enrichment e ON e.supplier_id = s.id
+        WHERE s.id <> %s AND a.source_portal IN ({_PORTALS_SQL_LIST}) AND ({like_sql})
+          AND {reg_sql} AND {SUPPLIER_NAME_NOT_PLACEHOLDER_SQL}
+    """
+    cursor.execute(f"SELECT COUNT(DISTINCT s.id) {base};", [supplier_id, *like_params])
+    total = int(cursor.fetchone()[0] or 0)
+    cursor.execute(f"""
+        SELECT s.id, s.name, s.company_number, s.region, s.sme_status, s.vcse_status, s.email, s.website,
+               COUNT(DISTINCT a.id) AS similar_awards,
+               ARRAY_AGG(DISTINCT LEFT(a.cpv_code, 4)) AS divisions,
+               MAX(a.date_signed) AS latest_award,
+               MAX(e.emails) AS found_emails, MAX(e.website) AS found_website
+        {base}
+        GROUP BY s.id, s.name, s.company_number, s.region, s.sme_status, s.vcse_status, s.email, s.website
+        ORDER BY similar_awards DESC, s.name
+        LIMIT %s;
+    """, [supplier_id, *like_params, limit])
+    out = []
+    for raw in cursor.fetchall():
+        r = _row_to_dict(cursor, raw)
+        cnum = normalize_ch_company_number(r.get("company_number"))
+        if bool(cnum) != registered:   # the SQL pattern and the app's own check disagree: keep to the app's check
+            continue
+        email = clean_contact_field(r.get("email"))
+        if not email:
+            try:
+                found = _json.loads(r.get("found_emails") or "[]")
+            except ValueError:
+                found = []
+            email = next((e for e in found if isinstance(e, str) and "@" in e), "")
+        out.append({
+            "supplier_id": r["id"], "name": r["name"], "company_number": cnum or "", "region": r.get("region") or "",
+            "sme_status": r.get("sme_status"), "vcse_status": r.get("vcse_status"),
+            "email": email, "website": clean_contact_field(r.get("website")) or clean_contact_field(r.get("found_website")),
+            "similar_awards": int(r.get("similar_awards") or 0), "divisions": sorted(d for d in (r.get("divisions") or []) if d),
+            "latest_award": str(r.get("latest_award") or ""),
+        })
+    return total, out
+
+
+@suppliers_bp.route("/api/suppliers/<int:supplier_id>/subcontractor-candidates", methods=["GET"])
+def get_subcontractor_candidates(supplier_id: int):
+    """Suppliers that have won similar work (same CPV divisions) to this one, split into those with a Companies House
+    number ("registered") and those without. Used by the "Invite subcontractors" window; nothing is sent from here."""
+    raw_cpv = (request.args.get("cpv") or "").strip()
+    conn = _get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id, name, company_number FROM suppliers WHERE id = %s;", (supplier_id,))
+        sup = cursor.fetchone()
+        if not sup:
+            return jsonify({"ok": False, "error": "Supplier not found"}), 404
+        divisions = [d for d in dict.fromkeys(c.strip()[:4] for c in raw_cpv.split(",")) if re.fullmatch(r"\d{4}", d)][:5]
+        if not divisions:
+            divisions = _supplier_cpv_prefixes(cursor, conn, supplier_id, sup[2])
+        if not divisions:
+            return jsonify({"ok": True, "supplier": {"id": sup[0], "name": sup[1]}, "divisions": [], "registered": [], "unregistered": [],
+                            "totals": {"registered": 0, "unregistered": 0}, "limit": SUBCONTRACTOR_GROUP_LIMIT,
+                            "message": "This supplier has no awards with a CPV code, so there is nothing to match similar suppliers on.",
+                            "attribution": OGL_V3_ATTRIBUTION})
+        cursor.execute(f"""
+            SELECT LEFT(cpv_code, 4), MAX(cpv_description) FROM contract_awards
+            WHERE LEFT(cpv_code, 4) IN ({", ".join(["%s"] * len(divisions))}) AND cpv_description IS NOT NULL AND cpv_description <> ''
+            GROUP BY 1;
+        """, divisions)
+        names = {d: desc for d, desc in cursor.fetchall()}
+        reg_total, registered = _subcontractor_group(cursor, sup[0], divisions, True, SUBCONTRACTOR_GROUP_LIMIT)
+        unreg_total, unregistered = _subcontractor_group(cursor, sup[0], divisions, False, SUBCONTRACTOR_GROUP_LIMIT)
+        return jsonify({
+            "ok": True, "supplier": {"id": sup[0], "name": sup[1]},
+            "divisions": [{"code": d, "description": names.get(d, "")} for d in divisions],
+            "registered": registered, "unregistered": unregistered,
+            "totals": {"registered": reg_total, "unregistered": unreg_total}, "limit": SUBCONTRACTOR_GROUP_LIMIT,
+            "attribution": OGL_V3_ATTRIBUTION,
+        })
+    except Exception as ex:
+        conn.rollback()
+        return jsonify({"ok": False, "error": str(ex)}), 500
+    finally:
+        conn.close()
+
+
 @suppliers_bp.route("/api/suppliers/<int:supplier_id>/download", methods=["GET"])
 def download_supplier_profile(supplier_id):
     """Download a complete supplier intelligence profile as a Word document (.docx)."""

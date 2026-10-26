@@ -7502,11 +7502,27 @@ function pipelineAccordionHtml(parts) {
   </details></div>`;
 }
 
+// The number on each kind pill: everything tracked or watched of that kind, whatever the search or portal filter says.
+function updatePipelineKindCounts() {
+  const watched = window.TFWatch ? window.TFWatch.items() : [];
+  const n = {
+    tender: Object.keys(state.pipeline || {}).length,
+    buyer: watched.filter((w) => w.kind === "buyer").length,
+    supplier: watched.filter((w) => w.kind === "supplier").length,
+  };
+  n.all = n.tender + n.buyer + n.supplier;
+  $("pipelineKindPills")?.querySelectorAll("button[data-kind]").forEach((b) => {
+    if (!b.dataset.label) b.dataset.label = b.textContent.trim();
+    b.innerHTML = `${esc(b.dataset.label)} <span class="pill__count">${n[b.dataset.kind] ?? 0}</span>`;
+  });
+}
+
 function renderPipelineBoard() {
   const body = $("dashboardBody");
   if (!body) return;
 
   populatePipelinePortalFilter();
+  updatePipelineKindCounts();
 
   const searchQuery = ($("pipelineSearchInput")?.value || "").toLowerCase().trim();
   const portalFilter = ($("pipelinePortalFilter")?.value || "").trim();
@@ -19305,6 +19321,13 @@ async function loadSupplierDetail(supplierId) {
               </svg>
               Download Report (.docx)
             </button>
+            <button type="button"
+                    id="btnInviteSubcontractors"
+                    title="Show suppliers that have won similar work, registered and not registered, and draft an invitation to take part as a subcontractor"
+                    style="display:inline-flex; align-items:center; gap:7px; padding:9px 18px; background:linear-gradient(135deg,#047857,#059669); color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; transition:all 0.18s ease; white-space:nowrap; box-shadow:0 2px 8px rgba(5,150,105,0.35);"
+                    onclick="window.openSubcontractorInvite &amp;&amp; window.openSubcontractorInvite(${s.id})">
+              🤝 Invite subcontractors
+            </button>
           </div>
         </div>
         ${nonCompWarning}
@@ -19427,6 +19450,285 @@ function grantsPanelHtml(g, mode) {
     <div style="font-size:11px; color:var(--muted,#64748b);">Innovate UK grants from UKRI Gateway to Research. Grants are not contracts and are not counted in the contract totals${mode === "supplier" ? " or the date filter" : ""}.</div>
     ${top}${rows}${more}</div>`;
 }
+
+// ── Invite subcontractors (Supplier Intelligence) ───────────────────────────────────────────────
+// Lists suppliers that have won similar work (same CPV divisions) to the one open, split into those with a Companies House
+// number ("registered") and those without. Nothing is sent from TenderFlow: each draft opens in the user's own email app.
+const _subInvite = { supplierId: null, data: null, tab: "registered", picked: new Set(), dirty: false, opener: null };
+
+function subInviteTemplate(company, opportunity, sector) {
+  const who = company || "[your company]";
+  const what = opportunity ? `We are bidding for ${opportunity} and are looking for subcontractors to take part.` : "We are preparing a bid and are looking for subcontractors to take part.";
+  return `Hello {name},\n\n${what} Your track record in ${sector || "this kind of work"} stands out, so we would like to hear whether you would be open to taking part.\n\n` +
+    `Would you be free for a short call to talk it through? If this is not relevant to you, just reply and we will not contact you again.\n\nKind regards,\n${who}`;
+}
+
+function subInviteMessage(name) {
+  const body = ($("subInviteBody") || {}).value || "";
+  return name ? body.replace(/\{name\}/g, name) : body.replace(/ ?\{name\}/g, "");
+}
+
+function subInviteRows() {
+  const d = _subInvite.data;
+  return d ? (_subInvite.tab === "registered" ? d.registered : d.unregistered) : [];
+}
+
+function subInviteMailto(emails, name, bcc) {
+  const subject = encodeURIComponent((($("subInviteSubject") || {}).value || "").trim());
+  const body = encodeURIComponent(subInviteMessage(name));
+  return bcc ? `mailto:?bcc=${emails.map(encodeURIComponent).join(",")}&subject=${subject}&body=${body}`
+    : `mailto:${encodeURIComponent(emails[0])}?subject=${subject}&body=${body}`;
+}
+
+function subInviteSay(text, bad) {
+  const el = $("subInviteStatus");
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("sub-invite__status--bad", !!bad);
+}
+
+// A draft with the company placeholder still in it would go out looking unfinished, so it is held back until the company is filled in.
+function subInviteReady() {
+  if (!/\[your company\]/i.test(($("subInviteBody") || {}).value || "")) return true;
+  const box = document.querySelector(".sub-invite__compose");
+  if (box) box.open = true;
+  subInviteSay("Fill in your company name first: the message still says [your company].", true);
+  return false;
+}
+
+function subInviteOpenMail(url) {
+  const a = document.createElement("a");
+  a.href = url;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function subInviteSelectedWithEmail() {
+  const d = _subInvite.data;
+  return [...d.registered, ...d.unregistered].filter(r => _subInvite.picked.has(r.supplier_id) && r.email);
+}
+
+function subInviteRenderList() {
+  const d = _subInvite.data;
+  const list = $("subInviteList");
+  if (!d || !list) return;
+  const rows = subInviteRows();
+  const total = d.totals[_subInvite.tab];
+  list.innerHTML = rows.map(r => {
+    const checked = _subInvite.picked.has(r.supplier_id) ? " checked" : "";
+    const contact = r.email
+      ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>`
+      : `<span class="sub-invite__none">No email on record</span>`;
+    const site = r.website && /^https?:\/\//i.test(r.website)
+      ? ` · <a href="${esc(r.website)}" target="_blank" rel="noopener noreferrer">website ↗</a>` : "";
+    const size = r.sme_status === "SME" ? `<span class="sub-invite__pill">SME</span>` : "";
+    const vcse = r.vcse_status === "VCSE" ? `<span class="sub-invite__pill">VCSE</span>` : "";
+    return `<li class="sub-invite__row">
+      <input type="checkbox" class="sub-invite__pick" data-id="${r.supplier_id}"${checked} aria-label="Select ${esc(displayName(r.name))}" />
+      <div class="sub-invite__who">
+        <div class="sub-invite__name">${esc(displayName(r.name))} ${size}${vcse}</div>
+        <div class="sub-invite__meta">${r.company_number ? `#${esc(r.company_number)} · ` : ""}${esc(r.region || "UK")} · ${r.similar_awards} similar award${r.similar_awards === 1 ? "" : "s"}${r.latest_award ? ` · latest ${esc(r.latest_award)}` : ""}</div>
+        <div class="sub-invite__meta">${contact}${site}</div>
+      </div>
+      <button type="button" class="btn btn--secondary btn--small" data-draft="${r.supplier_id}"${r.email ? "" : " disabled"} title="${r.email ? "Open an email draft to this supplier in your email app" : "No email address on record for this supplier"}">Draft email</button>
+    </li>`;
+  }).join("") || `<li class="sub-invite__empty">No ${_subInvite.tab === "registered" ? "registered" : "unregistered"} suppliers found for these sectors.</li>`;
+  const more = $("subInviteMore");
+  if (more) more.textContent = total > rows.length ? `Showing the ${rows.length} with the most similar awards, of ${total}.` : (total ? `${total} supplier${total === 1 ? "" : "s"}.` : "");
+  const n = _subInvite.picked.size;
+  const count = $("subInviteCount");
+  if (count) count.textContent = n ? `${n} selected` : "None selected";
+  document.querySelectorAll("#subInviteTabs [role=tab]").forEach(t => {
+    const on = t.dataset.tab === _subInvite.tab;
+    t.setAttribute("aria-selected", on ? "true" : "false");
+    t.classList.toggle("active", on);
+    t.tabIndex = on ? 0 : -1;
+  });
+}
+
+function subInviteRenderShell(d) {
+  const sector = (d.divisions[0] && d.divisions[0].description) || "";
+  const chips = d.divisions.map(x => `<span class="sub-invite__chip" title="CPV division ${esc(x.code)}">${esc(x.code)}${x.description ? ` · ${esc(x.description)}` : ""}</span>`).join("");
+  const profiles = (typeof state !== "undefined" && state.companyProfiles) || [];
+  const mine = profiles.find(p => p.is_default) || profiles[0];
+  const company = mine && mine.name ? mine.name : "";
+  $("subInviteBody-wrap").innerHTML = `
+    <div class="sub-invite__intro">Suppliers that have won work in the same sectors as <strong>${esc(displayName(d.supplier.name))}</strong>:</div>
+    <div class="sub-invite__chips">${chips}</div>
+    <details class="sub-invite__compose"${company ? "" : " open"}>
+      <summary>Your invitation: company, subject and message (tap to edit)</summary>
+      <div class="sub-invite__grid">
+        <label>Your company<input type="text" id="subInviteCompany" class="input" maxlength="120" value="${esc(company)}" autocomplete="organization" /></label>
+        <label>What you are inviting them to <input type="text" id="subInviteOpp" class="input" maxlength="160" placeholder="e.g. the Ministry of Defence hull maintenance contract" /></label>
+        <label class="sub-invite__wide">Subject<input type="text" id="subInviteSubject" class="input" maxlength="160" value="Invitation to take part as a subcontractor" /></label>
+        <label class="sub-invite__wide">Message <span class="sub-invite__hint">{name} is replaced with each supplier's name</span>
+          <textarea id="subInviteBody" class="input" rows="9" maxlength="3000"></textarea></label>
+      </div>
+    </details>
+    <div id="subInviteTabs" class="tf-tabs buyer-tabs" role="tablist" aria-label="Registered or not registered">
+      <button type="button" role="tab" class="buyer-tab-btn" data-tab="registered">Registered (${d.totals.registered})</button>
+      <button type="button" role="tab" class="buyer-tab-btn" data-tab="unregistered">Not registered (${d.totals.unregistered})</button>
+    </div>
+    <p class="sub-invite__note">Registered means a Companies House number is on record. Not registered covers sole traders, charities, overseas firms and suppliers whose number we could not confirm.</p>
+    <div class="sub-invite__bar">
+      <label class="sub-invite__all"><input type="checkbox" id="subInviteAll" /> Select all with an email</label>
+      <span id="subInviteCount" aria-live="polite">None selected</span>
+      <span id="subInviteMore" class="sub-invite__more"></span>
+    </div>
+    <ul id="subInviteList" class="sub-invite__list"></ul>`;
+  const body = $("subInviteBody");
+  const regenerate = () => {
+    if (_subInvite.dirty) return;
+    body.value = subInviteTemplate(($("subInviteCompany").value || "").trim(), ($("subInviteOpp").value || "").trim(), sector);
+  };
+  body.addEventListener("input", () => { _subInvite.dirty = true; });
+  $("subInviteCompany").addEventListener("input", regenerate);
+  $("subInviteOpp").addEventListener("input", regenerate);
+  regenerate();
+  subInviteRenderList();
+}
+
+function closeSubcontractorInvite() {
+  const m = $("subInviteModal");
+  if (m) m.classList.add("hidden");
+  document.removeEventListener("keydown", subInviteKeydown, true);
+  const opener = _subInvite.opener;
+  _subInvite.opener = null;
+  if (opener && document.contains(opener)) opener.focus();
+}
+
+function subInviteKeydown(e) {
+  const m = $("subInviteModal");
+  if (!m || m.classList.contains("hidden")) return;
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeSubcontractorInvite(); return; }
+  if (e.key !== "Tab") return;
+  const f = [...m.querySelectorAll("button, a[href], input, textarea, summary, [tabindex]:not([tabindex='-1'])")].filter(x => !x.disabled && x.offsetParent !== null);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
+function subInviteEnsureModal() {
+  let m = $("subInviteModal");
+  if (m) return m;
+  m = document.createElement("div");
+  m.id = "subInviteModal";
+  m.className = "modal-overlay sub-invite hidden";
+  m.setAttribute("role", "dialog");
+  m.setAttribute("aria-modal", "true");
+  m.setAttribute("aria-labelledby", "subInviteTitle");
+  m.innerHTML = `<div class="profile-modal sub-invite__card">
+    <div class="profile-header">
+      <div class="profile-header__left"><h2 class="profile-header__title" id="subInviteTitle">Invite subcontractors</h2>
+        <span class="profile-header__sub">Similar suppliers, registered and not registered</span></div>
+      <button type="button" class="profile-header__close" id="subInviteClose" aria-label="Close">×</button>
+    </div>
+    <div class="sub-invite__scroll" id="subInviteBody-wrap"></div>
+    <div class="sub-invite__foot">
+      <div id="subInviteStatus" class="sub-invite__status" role="status" aria-live="polite"></div>
+      <div class="sub-invite__actions">
+        <button type="button" class="btn btn--secondary btn--small" id="subInviteCopy">Copy emails</button>
+        <button type="button" class="btn btn--secondary btn--small" id="subInviteCsv">Download CSV</button>
+        <button type="button" class="btn btn--primary btn--small" id="subInviteBcc">Draft one email to selected</button>
+      </div>
+      <p class="sub-invite__legal">Nothing is sent from TenderFlow: drafts open in your own email app for you to check. Contact details come from public award notices and supplier websites. Email businesses only about relevant work and make it easy to opt out; sole traders and partnerships are treated like individuals under UK email marketing rules.</p>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  $("subInviteClose").addEventListener("click", closeSubcontractorInvite);
+  m.addEventListener("click", (e) => {
+    const tab = e.target.closest("[data-tab]");
+    if (tab && m.contains(tab)) { _subInvite.tab = tab.dataset.tab; subInviteRenderList(); return; }
+    const draft = e.target.closest("[data-draft]");
+    if (draft) {
+      const id = Number(draft.dataset.draft);
+      const r = [..._subInvite.data.registered, ..._subInvite.data.unregistered].find(x => x.supplier_id === id);
+      if (r && r.email && subInviteReady()) { subInviteOpenMail(subInviteMailto([r.email], displayName(r.name), false)); subInviteSay(`Draft to ${displayName(r.name)} opened in your email app.`); }
+    }
+  });
+  m.addEventListener("change", (e) => {
+    const t = e.target;
+    if (t.id === "subInviteAll") {
+      subInviteRows().forEach(r => { if (r.email) { if (t.checked) _subInvite.picked.add(r.supplier_id); else _subInvite.picked.delete(r.supplier_id); } });
+      subInviteRenderList();
+    } else if (t.classList.contains("sub-invite__pick")) {
+      const id = Number(t.dataset.id);
+      if (t.checked) _subInvite.picked.add(id); else _subInvite.picked.delete(id);
+      const c = $("subInviteCount");
+      if (c) c.textContent = _subInvite.picked.size ? `${_subInvite.picked.size} selected` : "None selected";
+    }
+  });
+  $("subInviteCopy").addEventListener("click", async () => {
+    const emails = [...new Set(subInviteSelectedWithEmail().map(r => r.email))];
+    if (!emails.length) return subInviteSay("Select at least one supplier that has an email address.", true);
+    const text = emails.join(", ");
+    try { await navigator.clipboard.writeText(text); }
+    catch (_) {
+      const ta = document.createElement("textarea");
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch (__) { /* shown below */ }
+      ta.remove();
+    }
+    subInviteSay(`Copied ${emails.length} email address${emails.length === 1 ? "" : "es"}.`);
+  });
+  $("subInviteBcc").addEventListener("click", () => {
+    const emails = [...new Set(subInviteSelectedWithEmail().map(r => r.email))];
+    if (!emails.length) return subInviteSay("Select at least one supplier that has an email address.", true);
+    if (!subInviteReady()) return;
+    const url = subInviteMailto(emails, "", true);
+    if (url.length > 1900) return subInviteSay(`${emails.length} addresses are too many for one draft. Select fewer, or use Copy emails and paste them into the Bcc line.`, true);
+    subInviteOpenMail(url);
+    subInviteSay(`One draft with ${emails.length} recipient${emails.length === 1 ? "" : "s"} in Bcc opened in your email app.`);
+  });
+  $("subInviteCsv").addEventListener("click", () => {
+    const d = _subInvite.data;
+    const chosen = [...d.registered, ...d.unregistered].filter(r => _subInvite.picked.has(r.supplier_id));
+    const rows = chosen.length ? chosen : subInviteRows();
+    const cell = (v) => {
+      let s = String(v == null ? "" : v);
+      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;   // a spreadsheet must not read a name as a formula
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const head = ["Name", "Companies House number", "Registered", "Region", "SME", "VCSE", "Email", "Website", "Similar awards", "Latest award"];
+    const lines = [head.map(cell).join(",")].concat(rows.map(r => [
+      r.name, r.company_number, r.company_number ? "Yes" : "No", r.region, r.sme_status, r.vcse_status, r.email, r.website, r.similar_awards, r.latest_award,
+    ].map(cell).join(",")));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" }));
+    a.download = `subcontractor_candidates_${d.supplier.id}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    subInviteSay(`Downloaded ${rows.length} supplier${rows.length === 1 ? "" : "s"}${chosen.length ? " (your selection)" : " (this tab)"}.`);
+  });
+  return m;
+}
+
+async function openSubcontractorInvite(supplierId) {
+  const m = subInviteEnsureModal();
+  Object.assign(_subInvite, { supplierId, data: null, tab: "registered", picked: new Set(), dirty: false, opener: document.activeElement });
+  subInviteSay("");
+  $("subInviteBody-wrap").innerHTML = `<div class="sub-invite__loading">Finding suppliers that have won similar work…</div>`;
+  m.classList.remove("hidden");
+  document.addEventListener("keydown", subInviteKeydown, true);
+  $("subInviteClose").focus();
+  try {
+    const res = await fetch(`/api/suppliers/${encodeURIComponent(supplierId)}/subcontractor-candidates`);
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || !d.ok) throw new Error(d.error || "Could not load similar suppliers");
+    if (_subInvite.supplierId !== supplierId) return;   // closed or switched while loading
+    _subInvite.data = d;
+    if (!d.divisions.length) {
+      $("subInviteBody-wrap").innerHTML = `<div class="sub-invite__loading">${esc(d.message || "No similar suppliers could be found.")}</div>`;
+      return;
+    }
+    subInviteRenderShell(d);
+  } catch (err) {
+    $("subInviteBody-wrap").innerHTML = `<div class="sub-invite__loading sub-invite__status--bad" role="alert">${esc(err.message)}</div>`;
+  }
+}
+window.openSubcontractorInvite = openSubcontractorInvite;
 
 async function downloadSupplierReportDocx(supplierId, btnElem = null) {
   const btn = btnElem instanceof HTMLElement ? btnElem : $("btnDownloadSupplierDocx");

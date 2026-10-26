@@ -409,7 +409,7 @@
       `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn${has ? "" : " cx-btn--primary"}" data-cx="number-connect"${busy ? " disabled" : ""} ` +
       `data-tip="Opens Outreach in a small window to choose a UK number and upload your business documents. You never type a card or document detail here.">${nm.busy === "connect" ? "Opening…" : has ? "＋ Add another number" : "＋ Get a phone number"}</button>` +
       `<button type="button" class="cx-btn" data-cx="number-reload"${nm.status === "loading" ? " disabled" : ""}>${nm.status === "loading" ? "Checking…" : "Check again"}</button></div>` +
-      `<p class="cx-sub">Outreach's AI makes the calls from that number, to UK landlines only. A number costs 5 Voice credits to set up, then 1 a month. UK rules mean Outreach checks who will use it (company certificate or photo ID, plus a utility bill under 3 months old): this usually takes up to 3 days, and the number shows Ready to call once approved.</p>`;
+      `<p class="cx-sub">Outreach's AI makes the calls from that number, to UK landlines only. On Outreach's page choose the type Local and pick a number starting 01, 02 or 03: mobile numbers are not supported here. A number costs 5 Voice credits to set up, then 1 a month. UK rules mean Outreach checks who will use it (company certificate or photo ID, plus a utility bill under 3 months old): this usually takes up to 3 days, and the number shows Ready to call once approved.</p>`;
   }
 
   // The body of the open channel tab.
