@@ -476,19 +476,25 @@
     return typeof window !== "undefined" && window.TFWatch ? " " + window.TFWatch.buttonHtml("buyer", t.buyer_name, t.buyer_name, "growth_studio") : "";
   }
 
-  function targetRow(t) {
+  // One buyer: who and why on the left, the address in the middle, status and Remove on the right.
+  // opts: previewing (the row whose message is in the preview), hidden (filtered out of the list), kind (ready / needs / off).
+  function targetRow(t, opts) {
+    const o = opts || {};
     const dim = !t.included || t.opted_out;
     return (
-      `<div class="gs-target${dim ? " is-off" : ""}" data-id="${esc(t.id)}">` +
+      `<div class="gs-target${dim ? " is-off" : ""}${o.previewing ? " is-previewing" : ""}" data-id="${esc(t.id)}" data-kind="${esc(o.kind || "")}"${o.hidden ? " hidden" : ""}>` +
       `<input type="checkbox" class="gs-target__on" data-action="target-include" data-id="${esc(t.id)}"${t.included ? " checked" : ""}${t.opted_out ? " disabled" : ""} aria-label="Include ${esc(t.buyer_name)} in this campaign">` +
-      `<div class="gs-target__main"><div class="gs-target__top"><span class="gs-target__who"><b>${esc(t.buyer_name)}</b>${watchButton(t)}${t.opted_out ? " " + badge("Do not contact", "bad") : ""}</span>` +
-      `<span class="gs-target__ctl"><select class="gs-select gs-select--sm" data-field="status" data-id="${esc(t.id)}" aria-label="Status for ${esc(t.buyer_name)}">${statusOptions(t.status)}</select>` +
-      `<button type="button" class="gs-icon-btn" data-action="remove-target" data-id="${esc(t.id)}" aria-label="Remove ${esc(t.buyer_name)} from this campaign" title="Remove">×</button></span></div>` +
-      `<div class="gs-target__sig">${badge(esc(t.signal_label), (TYPES[t.signal_type] || {}).tone)} <span>${esc(t.headline || "")}</span></div>` +
+      `<div class="gs-target__main">` +
+      `<div class="gs-target__info" data-action="preview-buyer" data-id="${esc(t.id)}" title="Show the message this buyer receives"><span class="gs-target__who"><b>${esc(t.buyer_name)}</b>${watchButton(t)}${t.opted_out ? " " + badge("Do not contact", "bad") : ""}</span>` +
+      `<div class="gs-target__sig">${badge(esc(t.signal_label), (TYPES[t.signal_type] || {}).tone)} <span>${esc(t.headline || "")}</span></div></div>` +
+      `<div class="gs-target__email">` +
       `<input type="email" class="gs-input gs-input--sm" data-field="contact_email" data-id="${esc(t.id)}" value="${esc(t.contact_email || "")}" placeholder="procurement@…" autocomplete="off" aria-label="Contact email for ${esc(t.buyer_name)}">` +
       (t.personal_email ? `<div class="gs-hint gs-hint--warn">Looks like a named person's address. Use a role-based inbox such as procurement@ where you can.</div>` : "") +
       foundNote(t) +
       (!t.contact_email && !t.opted_out ? noticeLink(t) : "") +
+      `</div>` +
+      `<span class="gs-target__ctl"><select class="gs-select gs-select--sm" data-field="status" data-id="${esc(t.id)}" aria-label="Status for ${esc(t.buyer_name)}">${statusOptions(t.status)}</select>` +
+      `<button type="button" class="gs-icon-btn" data-action="remove-target" data-id="${esc(t.id)}" aria-label="Remove ${esc(t.buyer_name)} from this campaign" title="Remove">×</button></span>` +
       `</div></div>`
     );
   }
@@ -505,12 +511,16 @@
           .map((t) => `<option value="${esc(t.id)}"${t.id === selectedId ? " selected" : ""}>${esc(t.buyer_name)}</option>`)
           .join("")}</select>`
       : "";
-    if (!p) return `<div class="gs-preview__head"><span>Preview for</span>${picker}</div>${loading("Preparing the preview…")}`;
+    const at = Math.max(0, choices.findIndex((t) => t.id === selectedId));
+    const pager = `<span class="gs-pager"><span class="gs-hint">${at + 1} of ${choices.length}</span>` +
+      `<button type="button" class="gs-icon-btn" data-action="preview-step" data-dir="-1" aria-label="Previous buyer"${choices.length < 2 ? " disabled" : ""}>‹</button>` +
+      `<button type="button" class="gs-icon-btn" data-action="preview-step" data-dir="1" aria-label="Next buyer"${choices.length < 2 ? " disabled" : ""}>›</button></span>`;
+    if (!p) return `<div class="gs-preview__head"><span>Preview for</span>${picker}${pager}</div>${loading("Preparing the preview…")}`;
     const issues = [];
     if (p.missing && p.missing.length) issues.push(`This buyer has no value for ${p.missing.map((n) => "{{" + esc(n) + "}}").join(", ")}, so that part will be blank.`);
     if (p.unknown && p.unknown.length) issues.push(`Not a merge field: ${p.unknown.map((n) => "{{" + esc(n) + "}}").join(", ")}.`);
     return (
-      `<div class="gs-preview__head"><span>Preview for</span>${picker}</div>` +
+      `<div class="gs-preview__head"><span>Preview for</span>${picker}${pager}</div>` +
       `<div class="gs-mail"><div class="gs-mail__hd">` +
       `<div class="gs-preview__to"><span class="gs-mail__k">To</span><span>${p.to ? esc(p.to) : `<i>no email address yet</i> <button type="button" class="gs-link" data-action="focus-email" data-id="${esc(p.target_id)}">Add one</button>`}</span></div>` +
       `<div class="gs-preview__subject"><span class="gs-mail__k">Subject</span><span><b>${esc(p.subject)}</b></span></div>` +
@@ -639,6 +649,11 @@
     return `<label class="gs-inline">Company <select class="gs-select gs-select--sm" data-field="campaign-profile">${opts}</select></label>`;
   }
 
+  // The three buyer filters above the list: all of them, the ones ready to send, the ones still missing an address.
+  function buyerKind(t) {
+    return t.opted_out || !t.included ? "off" : t.contact_email ? "ready" : "needs";
+  }
+
   function builderPane(m) {
     if (m.status === "loading" && !m.detail) return loading("Opening the campaign…");
     if (m.status === "error") return errorBox(m.error, "back-to-campaigns");
@@ -656,52 +671,103 @@
     const buyersOk = live.length > 0 && !missing;
     const msgOk = !m.dirty;
     const allOk = buyersOk && msgOk;
+    const files = (d.attachments || []).length;
+    const firstTodo = [buyersOk, msgOk, allOk, allOk].findIndex((x) => !x); // the step the reader should do next
     const step = (n, id, label, sub, ok) =>
-      `<button type="button" class="gs-step ${ok ? "is-done" : "is-todo"}" data-action="goto-step" data-target="${id}"><span class="gs-step__dot">${ok ? "✓" : n}</span>` +
+      `<button type="button" class="gs-step ${ok ? "is-done" : "is-todo"}${n - 1 === firstTodo ? " is-current" : ""}" data-action="goto-step" data-target="${id}"><span class="gs-step__dot">${ok ? "✓" : n}</span>` +
       `<span class="gs-step__txt"><b>${label}</b><small>${esc(sub)}</small></span></button>`;
     const steps =
       `<nav class="gs-steps" aria-label="Campaign steps">` +
       step(1, "gsBuyersCard", "Buyers", `${live.length - missing} of ${live.length} ready`, buyersOk) +
       step(2, "gsMessageCard", "Message", msgOk ? "Saved" : "Unsaved changes", msgOk) +
       step(3, "gsPreviewCard", "Preview", live.length ? "Check each buyer" : "No buyers yet", allOk) +
-      step(4, "gsSendCard", "Send", allOk ? "Ready" : "Not ready yet", allOk) +
+      step(4, "gsSendCard", "Send", allOk ? `${live.length - missing} ready to send` : "Not ready yet", allOk) +
       `</nav>`;
     const exportMenu =
-      `<details class="gs-menu"><summary class="gs-btn gs-btn--sm" data-tip="Download the list or copy the message to use in your own mail tool.">Export ▾</summary><div class="gs-menu__list">` +
+      `<details class="gs-menu"><summary class="gs-btn" data-tip="Download the list or copy the message to use in your own mail tool.">Export</summary><div class="gs-menu__list">` +
       `<button type="button" class="gs-btn gs-btn--ghost gs-btn--sm" data-action="export" data-format="csv"${eligible ? "" : " disabled"}>Export CSV</button>` +
       `<button type="button" class="gs-btn gs-btn--ghost gs-btn--sm" data-action="export" data-format="mailchimp"${eligible ? "" : " disabled"}>Mailchimp audience (CSV)</button>` +
       `<button type="button" class="gs-btn gs-btn--ghost gs-btn--sm" data-action="copy-mailchimp">Copy message for Mailchimp</button></div></details>`;
+    // the channel, company and status of the campaign, and Delete, behind one ⋯ menu so the header stays quiet
     const moreMenu =
-      `<details class="gs-menu"><summary class="gs-btn gs-btn--ghost gs-btn--sm" aria-label="More actions" data-tip="More actions for this campaign.">⋯</summary><div class="gs-menu__list">` +
-      `<button type="button" class="gs-btn gs-btn--ghost gs-btn--danger gs-btn--sm" data-action="delete-campaign">Delete campaign</button></div></details>`;
-    // The builder shows the campaign that is open. Changing the category filter does not change it: say so, and offer Signals.
-    const other = m.filterCategory && c.category_label && m.filterCategory !== c.category_label;
-    const notice = other
-      ? `<div class="gs-hint gs-hint--warn gs-builder__notice">This campaign is for ${esc(c.category_label)}. Your filter is ${esc(m.filterCategory)}, which does not change a campaign that is already open. ` +
-        `<button type="button" class="gs-btn gs-btn--sm" data-action="goto-signals">Choose ${esc(m.filterCategory)} buyers in Signals</button></div>`
-      : "";
-    return (
-      notice +
-      `<div class="gs-builder__head"><div class="gs-builder__title"><label class="visually-hidden" for="gsCampaignName">Campaign name</label>` +
-      `<input id="gsCampaignName" class="gs-input gs-input--title" data-field="campaign-name" value="${esc(c.name)}" maxlength="120"></div>` +
-      `<div class="gs-builder__meta"><label class="gs-inline">Channel <select class="gs-select gs-select--sm" data-field="campaign-channel">${channels
+      `<details class="gs-menu gs-menu--settings"><summary class="gs-btn gs-btn--ghost" aria-label="Campaign settings" data-tip="Channel, company and status of this campaign, and Delete.">⋯</summary><div class="gs-menu__list gs-menu__list--form">` +
+      `<label class="gs-inline">Channel <select class="gs-select gs-select--sm" data-field="campaign-channel">${channels
         .map((ch) => `<option value="${esc(ch.id)}"${ch.id === c.channel ? " selected" : ""}>${esc(ch.label)}</option>`)
         .join("")}</select></label>` +
       companySelect(c, m.profiles) +
       `<label class="gs-inline">Status <select class="gs-select gs-select--sm" data-field="campaign-status">${Object.keys(CAMPAIGN_STATUS)
         .map((k) => `<option value="${k}"${k === c.status ? " selected" : ""}>${esc(CAMPAIGN_STATUS[k])}</option>`)
         .join("")}</select></label>` +
-      exportMenu + moreMenu + `</div></div><div id="gsMcBox"></div>` +
-      steps +
-      `<div class="gs-grid">` +
-      `<div class="gs-col">` +
-      `<section class="gs-card" id="gsBuyersCard" aria-label="Buyers in this campaign"><div class="gs-card__title">Buyers <span class="gs-hint">${eligible} of ${d.targets.length} will be exported</span></div>` +
-      `<p class="gs-hint">Untick a buyer to leave them out of the export. Add a published, role-based inbox for each, then record what happens after you send.</p>` +
+      `<button type="button" class="gs-btn gs-btn--ghost gs-btn--danger gs-btn--sm" data-action="delete-campaign">Delete campaign</button></div></details>`;
+
+    // who it goes from and whether there is a way to send (the Send button is in the header, and in the Sending card)
+    const o = m.outreach;
+    const oinfo = o && o.info;
+    const canSend = !!(oinfo && (oinfo.ready || ownAccount(oinfo)));
+    let fromLine = "";
+    let sendBtn = "";
+    if (canSend) {
+      const choice = senderChoice(oinfo, o.mailbox);
+      const own = isOwnChoice(choice) ? accountForChoice(oinfo, choice) : null;
+      const boxes = (oinfo.wallet && Array.isArray(oinfo.wallet.mailboxes) ? oinfo.wallet.mailboxes : []).filter((b) => b && b.email);
+      const picked = own ? own.from_email : (boxes.find((b) => String(b.id || b.email) === choice) || boxes[0] || {}).email;
+      const filesOk = !files || !!own; // Outreach cannot carry attached files
+      const sendable = live.length - missing;
+      const ready = sendable > 0 && msgOk && filesOk && !o.pushing;
+      const why = !live.length ? "Tick at least one buyer." : !sendable ? "No buyer has an email address yet." : !msgOk ? "Save the message first."
+        : !filesOk ? "Attached files can only be sent from your own email account." : "";
+      const keyMode = own ? "" : oinfo.mode === "live" ? " · Live key" : " · Test mode";
+      fromLine = picked ? `<span class="gs-bhead__from"><i class="gs-dot gs-dot--on" aria-hidden="true"></i> Sending from ${esc(picked)}${keyMode}</span>` : "";
+      sendBtn = `<div class="gs-bhead__go">${ready || !why ? "" : `<span class="gs-hint">${esc(why)}</span>`}` +
+        `<button type="button" class="gs-btn gs-btn--gold" data-action="outreach-send"${ready ? "" : " disabled"}>${o.pushing ? "Sending…" : sendable > 0 ? `Send ${plural(sendable, "email")}` : "Send mail"}</button></div>`;
+    }
+    const subLine = `<div class="gs-bhead__sub"><span>${esc(c.channel_label || "Email")} campaign${c.profile_name ? " · " + esc(c.profile_name) : ""}</span>${fromLine}</div>`;
+    const missingLine = missing
+      ? `<p class="gs-bhead__warn" role="status">⚠ ${missing} selected ${missing === 1 ? "buyer has" : "buyers have"} no email address and will be left out.</p>`
+      : "";
+
+    // The builder shows the campaign that is open. Changing the category filter does not change it: say so, and offer Signals.
+    const other = m.filterCategory && c.category_label && m.filterCategory !== c.category_label;
+    // A campaign made while several categories were selected is named "A + B + C": the filter may be one of them
+    const parts = String(c.category_label || "").split(" + ").map((x) => x.trim()).filter(Boolean);
+    const within = other && parts.length > 1 && parts.includes(m.filterCategory);
+    const notice = within
+      ? `<div class="gs-hint gs-hint--warn gs-builder__notice">This campaign was made with ${parts.length} categories selected (${esc(c.category_label)}), so its buyers come from all of them. ` +
+        `The category filter only changes the Signals list, never a campaign that is already open. To email only ${esc(m.filterCategory)} buyers, choose them in Signals and start a new campaign. ` +
+        `<button type="button" class="gs-btn gs-btn--sm" data-action="goto-signals">Choose ${esc(m.filterCategory)} buyers in Signals</button></div>`
+      : other
+        ? `<div class="gs-hint gs-hint--warn gs-builder__notice">This campaign is for ${esc(c.category_label)}. Your filter is ${esc(m.filterCategory)}, which does not change a campaign that is already open. ` +
+          `<button type="button" class="gs-btn gs-btn--sm" data-action="goto-signals">Choose ${esc(m.filterCategory)} buyers in Signals</button></div>`
+        : "";
+
+    const head =
+      `<section class="gs-card gs-bhead" aria-label="Campaign"><div class="gs-bhead__top"><div class="gs-bhead__who">` +
+      `<div class="gs-bhead__name"><label class="visually-hidden" for="gsCampaignName">Campaign name</label>` +
+      `<input id="gsCampaignName" class="gs-input gs-input--title" data-field="campaign-name" value="${esc(c.name)}" maxlength="120">` +
+      `<span class="gs-badge gs-badge--${c.status === "active" ? "good" : "muted"}">${esc(CAMPAIGN_STATUS[c.status] || c.status)}</span></div>${subLine}</div>` +
+      `<div class="gs-bhead__act">${exportMenu}${moreMenu}${sendBtn}</div></div>` +
+      `<div id="gsMcBox"></div>${steps}${missingLine}</section>`;
+
+    // buyers, with the All / Ready / Needs address filter
+    const kinds = d.targets.map(buyerKind);
+    const nReady = kinds.filter((k) => k === "ready").length;
+    const nNeeds = kinds.filter((k) => k === "needs").length;
+    const bf = ["ready", "needs"].includes(m.buyerFilter) ? m.buyerFilter : "all";
+    const chip = (id, label, n) => `<button type="button" class="gs-chipbtn${bf === id ? " is-on" : ""}" data-action="buyer-filter" data-filter="${id}" aria-pressed="${bf === id}">${label} <span>${n}</span></button>`;
+    const rows = d.targets.map((t, i) => targetRow(t, { previewing: t.id === m.previewTarget, hidden: bf !== "all" && kinds[i] !== bf, kind: kinds[i] })).join("");
+    const buyers =
+      `<section class="gs-card gs-card--buyers" id="gsBuyersCard" aria-label="Buyers in this campaign"><div class="gs-buyers__head"><div><div class="gs-card__title">Buyers</div>` +
+      `<p class="gs-hint">${eligible} of ${d.targets.length} will be exported${live.length ? ` · ${live.length - missing} ready` : ""}. Untick a buyer to leave them out. Add a published, role-based inbox for each, then record what happens after you send.</p></div>` +
+      `<div class="gs-actions gs-actions--flush"><button type="button" class="gs-btn gs-btn--sm" data-action="mark-sent"${eligible ? "" : " disabled"}>Mark all as sent</button>` +
+      `<button type="button" class="gs-btn gs-btn--sm" data-action="goto-signals">Add buyers from Signals</button></div></div>` +
       (d.targets.length
-        ? `<div class="gs-targets">${d.targets.map(targetRow).join("")}</div>`
+        ? `<div class="gs-chipbar" role="group" aria-label="Show buyers">${chip("all", "All", d.targets.length)}${chip("ready", "Ready", nReady)}${chip("needs", "Needs address", nNeeds)}</div>` +
+          `<div class="gs-targets gs-targets--scroll">${rows}</div>`
         : empty("No buyers left", "Add buyers from the Signals tab.")) +
-      `<div class="gs-actions"><button type="button" class="gs-btn gs-btn--sm" data-action="mark-sent"${eligible ? "" : " disabled"}>Mark all as sent</button>` +
-      `<button type="button" class="gs-btn gs-btn--ghost gs-btn--sm" data-action="goto-signals">Add buyers from signals</button></div></section>` +
+      `</section>`;
+
+    // the message editor, and the preview of it for one buyer, as two tabs of one card
+    const message =
       `<section class="gs-card" id="gsMessageCard" aria-label="Message"><div class="gs-card__title">Message${m.dirty ? ' <span class="gs-badge gs-badge--warn">Unsaved changes</span>' : ""}</div>` +
       `<label class="gs-label" for="gsSubject">Subject</label><input id="gsSubject" class="gs-input" data-field="subject" maxlength="200" value="${esc(draft.subject)}">` +
       `<span class="gs-label" id="gsBodyLabel">Message</span>` + richToolbar() +
@@ -717,41 +783,23 @@
       `<span class="gs-spacer"></span>` +
       `<button type="button" class="gs-btn gs-btn--primary gs-btn--sm" data-action="save-message"${m.dirty ? "" : " disabled"}>Save message</button></div>` +
       `<input id="gsAiNote" class="gs-input gs-input--sm gs-ainote" maxlength="500" value="${esc(m.aiNote || "")}" placeholder="Optional: what should the AI mention? e.g. 24-hour call-out, a local team" aria-label="Anything the AI should mention">` +
-      `<div id="gsWarnings">${warningsHtml(m.warnings || d.warnings)}</div>` +
-      `</section></div>` +
-      `<aside class="gs-col gs-col--preview"><section class="gs-card gs-card--preview" id="gsPreviewCard" aria-label="Preview"><div class="gs-card__title">Preview <span class="gs-hint">What this buyer receives</span></div>` +
-      `<div class="gs-preview" id="gsPreview" aria-live="polite">${previewHtml(m.preview, d.targets, m.previewTarget)}</div></section></aside>` +
-      `</div>` +
+      `<div id="gsWarnings">${warningsHtml(m.warnings || d.warnings)}</div></section>`;
+    const preview =
+      `<section class="gs-card gs-card--preview" id="gsPreviewCard" aria-label="Preview"><div class="gs-card__title">Preview <span class="gs-hint">What this buyer receives</span></div>` +
+      `<div class="gs-preview" id="gsPreview" aria-live="polite">${previewHtml(m.preview, d.targets, m.previewTarget)}</div></section>`;
+    const tab = m.rightTab === "message" ? "message" : "preview";
+    const tabBtn = (id, label) => `<button type="button" role="tab" class="gs-tabbtn${tab === id ? " is-on" : ""}" data-action="builder-tab" data-tab="${id}" aria-selected="${tab === id}">${label}</button>`;
+    const side =
+      `<section class="gs-card gs-card--tabs"><div class="gs-tabbar" role="tablist" aria-label="Preview or message">${tabBtn("preview", "Preview")}${tabBtn("message", "Message" + (m.dirty ? " •" : ""))}</div>` +
+      `<div class="gs-tabpanel" data-panel="preview" role="tabpanel"${tab === "preview" ? "" : " hidden"}>${preview}</div>` +
+      `<div class="gs-tabpanel" data-panel="message" role="tabpanel"${tab === "message" ? "" : " hidden"}>${message}</div></section>`;
+    const sending =
       `<section class="gs-card gs-card--send" id="gsSendCard" aria-label="Send">` +
-      outreachPanel(m.outreach, eligible, m.dirty, missing, (d.attachments || []).length) +
+      outreachPanel(m.outreach, eligible, m.dirty, missing, files) +
       `<details class="gs-guidance"><summary>Sending guidance</summary>` +
       note("Send only to published, role-based public sector inboxes (such as procurement@), keep a clear way to opt out in every message, and never add a named person's address you found elsewhere. This is guidance, not legal advice. Export the list and send it from your own mail or Mailchimp, or use Send mail to send through Outreach or your own email account; either way, record replies here.", "info") +
-      `</details></section>` +
-      sendBar(m.outreach, live.length, missing, msgOk, (d.attachments || []).length)
-    );
-  }
-
-  // The bar that stays at the foot of the builder: what is still missing, who it goes out from, and Send mail.
-  // It is the same action as the button in the Send card, and is left out until there is a way to send.
-  function sendBar(o, count, missing, saved, files) {
-    const info = o && o.info;
-    if (!info || !(info.ready || ownAccount(info))) return "";
-    const choice = senderChoice(info, o.mailbox);
-    const own = isOwnChoice(choice) ? accountForChoice(info, choice) : null;
-    const boxes = (info.wallet && Array.isArray(info.wallet.mailboxes) ? info.wallet.mailboxes : []).filter((b) => b && b.email);
-    const picked = own ? own.from_email : (boxes.find((b) => String(b.id || b.email) === choice) || boxes[0] || {}).email;
-    const ok = (good, text) => `<span class="gs-sendbar__chk ${good ? "is-ok" : "is-no"}">${good ? "✓" : "✕"} ${text}</span>`;
-    const filesOk = !files || !!own; // Outreach cannot carry attached files
-    const ready = count > 0 && !missing && saved && filesOk && !o.pushing;
-    const why = !count ? "Tick at least one buyer." : missing ? `${plural(missing, "buyer")} ${missing === 1 ? "has" : "have"} no email address.` : !saved ? "Save the message first."
-      : !filesOk ? "Attached files can only be sent from your own email account." : "";
-    return (
-      `<div class="gs-sendbar" role="region" aria-label="Send mail">` +
-      `<div class="gs-sendbar__checks">${ok(count > 0 && !missing, "Every buyer has an address")}${ok(saved, "Message saved")}` +
-      `${picked ? `<span class="gs-sendbar__from">From <b>${esc(picked)}</b></span>` : ""}</div>` +
-      `<div class="gs-sendbar__go">${ready ? "" : `<span class="gs-hint">${esc(why)}</span>`}` +
-      `<button type="button" class="gs-btn gs-btn--primary" data-action="outreach-send"${ready ? "" : " disabled"}>${o.pushing ? "Sending…" : count ? `Send ${plural(count, "email")}` : "Send mail"}</button></div></div>`
-    );
+      `</details></section>`;
+    return head + notice + `<div class="gs-grid gs-grid--builder"><div class="gs-col">${buyers}</div><aside class="gs-col gs-col--side">${side}${sending}</aside></div>`;
   }
 
   // ── Send mail through Outreach (one email campaign per buyer, made and approved so Outreach sends it) ──

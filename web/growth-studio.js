@@ -18,6 +18,7 @@
     return {
       status: "idle", id: null, detail: null, draft: null, dirty: false, preview: null, previewTarget: null, previewSeq: 0,
       warnings: null, drafting: false, error: null, lastField: "body", aiNote: "",
+      rightTab: "preview", buyerFilter: "all", // which tab of the side card is open, and the All / Ready / Needs address filter
       lookups: {}, // target id -> "looking" | "found" | "not_found" | "personal_only": buyer contact lookups
       suggest: {}, // target id -> {email, source, url}: a named person's address the notice gives, offered but never filled in
       outreach: {
@@ -217,6 +218,7 @@
       byId(PANES.builder).innerHTML = V.builderPane({
         status: b.status, error: b.error, detail: b.detail, draft: b.draft, dirty: b.dirty, preview: b.preview, previewTarget: b.previewTarget,
         warnings: b.warnings, drafting: b.drafting, options: state.options, aiNote: b.aiNote, outreach: b.outreach, profiles: state.profiles, filterCategory: state.categoryLabel,
+        rightTab: b.rightTab, buyerFilter: b.buyerFilter,
       });
       V.fillRich(byId(PANES.builder));
     });
@@ -628,6 +630,26 @@
     }
   }
 
+  function showBuilderTab(tab) {
+    const b = state.builder;
+    b.rightTab = tab === "message" ? "message" : "preview";
+    document.querySelectorAll("#gsPaneBuilder .gs-tabbtn").forEach((x) => {
+      x.classList.toggle("is-on", x.dataset.tab === b.rightTab);
+      x.setAttribute("aria-selected", String(x.dataset.tab === b.rightTab));
+    });
+    document.querySelectorAll("#gsPaneBuilder .gs-tabpanel").forEach((p) => { p.hidden = p.dataset.panel !== b.rightTab; });
+    if (b.rightTab === "preview") refreshPreview();
+  }
+
+  function setPreviewTarget(id) {
+    const b = state.builder;
+    b.previewTarget = id;
+    document.querySelectorAll("#gsPaneBuilder .gs-target").forEach((row) => row.classList.toggle("is-previewing", Number(row.dataset.id) === id));
+    const sel = byId("gsPreviewTarget");
+    if (sel) sel.value = String(id);
+    refreshPreview.flush();
+  }
+
   const refreshPreview = debounce(async () => {
     const b = state.builder;
     if (!b.detail || !b.detail.targets.some((t) => !t.opted_out) || !byId("gsPreview")) return;
@@ -981,8 +1003,36 @@
     },
     // the four steps above the builder: take the reader to that part of the page
     "goto-step": (a) => {
+      // the message and the preview are two tabs of one card: open the one the step is about
+      if (a.dataset.target === "gsMessageCard") showBuilderTab("message");
+      else if (a.dataset.target === "gsPreviewCard") showBuilderTab("preview");
       const el = byId(a.dataset.target);
       if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+    },
+    "builder-tab": (a) => showBuilderTab(a.dataset.tab),
+    // All / Ready / Needs address above the buyers: hide rows in place, so nothing typed in an address box is lost
+    "buyer-filter": (a) => {
+      const b = state.builder;
+      b.buyerFilter = a.dataset.filter;
+      document.querySelectorAll("#gsPaneBuilder .gs-chipbtn").forEach((x) => {
+        x.classList.toggle("is-on", x.dataset.filter === b.buyerFilter);
+        x.setAttribute("aria-pressed", String(x.dataset.filter === b.buyerFilter));
+      });
+      document.querySelectorAll("#gsPaneBuilder .gs-target").forEach((row) => {
+        row.hidden = b.buyerFilter !== "all" && row.dataset.kind !== b.buyerFilter;
+      });
+    },
+    // the message each buyer receives: click a buyer, or step with the arrows
+    "preview-buyer": (a) => {
+      showBuilderTab("preview");
+      setPreviewTarget(Number(a.dataset.id));
+    },
+    "preview-step": (a) => {
+      const b = state.builder;
+      const ids = (b.detail ? b.detail.targets : []).filter((t) => !t.opted_out).map((t) => t.id);
+      if (ids.length < 2) return;
+      const at = Math.max(0, ids.indexOf(b.previewTarget));
+      setPreviewTarget(ids[(at + Number(a.dataset.dir) + ids.length) % ids.length]);
     },
     // a named person's address from the notice, accepted by the user: saved like one they typed
     "use-suggestion": (a) => run(() => patchQuietly({ contact_email: a.dataset.email }, Number(a.dataset.id))),

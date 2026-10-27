@@ -444,17 +444,40 @@ test("attached files can only go from the user's own email account", () => {
   lacks(builder({ detail: detail({ targets: [target()] }), outreach: state(viaOutreach, "") }), "Outreach cannot carry files");
 });
 
-test("the send bar shows what is missing and who the mail goes from, and only exists when there is a way to send", () => {
+test("the header shows who the mail goes from and the Send button, and only when there is a way to send", () => {
   const own = { ready: false, mail_account: { id: 1, verified: true, from_email: "me@own.example", daily_cap: 100, sent_today: 0, is_default: true } };
   const ready = builder({ detail: detail({ targets: [target(), target({ id: 2 })] }), outreach: { status: "ok", info: own, drafts: [], mailbox: "smtp" } });
-  has(ready, 'class="gs-sendbar"', "✓ Every buyer has an address", "✓ Message saved", "From <b>me@own.example</b>", "Send 2 emails");
-  lacks(ready, 'data-action="outreach-send" disabled');
+  has(ready, 'class="gs-bhead__from"', "Sending from me@own.example", "Send 2 emails", "2 of 2 ready");
+  lacks(ready, "gs-sendbar", "left out");
+  // one buyer without an address is left out, the rest can still be sent
   const gap = builder({ detail: detail(), outreach: { status: "ok", info: own, drafts: [], mailbox: "smtp" } });
-  has(gap, "✕ Every buyer has an address", "1 buyer has no email address.", 'data-action="outreach-send" disabled');
+  has(gap, "Send 1 email", "1 selected buyer has no email address and will be left out.");
+  const none = builder({ detail: detail({ targets: [target({ id: 2, contact_email: null })] }), outreach: { status: "ok", info: own, drafts: [], mailbox: "smtp" } });
+  has(none, "No buyer has an email address yet.", 'data-action="outreach-send" disabled');
   const unsaved = builder({ dirty: true, detail: detail({ targets: [target()] }), outreach: { status: "ok", info: own, drafts: [], mailbox: "smtp" } });
-  has(unsaved, "✕ Message saved", "Save the message first.");
-  lacks(builder(), "gs-sendbar");
-  lacks(builder({ outreach: { status: "ok", info: { ready: false, problem: "x" }, drafts: [] } }), "gs-sendbar");
+  has(unsaved, "Save the message first.", 'data-action="outreach-send" disabled');
+  lacks(builder(), "gs-bhead__go");
+  lacks(builder({ outreach: { status: "ok", info: { ready: false, problem: "x" }, drafts: [] } }), "gs-bhead__go");
+});
+
+test("the buyer list can be filtered to the ones ready or still needing an address, and a buyer can be shown in the preview", () => {
+  const m = { detail: detail() }; // Hinckley has an address, Blaby has none
+  const all = builder(m);
+  has(all, 'data-action="buyer-filter" data-filter="all"', "All <span>2</span>", "Ready <span>1</span>", "Needs address <span>1</span>", 'data-action="preview-buyer" data-id="1"');
+  const ready = builder({ ...m, buyerFilter: "ready" });
+  assert.match(ready, /data-id="2" data-kind="needs" hidden/, "the buyer without an address is hidden under Ready");
+  assert.ok(!/data-id="1" data-kind="ready" hidden/.test(ready));
+  assert.match(builder({ ...m, buyerFilter: "needs" }), /data-id="1" data-kind="ready" hidden/);
+  has(builder({ ...m, previewTarget: 1 }), "is-previewing");
+});
+
+test("the preview and the message are two tabs; both stay in the page so the editor and the preview keep working", () => {
+  const p = builder();
+  has(p, 'data-action="builder-tab" data-tab="preview"', 'data-action="builder-tab" data-tab="message"', 'data-action="preview-step" data-dir="1"', "1 of 2");
+  assert.match(p, /data-panel="message" role="tabpanel" hidden/);
+  const msg = builder({ rightTab: "message" });
+  assert.match(msg, /data-panel="preview" role="tabpanel" hidden/);
+  has(msg, 'id="gsSubject"', 'id="gsPreview"');
 });
 
 test("the preview", () => {
@@ -510,6 +533,13 @@ test("the builder says so when the category filter is not the open campaign's ca
   assert.match(other, /This campaign is for Housing repairs &amp; gas servicing\. Your filter is Cloud &amp; hosting/);
   assert.match(other, /data-action="goto-signals"/);
   assert.ok(!/<img src=x/.test(builder({ filterCategory: EVIL })), "the filter name is escaped");
+});
+
+test("a campaign made from several categories says so when the filter is one of them", () => {
+  const html = builder({ filterCategory: "Housing repairs & gas servicing", detail: detail({ campaign: { ...detail().campaign, category_label: "CRM & case management software + Housing repairs & gas servicing" } }) });
+  assert.match(html, /made with 2 categories selected/);
+  assert.match(html, /only changes the Signals list/);
+  assert.match(html, /data-action="goto-signals"/);
 });
 
 let failed = 0;
