@@ -542,6 +542,22 @@ test("a campaign made from several categories says so when the filter is one of 
   assert.match(html, /data-action="goto-signals"/);
 });
 
+test("the builder shows how to connect email at the top when nothing can send, and the tab chips show what is and is not connected", () => {
+  const none = builder({ outreach: { status: "ok", info: { ready: false, problem: "x" }, drafts: [] } });
+  has(none, "Email is not connected", 'data-open-connections="mail"', 'data-open-connections="outreach"', "Refresh accounts");
+  assert.ok(none.indexOf("Email is not connected") < none.indexOf("gs-bhead"), "above the campaign header");
+  const own = { ready: false, mail_account: { id: 1, verified: true, from_email: "me@own.example", daily_cap: 100, sent_today: 0, is_default: true } };
+  lacks(builder({ outreach: { status: "ok", info: own, drafts: [] } }), "Email is not connected");
+  lacks(builder(), "Email is not connected"); // still checking
+  const chips = V.connectionChips({ status: "ok", info: { ...own, ready: true, wallet: { phone_numbers: 0, social_channels: ["linkedin", "facebook"], mailboxes: [] } } });
+  has(chips, "me@own.example", "gs-conn--on", "Linkedin, Facebook");
+  has(chips, "Calls</b> <span>not connected", "gs-conn--off");
+  const off = V.connectionChips({ status: "ok", info: { ready: false, problem: "x" } });
+  assert.equal((off.match(/gs-conn--off/g) || []).length, 3, "all three shown as not connected");
+  assert.equal(V.connectionChips({ status: "idle", info: null }), "");
+  assert.ok(!/<img src=x/.test(V.connectionChips({ status: "ok", info: { ready: true, mail_account: { verified: true, from_email: EVIL }, wallet: {} } })));
+});
+
 let failed = 0;
 test("a recently funded card names the company, the funder and the grant, and starts a campaign", () => {
   const html = V.signalCard(funding(), ctx());

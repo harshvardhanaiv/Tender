@@ -649,6 +649,42 @@
     return `<label class="gs-inline">Company <select class="gs-select gs-select--sm" data-field="campaign-profile">${opts}</select></label>`;
   }
 
+  // Shown at the top of the builder when no email can be sent yet: the same way to connect as the Inbox tab offers.
+  function emailConnectNotice(o) {
+    const info = o && o.info;
+    if (!info || (o.status !== "ok" && o.status !== "error")) return "";
+    if (info.ready || ownAccount(info)) return "";
+    return (
+      `<section class="gs-card gs-conn-card" aria-label="Email is not connected"><div class="gs-conn-card__txt"><div class="gs-card__title">Email is not connected</div>` +
+      `<p class="gs-hint gs-hint--warn">No email account is set up yet, so this campaign cannot be sent. Add your own email account (Gmail, Outlook or any SMTP login) or connect Outreach. The window opens on this page.</p></div>` +
+      `<div class="gs-actions gs-actions--tight">${openConnections("mail", "＋ Add an email account", true, "Open Connections on this page to add your own email account (Gmail, Outlook or any other provider).")}` +
+      `${openConnections("outreach", "Connect Outreach", false, "Sign in to Outreach, or create an account, in a window on this page.")}` +
+      `<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-check" data-tip="Ask again which email accounts you have.">Refresh accounts</button></div></section>`
+    );
+  }
+
+  // The chips to the right of the Growth Studio tabs: what is connected (and to what) and what is not. Each opens Connections.
+  function connectionChips(conn) {
+    const info = conn && conn.info;
+    if (!info) return conn && conn.status === "loading" ? `<span class="gs-hint">Checking connections…</span>` : "";
+    const w = info.wallet || {};
+    const own = ownAccounts(info);
+    const boxes = (Array.isArray(w.mailboxes) ? w.mailboxes : []).filter((b) => b && b.email);
+    const phones = w.phone_status && Number.isFinite(w.phone_status.active) ? w.phone_status.active : Number(w.phone_numbers) || 0;
+    const nets = (Array.isArray(w.social_channels) ? w.social_channels : []).filter(Boolean).map((n) => String(n).replace(/^./, (c) => c.toUpperCase()));
+    const items = [
+      ["Email", "mail", own.length ? own[0].from_email : boxes.length ? boxes[0].email : ""],
+      ["Calls", "outreach", info.ready && phones > 0 ? plural(phones, "number") : ""],
+      ["Social", "outreach", info.ready && nets.length ? nets.join(", ") : ""],
+    ];
+    return items.map(([name, which, detail]) => {
+      const on = !!detail;
+      const tip = on ? `${name} is connected. Open Connections to change it.` : `${name} is not connected. Open Connections to connect it.`;
+      return `<button type="button" class="gs-conn gs-conn--${on ? "on" : "off"}" data-open-connections="${which}" data-tip="${esc(tip)}">` +
+        `<i class="gs-dot${on ? " gs-dot--on" : ""}" aria-hidden="true"></i> <b>${name}</b> <span>${on ? esc(detail) : "not connected"}</span></button>`;
+    }).join("");
+  }
+
   // The three buyer filters above the list: all of them, the ones ready to send, the ones still missing an address.
   function buyerKind(t) {
     return t.opted_out || !t.included ? "off" : t.contact_email ? "ready" : "needs";
@@ -799,7 +835,7 @@
       `<details class="gs-guidance"><summary>Sending guidance</summary>` +
       note("Send only to published, role-based public sector inboxes (such as procurement@), keep a clear way to opt out in every message, and never add a named person's address you found elsewhere. This is guidance, not legal advice. Export the list and send it from your own mail or Mailchimp, or use Send mail to send through Outreach or your own email account; either way, record replies here.", "info") +
       `</details></section>`;
-    return head + notice + `<div class="gs-grid gs-grid--builder"><div class="gs-col">${buyers}</div><aside class="gs-col gs-col--side">${side}${sending}</aside></div>`;
+    return emailConnectNotice(m.outreach) + head + notice + `<div class="gs-grid gs-grid--builder"><div class="gs-col">${buyers}</div><aside class="gs-col gs-col--side">${side}${sending}</aside></div>`;
   }
 
   // ── Send mail through Outreach (one email campaign per buyer, made and approved so Outreach sends it) ──
@@ -1082,7 +1118,7 @@
   const api = {
     esc, safeUrl, fmtDate, fmtMoney, fmtMoneyShort, plural, inDays, parseServerTime, timeAgo, fitBand, filenameFromDisposition, insertAt,
     hasCategory, defaultFilters, filtersBody, signalsQuery, campaignKeys, safeHtml, textToHtml, fillRich, richToolbar, attachmentsBlock, companySelect,
-    signalCard, signalsPane, selectionBar, campaignsPane, builderPane, previewHtml, warningsHtml, mailchimpBox, targetRow, mergeChips, performancePane,
+    signalCard, signalsPane, selectionBar, campaignsPane, builderPane, connectionChips, emailConnectNotice, previewHtml, warningsHtml, mailchimpBox, targetRow, mergeChips, performancePane,
     badge, note, empty, loading, errorBox,
     outreachPanel, outreachConnectBox, openConnections, outreachMailboxLine, senderPicker, senderChoice, ownAccount, ownAccounts, isOwnChoice, accountForChoice, outreachSeenNote, outreachDraftRow, outreachResult,
     suppressionsBlock, fitParts, funnelBars, countsLine, TYPES, TARGET_STATUS, CAMPAIGN_STATUS,

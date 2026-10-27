@@ -522,3 +522,13 @@ body.tf-shell #growthFilterBar select.tf-chip--select { flex: none; width: auto;
   .gs-grid--builder { grid-template-columns: minmax(0, 1fr); }
   .gs-bhead__name .gs-input--title { font-size: 20px; }
 }
+
+/* connection chips beside the tabs, and the "email is not connected" card at the top of the builder */
+.gs-tabs__conn { margin-left: auto; display: flex; align-items: center; gap: 8px; padding: 0 0 6px 16px; flex: none; }
+.gs-conn { appearance: none; display: inline-flex; align-items: center; gap: 6px; max-width: 260px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--ink); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+.gs-conn span { overflow: hidden; text-overflow: ellipsis; color: var(--slate); }
+.gs-conn--off { border-style: dashed; }
+.gs-conn:hover { background: var(--panel-2, var(--paper)); }
+.gs-conn-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; margin-bottom: 14px; border-color: color-mix(in srgb, var(--gs-gold) 55%, var(--line)); background: var(--gs-gold-soft); }
+.gs-conn-card .gs-card__title { margin-bottom: 2px; }
+.gs-conn-card p { margin: 0; }

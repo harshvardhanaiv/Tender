@@ -28,6 +28,7 @@
   }
 
   const state = {
+    conn: { status: "idle", info: null }, // what is connected (Email, Calls, Social), shown beside the tabs
     ready: false,
     starting: false,
     options: null,
@@ -223,6 +224,26 @@
       V.fillRich(byId(PANES.builder));
     });
     if (typing) caretToEnd(byId("gsBodyRich")); // the editor was replaced while the user was in it: put the cursor back at the end
+  }
+
+  // The connection chips to the right of the tabs (Email, Calls, Social: connected or not)
+  function renderConn() {
+    const el = byId("gsConnStatus");
+    if (el) el.innerHTML = V.connectionChips(state.conn);
+  }
+
+  async function loadConn() {
+    const c = state.conn;
+    if (c.status === "loading") return;
+    c.status = "loading";
+    renderConn();
+    try {
+      c.info = await api("GET", "/api/growth/outreach/status");
+    } catch (err) {
+      c.info = { ready: false, problem: err.message };
+    }
+    c.status = "ok";
+    renderConn();
   }
 
   function renderPerformance() {
@@ -602,6 +623,9 @@
       }
       o.drafts = drafts.drafts;
       o.status = "ok";
+      state.conn.info = info; // the chips beside the tabs read the same answer
+      state.conn.status = "ok";
+      renderConn();
       o.error = null;
     } catch (err) {
       if (state.builder.outreach !== o) return;
@@ -1303,6 +1327,7 @@
 
   function openGrowthStudio() {
     byId("growthStudioModal")?.classList.remove("hidden");
+    loadConn();
     if (state.ready) {
       // Back again: signals older than a few minutes are re-read, the other tabs always are.
       if (state.tab === "signals") {
@@ -1346,6 +1371,7 @@
 
   // The Connections window (web/connections.js) was closed after a change: how emails can be sent may be different now.
   document.addEventListener("connections:changed", () => {
+    loadConn();
     const o = state.builder.outreach;
     o.status = "idle";
     o.mailbox = null; // the sender is chosen afresh (the user's own email account when there is one)
