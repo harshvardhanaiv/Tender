@@ -140,6 +140,10 @@
     );
   }
 
+  // Outreach's own screens are switched on (the server has a partner secret): signing in and the email account are done there,
+  // so TenderFlow's own sign-in form and email-account form are not shown. Without it everything below works as before.
+  const embedOn = (m) => !!(m && m.embed && m.embed.config && m.embed.config.enabled);
+
   function outreachParts(m, hideForm) {
     const formFor = (info, f) => (hideForm ? "" : connectForm(info, f));
     const state = outreachState(m);
@@ -238,7 +242,7 @@
 
   // One connected account: who it sends as, what it has sent today, and what can be done with it. `busy` is the action under way
   // for it ("test" or "delete"); every button is off while any account is busy, but only the busy account's label changes.
-  function accountBlock(a, many, mm) {
+  function accountBlock(a, many, mm, locked) {
     const busyNow = mm.busy || null;
     const mine = busyNow && (mm.busyId == null || mm.busyId === a.id) ? busyNow : null;
     const id = a.id != null ? ` data-id="${esc(a.id)}"` : "";
@@ -252,14 +256,14 @@
       (a.last_error ? `<p class="cx-warn" role="alert">The last send failed: ${esc(a.last_error)}</p>` : "") +
       `<div class="cx-actions cx-actions--flush">` +
       `<button type="button" class="cx-btn" data-cx="mail-test"${off}${id} data-tip="Send a short test email from this account to itself, to check that it lands.">${mine === "test" ? "Sending…" : "Send test email"}</button>` +
-      `<button type="button" class="cx-btn" data-cx="mail-edit"${off}${id} data-tip="Change the server, the address, the daily limit or the password.">Edit</button>` +
+      (locked ? "" : `<button type="button" class="cx-btn" data-cx="mail-edit"${off}${id} data-tip="Change the server, the address, the daily limit or the password.">Edit</button>`) +
       (many && !a.is_default ? `<button type="button" class="cx-btn" data-cx="mail-default"${off}${id} data-tip="Use this address when you do not choose one under Send from.">${mine === "default" ? "Saving…" : "Make default"}</button>` : "") +
       `<button type="button" class="cx-btn cx-btn--danger" data-cx="mail-delete"${off}${id} data-tip="Forget this email account in TenderFlow. Emails already sent are not affected.">${mine === "delete" ? "Disconnecting…" : "Disconnect"}</button>` +
       `</div></div>`
     );
   }
 
-  function mailParts(m) {
+  function mailParts(m, locked) {
     const mm = m || {};
     const state = mailState(m);
     const info = mm.info || {};
@@ -278,8 +282,8 @@
     } else if (state === "unavailable") {
       body = `<p class="cx-sub">Connecting an email account isn't available yet. Export your campaign list and send it from your own mailbox in the meantime.</p>`;
     } else if (state === "none") {
-      body = `<p class="cx-sub">Send Growth Studio email from your own address. Outreach does not need to have a mailbox for this.</p>` + mailForm(info, mm.form || {}, false);
-    } else if (mm.form) {
+      body = locked ? "" : `<p class="cx-sub">Send Growth Studio email from your own address. Outreach does not need to have a mailbox for this.</p>` + mailForm(info, mm.form || {}, false);
+    } else if (mm.form && !locked) {
       body = mailForm(info, mm.form, mm.form.editId != null);
     } else {
       const max = info.max_accounts || MAX_MAIL_ACCOUNTS;
@@ -287,8 +291,8 @@
       body =
         (mm.notice ? `<p class="cx-note" role="status">${esc(mm.notice)}</p>` : "") +
         (mm.error ? `<p class="cx-warn" role="alert">${esc(mm.error)}</p>` : "") +
-        list.map((x) => accountBlock(x, many, mm)).join("") +
-        (list.length < max
+        list.map((x) => accountBlock(x, many, mm, locked)).join("") +
+        (locked ? "" : list.length < max
           ? `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn" data-cx="mail-add"${mm.busy ? " disabled" : ""} data-tip="Connect another address to send from. Each has its own daily limit.">＋ Add another email account</button></div>`
           : `<p class="cx-sub">That is the most email accounts you can connect (${esc(max)}). Disconnect one to add another.</p>`) +
         (many
@@ -390,6 +394,34 @@
       `<p class="cx-sub">You sign in on the network's own page, so TenderFlow never sees your password. Posts still wait for your approval before they go live.</p>`;
   }
 
+  // Outreach's own screens, shown in a window over this one (Outreach's embed.js). Calls is Outreach's Voice screen.
+  const EMBED_SCREEN = { email: "mail", calls: "voice", social: "social" };
+  const EMBED_TEXT = {
+    mail: ["Open Outreach Mail here", "Outreach's own Mail screen (your mailboxes and email accounts, and the mail it sends and receives) opens in a window over TenderFlow."],
+    voice: ["Open Outreach Voice here", "Outreach's own Voice screen (call list, conversations, meetings) opens in a window over TenderFlow."],
+    social: ["Open Outreach Social here", "Outreach's own Social screen (post calendar, approvals, accounts) opens in a window over TenderFlow, so you can link your accounts without leaving."],
+  };
+
+  function embedPanel(id, m) {
+    const e = m && m.embed;
+    const screen = EMBED_SCREEN[id];
+    if (!screen || !e || !e.config || !e.config.enabled) return "";
+    const [label, text] = EMBED_TEXT[screen];
+    return `<div class="cx-embed"><p class="cx-line"><strong>Set up without leaving TenderFlow.</strong> ${esc(text)} The first time, you sign in to Outreach (or create an account) in that window: TenderFlow never sees your password.</p>` +
+      `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn cx-btn--primary" data-cx="embed-open" data-screen="${screen}"${e.busy ? " disabled" : ""}>${e.busy === screen ? "Opening…" : esc(label)}</button></div>` +
+      (e.config.mode === "test" ? `<p class="cx-sub">Test mode: nothing real is connected, sent or charged.</p>` : "") +
+      (e.error ? `<p class="cx-line cx-line--bad" role="alert">${esc(e.error)}</p>` : "") + `</div>`;
+  }
+
+  // Step 1 when Outreach is not connected yet: signing in through Outreach's own screen, which links the person's Outreach account.
+  function embedLogin(m) {
+    const e = m && m.embed;
+    if (!e || !e.config || !e.config.enabled) return "";
+    return `<div class="cx-embed"><p class="cx-line"><strong>Sign in or create your Outreach account in Outreach's own screen.</strong> It opens over TenderFlow, and TenderFlow never sees your password. Once you are signed in, set up email, calls and social in the tabs below.</p>` +
+      `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn cx-btn--primary" data-cx="embed-open" data-screen="mail"${e.busy ? " disabled" : ""}>${e.busy === "mail" ? "Opening…" : "Sign in with Outreach here"}</button></div>` +
+      (e.error && !e.busy ? `<p class="cx-line cx-line--bad" role="alert">${esc(e.error)}</p>` : "") + `</div>`;
+  }
+
   const NUM_PILL = { active: ["Ready to call", "good"], pending: ["Being checked", "warn"], rejected: ["Not approved", "warn"] };
 
   // The user's phone numbers. Getting one happens in Outreach's own small window (search, buy, upload the business documents),
@@ -420,7 +452,7 @@
     const checking = m && m.status === "loading";
     const check = `<div class="cx-actions cx-actions--flush"><button type="button" class="cx-btn" data-action="outreach-check"${checking ? " disabled" : ""}>${checking ? "Checking…" : "Check again"}</button></div>`;
     if (c.id === "email") {
-      const p = mailParts(m && m.mail);
+      const p = mailParts(m && m.mail, embedOn(m));
       const boxes = (Array.isArray(w.mailboxes) ? w.mailboxes : []).filter((x) => x && x.email);
       return p.body + (p.actions ? `<div class="cx-actions">${p.actions}</div>` : "") +
         (out ? `<p class="cx-sub cx-hint">${boxes.length
@@ -488,8 +520,8 @@
       s1 = step(1, true, "Sign in to Outreach", `<p class="cx-sub">${via(info) || "Connected."}</p>` +
         (m && m.error ? `<p class="cx-warn" role="alert">${esc(m.error)}</p>` : "") + (info.mode === "test" ? testNote : ""));
     } else {
-      const p = outreachParts(m);
-      s1 = step(1, false, "Sign in to Outreach", p.body + (p.actions ? `<div class="cx-actions cx-actions--flush">${p.actions}</div>` : ""));
+      const p = outreachParts(m, embedOn(m));
+      s1 = step(1, false, "Sign in to Outreach", p.body + (p.actions ? `<div class="cx-actions cx-actions--flush">${p.actions}</div>` : "") + embedLogin(m));
     }
 
     // step 2: Email, Calls and Social as tabs
@@ -500,7 +532,7 @@
     const panel =
       `<div class="cx-tabpanel" role="tabpanel" data-pane="${tab}"><div class="cx-chhead"><div><div class="cx-chname">${esc(cur.name)} ` +
       `<span class="cx-flag${cur.needed ? " cx-flag--need" : ""}">${cur.needed ? "Needed to send" : "Optional"}</span></div><p class="cx-sub">${esc(cur.unlock)}</p></div>${chanPill(curSt)}</div>` +
-      `<div class="cx-chbody">${channelBody(cur, m)}</div></div>`;
+      `<div class="cx-chbody">${embedPanel(cur.id, m)}${channelBody(cur, m)}</div></div>`;
     const s2 = step(2, done === CHANNELS.length, "Choose how Outreach reaches people", `<p class="cx-sub">Set up each channel below. Only email is needed to send.</p>${tabs}${panel}`);
 
     // step 3
@@ -526,7 +558,7 @@
     );
   }
 
-  const api = { esc, CHANNELS, socialList, numbersList, channelStatus, hubHtml, outreachState, outreachCard, connectionsHtml, detailsHtml, connectForm, modesFor, PILL, mailState, mailCard, mailForm, accountsOf };
+  const api = { esc, CHANNELS, socialList, numbersList, embedPanel, embedLogin, embedOn, channelStatus, hubHtml, outreachState, outreachCard, connectionsHtml, detailsHtml, connectForm, modesFor, PILL, mailState, mailCard, mailForm, accountsOf };
   root.TFConnections = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document === "undefined") return;
@@ -556,6 +588,8 @@
     social: { status: "idle", supported: null, providers: [], channels: [], busy: null, notice: null, error: null, origin: "" },
     // the user's phone numbers (supported stays null until asked, false when Outreach has not shipped the numbers actions)
     numbers: { status: "idle", supported: null, numbers: [], busy: null, notice: null, error: null },
+    // Outreach's own screens shown over this window (config: null until asked; {enabled: false} when the server has no partner secret)
+    embed: { config: null, busy: null, error: null },
   };
   let overlay = null;
   let opener = null;
@@ -597,6 +631,7 @@
       else if (hit('[data-cx="number-connect"]')) connectNumber();
       else if (hit('[data-cx="number-release"]')) releaseNumber(hit('[data-cx="number-release"]').getAttribute("data-id"));
       else if (hit('[data-cx="number-reload"]')) { load(); loadNumbers(); }
+      else if (hit('[data-cx="embed-open"]')) openEmbed(hit('[data-cx="embed-open"]').getAttribute("data-screen"));
       else if (hit('[data-cx="open-outreach"]')) openOutreach(hit('[data-cx="open-outreach"]').getAttribute("data-path"));
       else if (hit('[data-cx="connect-social"]')) connectSocial(hit('[data-cx="connect-social"]').getAttribute("data-network"));
       else if (hit('[data-cx="open-growth"]')) openGrowth(hit('[data-cx="open-growth"]').getAttribute("data-tab"));
@@ -695,6 +730,85 @@
     } catch (e) {
       Object.assign(sc, { status: "error", supported: null, error: null }); // Outreach is not connected or not reachable: the older steps still show
     }
+    render();
+  }
+
+  async function loadEmbedConfig() {
+    try {
+      model.embed.config = await call("GET", "/api/growth/embed/config");
+    } catch (e) {
+      model.embed.config = { enabled: false };   // the older steps below still work
+    }
+    render();
+  }
+
+  let embedLoader = null;
+
+  function loadEmbedScript(host) {
+    if (root.Outreach) return Promise.resolve(root.Outreach);
+    if (!embedLoader) {
+      embedLoader = new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = `${host}/embed.js`;
+        s.async = true;
+        s.onload = () => (root.Outreach ? resolve(root.Outreach) : (embedLoader = null, reject(new Error("Outreach's screens did not start."))));
+        s.onerror = () => { embedLoader = null; reject(new Error("Could not load Outreach's screens. Check your connection and try again.")); };
+        document.head.appendChild(s);
+      });
+    }
+    return embedLoader;
+  }
+
+  // Once the person is linked, TenderFlow's server fetches the API key Growth Studio sends with (the key never reaches this page) so
+  // Outreach shows as connected. `quiet`: the person may only have closed the window without linking, so say nothing if it fails.
+  async function adoptEmbedKey(quiet) {
+    const e = model.embed;
+    if (e.keying || outreachState(model) === "ok") return;
+    e.keying = true;
+    try {
+      model.info = await call("POST", "/api/growth/embed/key", {});
+      model.status = "ok";
+      model.changed = true;
+      loadSocial(true);
+      loadNumbers(true);
+    } catch (err) {
+      if (!quiet) e.error = err.message;
+    }
+    e.keying = false;
+    render();
+  }
+
+  // Show one of Outreach's screens over this window. The page never holds a secret: it asks TenderFlow's server for a short-lived
+  // token (the server asks Outreach). A person who is not yet linked gets Outreach's own sign-in / create-account screen first.
+  async function openEmbed(screen) {
+    const e = model.embed;
+    if (e.busy || !e.config || !e.config.enabled || !EMBED_TEXT[screen]) return;
+    e.busy = screen;
+    e.error = null;
+    render();
+    const failed = (x) => { e.error = (x && x.message) || "Outreach could not show that screen."; render(); };
+    const finished = async () => { await adoptEmbedKey(true); model.changed = true; load(); loadSocial(true); loadNumbers(true); };
+    try {
+      const outreach = (await loadEmbedScript(e.config.host))(e.config.key, { host: e.config.host });
+      const ask = () => call("POST", "/api/growth/embed/session", { component: screen });
+      const first = await ask();
+      if (!first.linked) {
+        outreach.connect({ connectToken: first.connect_token, onConnected: () => adoptEmbedKey(false), onError: failed, onClose: finished }).open({ mode: "modal" });
+      } else {
+        adoptEmbedKey(false);   // linked, but TenderFlow may not hold the key Growth Studio sends with yet
+        let token = first.token;
+        const getToken = async () => {
+          if (token) { const t = token; token = null; return t; }
+          const again = await ask();
+          if (!again.linked) throw new Error("Outreach is no longer connected to your TenderFlow account. Close this and open it again.");
+          return again.token;
+        };
+        outreach.create(screen, { getToken, appearance: "auto", onError: failed, onSessionEnded: () => failed({ message: "Your Outreach session ended. Open it again." }), onClose: finished }).open({ mode: "modal" });
+      }
+    } catch (err) {
+      e.error = err.message;
+    }
+    e.busy = null;
     render();
   }
 
@@ -900,6 +1014,7 @@
     try {
       model.info = await call("GET", "/api/growth/outreach/status");
       model.status = "ok";
+      if (model.embed.config === null) loadEmbedConfig();
       if (outreachState(model) === "ok" && model.social.status === "idle") loadSocial(true);
       if (outreachState(model) === "ok" && model.numbers.status === "idle") loadNumbers(true);
     } catch (e) {

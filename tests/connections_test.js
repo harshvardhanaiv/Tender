@@ -649,6 +649,57 @@ test("the Calls tab offers to get a number, and lists each number with its statu
   assert.match(some, /5 Voice credits/);
 });
 
+test("Outreach's own screens are offered on Calls (Voice) and Social only when the server has them switched on", () => {
+  const on = { embed: { config: { enabled: true, mode: "test", host: "https://outreach.example.test", key: "pk_x" }, busy: null, error: null } };
+  const voice = C.embedPanel("calls", on);
+  assert.match(voice, /data-cx="embed-open" data-screen="voice"/);
+  assert.match(voice, /never sees your password/);
+  assert.match(voice, /Test mode/);
+  assert.match(C.embedPanel("social", on), /data-screen="social"/);
+  assert.match(C.embedPanel("email", on), /data-screen="mail"/, "Email offers Outreach's Mail screen above its own account form");
+  const login = C.embedLogin(on);
+  assert.match(login, /data-cx="embed-open" data-screen="mail"/);
+  assert.match(login, /cx-btn--primary/, "it is the way in, not a side option");
+  assert.equal(C.embedLogin({ embed: { config: { enabled: false } } }), "");
+  assert.equal(C.embedLogin({}), "");
+  assert.equal(C.embedPanel("calls", { embed: { config: { enabled: false }, busy: null } }), "");
+  assert.equal(C.embedPanel("calls", { embed: { config: null, busy: null } }), "", "nothing is shown before the server has answered");
+  assert.match(C.embedPanel("calls", { embed: Object.assign({}, on.embed, { busy: "voice" }) }), /Opening…[\s\S]*|disabled/);
+  assert.match(C.embedPanel("calls", { embed: Object.assign({}, on.embed, { error: "<i>bad</i>" }) }), /&lt;i&gt;bad/, "an error from Outreach is escaped");
+  assert.ok(!/psk_|secret/i.test(C.embedPanel("calls", on)), "no secret reaches the page");
+});
+
+test("with Outreach's screens switched on, TenderFlow's own sign-in and email-account forms are not shown", () => {
+  const embed = { embed: { config: { enabled: true, mode: "live", host: "https://outreach.example.test", key: "pk_x" }, busy: null, error: null } };
+  const noAccount = { mail: { status: "ok", error: null, busy: null, info: { available: true, max_accounts: 5, accounts: [],
+    presets: [{ id: "gmail", label: "Gmail / Google Workspace", host: "smtp.gmail.com", port: 465, security: "ssl" }] },
+    form: { provider: "gmail", from_name: "", from_email: "", username: "", password: "", host: "smtp.gmail.com", port: 465, security: "ssl", reply_to: "", daily_cap: 100, busy: false, error: null } } };
+  const off = C.hubHtml(notConnected({ partner_signup: true, partner_enabled: true, can_key: true }, noAccount), "email");
+  assert.match(off, /data-cx="password"/, "without the partner secret the old forms are all still there");
+  assert.match(off, /Connect email account/);
+  const on = C.hubHtml(notConnected({ partner_signup: true, partner_enabled: true, can_key: true }, Object.assign({}, noAccount, embed)), "email");
+  assert.doesNotMatch(on, /data-cx="password"|data-cx="api-key"|Create account|Use a key/, "no sign-in form, no key box");
+  assert.doesNotMatch(on, /data-cxm=|Connect email account|Send from this email address/, "no email-account form");
+  assert.match(on, /Sign in with Outreach here/);
+  assert.match(on, /Open Outreach Mail here/);
+  const withAccount = notConnected({}, Object.assign({ mail: { status: "ok", error: null, busy: null, form: null, info: { available: true, max_accounts: 5,
+    accounts: [{ id: 1, from_email: "me@tvd.example", host: "smtp.tvd.example", port: 465, daily_cap: 100, sent_today: 0, verified: true, is_default: true }] } } }, embed));
+  const kept = C.hubHtml(withAccount, "email");
+  assert.match(kept, /me@tvd\.example/, "an account that is already connected is still listed");
+  assert.match(kept, /data-cx="mail-test"/);
+  assert.match(kept, /data-cx="mail-delete"/, "and can still be disconnected");
+  assert.doesNotMatch(kept, /data-cx="mail-edit"|data-cx="mail-add"/, "but nothing opens the form to add or change one");
+});
+
+test("the page loads embed.js from the host the server named, and asks the server (never Outreach) for tokens", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "web", "connections.js"), "utf8");
+  const body = src.slice(src.indexOf("async function openEmbed"), src.indexOf("async function connectChannel"));
+  assert.match(src, /s\.src = `\$\{host\}\/embed\.js`/);
+  assert.match(body, /\/api\/growth\/embed\/session/);
+  assert.match(body, /outreach\.connect\(\{ connectToken: first\.connect_token/);
+  assert.ok(!/Authorization|psk_/.test(body), "the page holds no secret");
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try {

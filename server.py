@@ -4583,6 +4583,45 @@ def create_app() -> Flask:
             docs = list_non_etenders_documents(source, resource_id, detail_url)
             return jsonify({"docs": docs, "supported": True, "count": len(docs)})
 
+    @app.get("/api/tender-deep/<source>/<resource_id>")
+    def api_tender_deep(source: str, resource_id: str):
+        """Crawl the notice, its sub-pages and documents for response forms, portals and deadlines."""
+        cfg = SOURCES.get(source)
+        if not cfg:
+            return jsonify({"ok": False, "error": "unknown source"}), 404
+        from tender_app.deep_scrape import deep_scrape_tender
+
+        try:
+            details = _get_tender_details_dict(source, resource_id) or {}
+        except Exception:
+            details = {}
+        detail_url = details.get("detail_url") or ""
+        if not detail_url and cfg.get("type") == "etenders":
+            detail_url = f"{cfg['base_url'].rstrip('/')}/{DETAIL_URL_TEMPLATE.format(resource_id=resource_id)}"
+
+        cft_docs: list[dict] = []
+        extra_docs: list[dict] = []
+        if cfg.get("type") == "etenders":
+            try:
+                cft_docs = list_cft_documents(cfg["base_url"], resource_id)[:12]
+                for d in cft_docs:
+                    text = fetch_and_extract_text(
+                        cfg["base_url"], resource_id, d["doc_id"], d["filename"], max_chars=60000,
+                    )
+                    extra_docs.append({
+                        "title": d.get("title") or d["filename"], "filename": d["filename"], "url": "",
+                        "status": "read" if (text or "").strip() else "no_text", "text": text or "",
+                    })
+            except Exception:
+                pass
+
+        result = deep_scrape_tender(
+            source, resource_id, detail_url,
+            structured=details, cft_docs=cft_docs, extra_documents=extra_docs,
+            refresh=request.args.get("refresh") == "1",
+        )
+        return jsonify(result)
+
     @app.post("/api/download-questionnaire")
     def api_download_questionnaire():
         import zipfile

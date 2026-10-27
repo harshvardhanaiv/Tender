@@ -185,3 +185,5 @@ body.tf-shell #connectionsModal .cx-foot { margin-top: 16px; }
 .cx-formbox .cx-input, .cx-chbody .cx-input { max-width: 560px; }
 .cx-formbox > .cx-sub { margin: 2px 0 12px; }
 .cx-formbox .cx-chname { font-size: 15px; }
+.cx-embed { border: 1px solid var(--border, #e2e8f0); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; background: var(--surface-2, #f8fafc); }
+.cx-embed .cx-line { margin-top: 0; }

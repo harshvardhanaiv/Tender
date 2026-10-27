@@ -46,6 +46,7 @@ import re
 from collections import Counter
 from datetime import date, datetime, timezone
 from typing import Any
+from urllib.parse import quote
 
 from flask import Blueprint, Response, g, jsonify, request, session
 
@@ -72,6 +73,8 @@ from tender_app.config import (
     OUTREACH_DAILY_POST_CAP,
     OUTREACH_MAILBOX_IDS,
     OUTREACH_ORIGIN,
+    OUTREACH_PARTNER_SECRET,
+    OUTREACH_PUBLISHABLE_KEY,
     OUTREACH_RETURN_URL,
     OUTREACH_SEND_MAILBOX_FIELD,
     OUTREACH_TIMEOUT_SECONDS,
@@ -1419,6 +1422,103 @@ def _partner_call(action: str, data: dict[str, Any]) -> dict[str, Any]:
         if code in _PARTNER_MESSAGES:
             raise _Http(_PARTNER_MESSAGES[code], 409 if code in ("partner_suspended", "invalid_client") else 400, code)
         raise _Http(exc.message, 502 if exc.status >= 500 or code == "unreachable" else (exc.status if exc.status in (400, 403, 409, 422, 429) else 400), code or None)
+
+
+# ── Outreach screens inside Connections (embed.js) ──────────────────────────────────────────────
+
+_EMBED_TRANSPORT = None  # tests put a fake transport here; None means the real network
+EMBED_SCREENS = ("mail", "social", "voice")   # the screens Connections shows; Outreach also has leads and campaigns
+
+
+def _embed_problem() -> str | None:
+    """Why Outreach screens cannot be shown here, in the administrator's words; None when they can."""
+    mode = oc.secret_mode(OUTREACH_PARTNER_SECRET)
+    if not OUTREACH_PUBLISHABLE_KEY or not OUTREACH_PARTNER_SECRET:
+        return "Outreach screens are not switched on for this server (OUTREACH_PUBLISHABLE_KEY and OUTREACH_PARTNER_SECRET)."
+    if mode is None:
+        return "OUTREACH_PARTNER_SECRET is not a psk_test_ or psk_live_ secret."
+    if mode == "live" and not OUTREACH_ALLOW_LIVE:
+        return "A live Outreach partner secret is configured but live use is switched off (OUTREACH_ALLOW_LIVE=0). Use a psk_test_ secret."
+    return None
+
+
+@growth_bp.get("/api/growth/embed/config")
+def growth_embed_config():
+    """Whether Connections can show Outreach's own screens, and what the page needs to load them. The partner secret is never
+    returned: only the publishable key, which is not secret."""
+    problem = _embed_problem()
+    if problem:
+        return jsonify({"enabled": False, "reason": problem})
+    return jsonify({"enabled": True, "host": OUTREACH_API_BASE.rstrip("/"), "key": OUTREACH_PUBLISHABLE_KEY,
+                    "mode": oc.secret_mode(OUTREACH_PARTNER_SECRET), "screens": list(EMBED_SCREENS)})
+
+
+def _embed_refusal(exc: "oc.OutreachError") -> _Http:
+    if exc.status in (401, 403) and exc.code != "embed_scope":
+        return _Http("Outreach did not accept TenderFlow's partner secret. Ask your administrator to check OUTREACH_PARTNER_SECRET "
+                     "(a test secret on a live integration, or the other way round, is refused).", 409, "partner_secret_rejected")
+    if exc.status == 409:
+        return _Http("This Outreach account is already connected to a different TenderFlow user. Disconnect it there first.", 409, "already_linked")
+    if exc.status == 429:
+        return _Http("Too many requests to Outreach. Wait a moment and try again.", 429, "rate_limited")
+    return _Http(exc.message, 502 if exc.status >= 500 or exc.code == "unreachable" else 400, exc.code or None)
+
+
+@growth_bp.post("/api/growth/embed/session")
+@rate_limit(30, 60)
+def growth_embed_session():
+    """Body {"component": "social"|"voice"}. Asks Outreach (with the partner secret, from here only) whether this TenderFlow user is
+    linked to an Outreach account. Linked: {"linked": true, "token", "expires_at"}, a 15-minute token for that one screen.
+    Not linked: {"linked": false, "connect_token", "expires_at"}, for Outreach's own sign-in / create-account screen, where
+    the person proves they own the account and agrees. TenderFlow never sees an Outreach password."""
+    component = str(_json_body().get("component") or "").strip()
+    if component not in EMBED_SCREENS:
+        raise _Http("That Outreach screen is not available here.", 400)
+    problem = _embed_problem()
+    if problem:
+        raise _Http(problem, 409, "embed_disabled")
+    external_id = _username()
+    common = {"base_url": OUTREACH_API_BASE, "timeout": OUTREACH_TIMEOUT_SECONDS, "transport": _EMBED_TRANSPORT}
+    try:
+        link = oc.embed_call("/api/embed/connect-sessions", {"external_id": external_id, "component": component},
+                             secret=OUTREACH_PARTNER_SECRET, **common)
+        if link.get("linked") is not True:
+            token = str(link.get("connect_token") or "")
+            if not token:
+                raise _Http("Outreach did not return a sign-in token. Try again.", 502, "bad_response")
+            return jsonify({"linked": False, "connect_token": token, "expires_at": link.get("expires_at")})
+        session = oc.embed_call("/api/embed/sessions", {"external_id": external_id, "component": component, "access": "full", "ttl_seconds": 900},
+                                secret=OUTREACH_PARTNER_SECRET, **common)
+    except oc.OutreachError as exc:
+        raise _embed_refusal(exc)
+    token = str(session.get("token") or "")
+    if not token:
+        raise _Http("Outreach did not return a screen token. Try again.", 502, "bad_response")
+    return jsonify({"linked": True, "token": token, "expires_at": session.get("expires_at"), "component": component})
+
+
+@growth_bp.post("/api/growth/embed/key")
+@rate_limit(10, 60)
+def growth_embed_key():
+    """After the user has linked their Outreach account in Outreach's own screen, fetch the API key Growth Studio sends with (server to
+    server, with the partner secret) and keep it encrypted, exactly as a key from the sign-in form would be. Outreach replaces the old
+    key whenever it issues a new one, so a user who already has a working key is left alone. The key is never returned to the page."""
+    problem = _embed_problem()
+    if problem:
+        raise _Http(problem, 409, "embed_disabled")
+    if _outreach_problem() is None and _outreach_connection()["source"] in ("own", "shared"):
+        return jsonify(_outreach_status_payload())
+    if not (MAIL_CRED_KEY or "").strip():
+        raise _Http("Saving your key is not enabled on this server. Ask your administrator to set MAIL_CRED_KEY.", 409)
+    username = _username()
+    try:
+        answer = oc.embed_call(f"/api/embed/links/{quote(username, safe='')}/key", {}, secret=OUTREACH_PARTNER_SECRET,
+                               base_url=OUTREACH_API_BASE, timeout=OUTREACH_TIMEOUT_SECONDS, transport=_EMBED_TRANSPORT)
+    except oc.OutreachError as exc:
+        if exc.status == 404:
+            raise _Http("Your Outreach account is not linked yet. Sign in with Outreach first.", 409, "not_linked")
+        raise _embed_refusal(exc)
+    return jsonify(_keep_partner_key(username, answer))
 
 
 def _clean_field(value: Any, label: str, limit: int, required: bool = True) -> str:

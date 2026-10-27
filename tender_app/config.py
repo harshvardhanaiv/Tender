@@ -149,6 +149,11 @@ OUTREACH_CLIENT_ID = os.environ.get("OUTREACH_CLIENT_ID", "").strip()
 OUTREACH_CONSENT_VERSION = os.environ.get("OUTREACH_CONSENT_VERSION", "").strip()
 OUTREACH_ORIGIN = os.environ.get("OUTREACH_ORIGIN", "").strip().rstrip("/")
 OUTREACH_RETURN_URL = os.environ.get("OUTREACH_RETURN_URL", "").strip()
+# Outreach screens shown inside Connections (Outreach's embed.js). PUBLISHABLE_KEY (pk_...) names TenderFlow and is not secret
+# (blank = OUTREACH_CLIENT_ID); PARTNER_SECRET (psk_test_... / psk_live_...) lets this server ask Outreach for a screen token
+# and must never reach a web page. A psk_live_ secret is refused unless OUTREACH_ALLOW_LIVE=1, as for sk_live_ keys.
+OUTREACH_PUBLISHABLE_KEY = os.environ.get("OUTREACH_PUBLISHABLE_KEY", "").strip() or OUTREACH_CLIENT_ID
+OUTREACH_PARTNER_SECRET = os.environ.get("OUTREACH_PARTNER_SECRET", "").strip()
 # Choosing which connected mailbox sends. Outreach's public API reference does not document a field for it yet, so
 # the request field names live here and can be changed without a code change once Outreach publishes them. A single
 # email (/v1/email/send) gets the value as a string, a campaign gets it as a one-item list.

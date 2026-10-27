@@ -164,6 +164,44 @@ def partner_auth(action: str, data: Mapping[str, Any], *, base_url: str = DEFAUL
     raise _error_for(status, resp_headers, payload)
 
 
+EMBED_COMPONENTS = ("leads", "campaigns", "mail", "voice", "social")
+
+
+def secret_mode(secret: str | None) -> str | None:
+    """"test" for a psk_test_ partner secret, "live" for psk_live_, None for anything else."""
+    text = (secret or "").strip()
+    for prefix, mode in (("psk_test_", "test"), ("psk_live_", "live")):
+        if text.startswith(prefix) and len(text) > len(prefix) + 8 and re.fullmatch(r"[A-Za-z0-9_\-]+", text):
+            return mode
+    return None
+
+
+def embed_call(path: str, body: Mapping[str, Any], *, secret: str, base_url: str = DEFAULT_BASE_URL,
+               timeout: float = DEFAULT_TIMEOUT, transport: Transport | None = None) -> dict[str, Any]:
+    """A server-to-server call to Outreach's embed API (/api/embed/...), signed with the partner secret. No Origin header is
+    sent: Outreach refuses these calls from a browser so the secret can never be used from a page. The secret is never put
+    in an error."""
+    if not secret_mode(secret):
+        raise OutreachError("The Outreach partner secret is missing or is not a psk_test_ / psk_live_ secret.", 400, "not_configured")
+    headers = {"Content-Type": "application/json", "Accept": "application/json", "Authorization": f"Bearer {secret.strip()}"}
+    try:
+        status, resp_headers, text = (transport or _requests_transport)(
+            "POST", f"{(base_url or DEFAULT_BASE_URL).rstrip('/')}{path}", headers, json.dumps(dict(body)).encode("utf-8"), timeout)
+    except Exception as exc:
+        raise OutreachError(f"Outreach could not be reached ({type(exc).__name__}).", 502, "unreachable") from None
+    payload: Any = None
+    if text:
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            payload = None
+    if 200 <= status < 300:
+        if not isinstance(payload, dict):
+            raise OutreachError("Outreach answered with something that was not a JSON object.", 502, "bad_response")
+        return payload
+    raise _error_for(status, resp_headers, payload)
+
+
 def partner_key(answer: Mapping[str, Any]) -> str | None:
     """The `api_key` of a signup / login answer (at the top, or under `data`), only when it is a well-formed Outreach key."""
     for src in (answer, answer.get("data") if isinstance(answer.get("data"), Mapping) else None):

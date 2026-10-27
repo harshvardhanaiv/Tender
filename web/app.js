@@ -4402,6 +4402,8 @@ function closeDetailsPanel() {
   if (btnS) btnS.disabled = true;
   const btnR = $("btnReadyBid");
   if (btnR) btnR.disabled = true;
+  const btnD = $("btnDeepAnalysis");
+  if (btnD) btnD.disabled = true;
   const btnTab = $("btnOpenNewTab");
   if (btnTab) btnTab.classList.add("hidden");
   renderRows();
@@ -7241,6 +7243,8 @@ async function loadDetails(row) {
   if (btnS) btnS.disabled = true;
   const btnR = $("btnReadyBid");
   if (btnR) btnR.disabled = true;
+  const btnD = $("btnDeepAnalysis");
+  if (btnD) btnD.disabled = true;
 
   let url;
   const langParam = state.lang ? `?lang=${state.lang}` : "";
@@ -7305,6 +7309,8 @@ async function loadDetails(row) {
     if (btnS) btnS.disabled = false;
     const btnR = $("btnReadyBid");
     if (btnR) btnR.disabled = false;
+    const btnD = $("btnDeepAnalysis");
+    if (btnD) btnD.disabled = false;
     syncExpandActionButtons();
     renderRows();
     loadDeepFit(enrichedRow, data);
@@ -9113,6 +9119,7 @@ function syncExpandActionButtons() {
     ["btnSummary", "btnExpandSummary"],
     ["btnAnalyse", "btnExpandAnalyse"],
     ["btnReadyBid", "btnExpandReadyBid"],
+    ["btnDeepAnalysis", "btnExpandDeepAnalysis"],
   ];
   for (const [srcId, dstId] of states) {
     const src = $(srcId);
@@ -10268,6 +10275,114 @@ $("btnReadyBid")?.addEventListener("click", () => {
     if (row) openBidModal(row);
   }
 });
+["btnDeepAnalysis", "btnExpandDeepAnalysis"].forEach(id => {
+  $(id)?.addEventListener("click", () => {
+    if (!state.activeKey) return;
+    const row = window._detailRow || state.rows.find(r => rowKey(r) === state.activeKey) || state.pipeline[state.activeKey];
+    if (row) openDeepModal(row);
+  });
+});
+
+// ── Deep analysis: crawl every page / document / link of the tender ──
+async function openDeepModal(row, refresh = false) {
+  const source = row.source;
+  const rid = row.resource_id;
+  $("modalTitle").textContent = "Deep analysis: full tender crawl";
+  $("docStatusRow").classList.add("hidden");
+  $("btnRunAnalysis").classList.add("hidden");
+  $("btnReRunSummary")?.classList.add("hidden");
+  $("btnReRunAnalysis")?.classList.add("hidden");
+  $("analyseModal").classList.remove("hidden");
+  $("modalBody").innerHTML = `
+    <div class="analysis-loading">
+      <div class="shimmer-container">
+        <div class="shimmer-line"></div><div class="shimmer-line"></div><div class="shimmer-line"></div>
+      </div>
+      <div style="margin-top:15px;text-align:center">
+        <span id="deepLoadingText" class="blink-cursor">🔬 Reading the notice, linked pages and documents...</span>
+        <div id="deepLoadingTimer" style="font-size:12px;font-weight:600;color:var(--primary);margin-top:6px">Time elapsed: 0.0s</div>
+      </div>
+    </div>`;
+  const start = Date.now();
+  const timer = setInterval(() => {
+    const el = $("deepLoadingTimer");
+    if (el) el.textContent = `Time elapsed: ${((Date.now() - start) / 1000).toFixed(1)}s`;
+  }, 100);
+  try {
+    if (!source || !rid) throw new Error("This tender has no source or id to crawl.");
+    const res = await fetch(`/api/tender-deep/${encodeURIComponent(source)}/${encodeURIComponent(rid)}${refresh ? "?refresh=1" : ""}`);
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || "Deep analysis failed");
+    $("modalBody").innerHTML = renderDeepAnalysis(data, row);
+    $("btnDeepRefresh")?.addEventListener("click", () => openDeepModal(row, true));
+  } catch (err) {
+    $("modalBody").innerHTML = `<p style="color:#b91c1c;padding:10px 0">Error: ${esc(String(err.message || err))}</p>`;
+  } finally {
+    clearInterval(timer);
+  }
+}
+
+function renderDeepAnalysis(d, row) {
+  const link = (u, t) => `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="word-break:break-all">${esc(t || u)}</a>`;
+  const sec = (title, body) => `<div class="analysis-section" style="margin-bottom:16px"><h3 style="font-size:13px;color:#1e293b;margin-bottom:8px">${title}</h3>${body}</div>`;
+  let html = "";
+
+  const forms = (d.action_items || []).filter(a => a.type === "form");
+  const portals = (d.action_items || []).filter(a => a.type === "portal");
+  if (forms.length) {
+    html += `<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:10px;padding:12px 14px;margin-bottom:16px">
+      <div style="font-weight:700;color:#b91c1c;margin-bottom:6px">⚠️ Action required: ${forms.length === 1 ? "a response form must be submitted" : forms.length + " response forms found"}</div>
+      ${forms.map(f => `<div style="margin-bottom:10px">
+        <div>${link(f.url, f.label)}${f.reachable === false ? ' <span style="color:#b91c1c">(link did not open)</span>' : ""}</div>
+        ${f.context ? `<div style="font-size:12px;color:#475569;margin-top:3px">…${esc(f.context)}…</div>` : ""}
+        <div style="font-size:11px;color:#64748b;margin-top:2px">Found in: ${esc((f.found_in || []).join(", "))}</div>
+      </div>`).join("")}
+    </div>`;
+  } else {
+    html += `<div style="border:1px solid #bbf7d0;background:#f0fdf4;border-radius:10px;padding:10px 14px;margin-bottom:16px;color:#166534">
+      No online response form was found in the notice, its linked pages or its documents. Check the buyer's portal before bidding.</div>`;
+  }
+
+  if (portals.length) {
+    html += sec("🔗 Portals and external systems", portals.map(p =>
+      `<div style="margin-bottom:6px">${link(p.url, p.label)}<div style="font-size:11px;color:#64748b">Found in: ${esc((p.found_in || []).join(", "))}</div></div>`).join(""));
+  }
+  if ((d.deadlines || []).length) {
+    html += sec("⏰ Dates and deadlines", `<ul style="margin:0;padding-left:18px">${d.deadlines.map(x =>
+      `<li style="margin-bottom:4px"><strong>${esc(x.date)}</strong> <span style="color:#64748b;font-size:12px">…${esc(x.context)}…</span></li>`).join("")}</ul>`);
+  }
+  if ((d.instructions || []).length) {
+    html += sec("📌 What the buyer asks bidders to do", `<ul style="margin:0;padding-left:18px">${d.instructions.map(x =>
+      `<li style="margin-bottom:4px">${esc(x.text)} <span style="color:#94a3b8;font-size:11px">(${esc(x.found_in)})</span></li>`).join("")}</ul>`);
+  }
+  if ((d.emails || []).length) {
+    html += sec("✉️ Contact emails", d.emails.map(e => `<a href="mailto:${esc(e)}">${esc(e)}</a>`).join(" · "));
+  }
+  if ((d.documents || []).length || (d.documents_unread || []).length) {
+    html += sec(`📎 Documents (${(d.documents || []).length} read)`, [
+      ...(d.documents || []).map(x => `<div style="margin-bottom:8px">
+        ${x.url ? link(x.url, x.title) : esc(x.title)}
+        <span style="font-size:11px;color:#64748b"> · ${esc(x.status)}${x.chars ? ` · ${x.chars.toLocaleString()} characters` : ""}</span>
+        ${x.excerpt ? `<div style="font-size:12px;color:#475569;margin-top:2px">${esc(x.excerpt.slice(0, 220))}…</div>` : ""}</div>`),
+      ...(d.documents_unread || []).map(x => `<div style="margin-bottom:6px">${link(x.url, x.title)} <span style="font-size:11px;color:#b45309">· not read</span></div>`),
+    ].join(""));
+  }
+  if ((d.pages || []).length) {
+    html += sec(`📄 Pages crawled (${d.pages.length})`, `<ul style="margin:0;padding-left:18px">${d.pages.map(p =>
+      `<li style="margin-bottom:3px">${link(p.url, p.title)} <span style="font-size:11px;color:#64748b">· ${esc(p.status)} · ${(p.chars || 0).toLocaleString()} characters</span></li>`).join("")}</ul>`);
+  }
+  if ((d.other_links || []).length) {
+    html += `<details style="margin-bottom:16px"><summary style="cursor:pointer;font-weight:600;font-size:13px">Other links found (${d.other_links.length})</summary>
+      <ul style="margin:6px 0 0;padding-left:18px">${d.other_links.map(l => `<li>${link(l.url, l.label || l.url)}</li>`).join("")}</ul></details>`;
+  }
+  (d.notes || []).forEach(n => { html += `<p style="font-size:12px;color:#b45309">${esc(n)}</p>`; });
+  if (d.full_text) {
+    html += `<details style="margin-bottom:12px"><summary style="cursor:pointer;font-weight:600;font-size:13px">Everything that was read (${(d.text_chars || 0).toLocaleString()} characters)</summary>
+      <pre style="white-space:pre-wrap;font-size:12px;max-height:340px;overflow:auto;background:#f8fafc;padding:10px;border-radius:8px">${esc(d.full_text)}</pre></details>`;
+  }
+  html += `<div style="font-size:11px;color:#64748b">Crawled in ${d.elapsed_s}s${d.cached ? " (saved result)" : ""} · <button type="button" id="btnDeepRefresh" class="btn" style="font-size:11px;padding:2px 8px">Re-scan</button></div>`;
+  return html;
+}
 
 // ── Date Filter Preset Pills & Slider Helper Functions & Event Handlers ──
 
