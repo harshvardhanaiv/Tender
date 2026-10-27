@@ -153,3 +153,10 @@ body.search-quiet #status { display: none !important; }
   #modalBody textarea, #modalBody pre { max-width: 100%; }
   #modalBody a { overflow-wrap: anywhere; }
 }
+
+/* ── Deep analysis: ready-to-submit bar and Pipeline progress chip ── */
+.deep-ready { margin-bottom: 12px; }
+.deep-ready__track { height: 8px; border-radius: 4px; background: #e2e8f0; overflow: hidden; }
+.deep-ready__fill { height: 100%; width: 0; transition: width .2s; }
+.deep-prog-chip { padding: 0 6px; border-radius: 4px; font-size: 10.5px; font-weight: 700; background: #fef3c7; color: #92400e; white-space: nowrap; }
+.deep-prog-chip--full { background: #dcfce7; color: #166534; }

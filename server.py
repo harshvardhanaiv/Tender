@@ -379,6 +379,33 @@ def init_db():
         """)
 
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deep_clarifications (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) NOT NULL,
+                tender_key VARCHAR(300) NOT NULL,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL DEFAULT '',
+                status VARCHAR(20) NOT NULL DEFAULT 'asked',
+                changes_requirement BOOLEAN NOT NULL DEFAULT FALSE,
+                acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
+                asked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                answered_at TIMESTAMP
+            );
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deep_alert_sent (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) NOT NULL,
+                tender_key VARCHAR(300) NOT NULL,
+                kind VARCHAR(40) NOT NULL,
+                ref TEXT NOT NULL,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(username, tender_key, kind, ref)
+            );
+        """)
+
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS deep_saved (
                 id SERIAL PRIMARY KEY,
                 username VARCHAR(100) NOT NULL DEFAULT '',
@@ -1610,6 +1637,160 @@ def _crawl_fingerprint(res: dict) -> dict:
         "forms": sorted(a["url"] for a in (res.get("action_items") or []) if a.get("type") == "form"),
         "documents": sorted(d.get("url", "") for d in (res.get("documents") or [])),
     }
+
+
+def deep_item_key(label: str) -> str:
+    return " ".join(str(label or "").lower().split())[:280]
+
+
+def deep_alerts_for_user(username: str) -> tuple[list[dict], dict]:
+    """(alerts, progress) for one user's watched/bidding tenders.
+
+    Alerts: changes found by the nightly re-crawl, response forms not yet ticked as done when the
+    submission date is within a week, and buyer answers the user flagged as changing a requirement.
+    Progress: per tender, how many response steps / documents / forms are ticked.
+    """
+    alerts: list[dict] = []
+    progress: dict[str, dict] = {}
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, tender_key, kind, message FROM deep_alerts WHERE username=%s AND dismissed=FALSE "
+                    "ORDER BY created_at DESC LIMIT 50", (username,))
+        for aid, tk, kind, msg in cur.fetchall():
+            alerts.append({"id": aid, "tender_key": tk, "kind": kind, "message": msg, "severity": "warn", "ref": msg})
+        cur.execute("SELECT tender_key, title, submission_deadline FROM pipeline WHERE username=%s "
+                    "AND stage IN ('watching','bidding')", (username,))
+        tracked = cur.fetchall()
+        cur.execute("SELECT tender_key, item_key FROM deep_checklist WHERE username=%s AND done=TRUE", (username,))
+        done: dict[str, set] = {}
+        for tk, ik in cur.fetchall():
+            done.setdefault(tk, set()).add(ik)
+        cur.execute("SELECT id, tender_key, question FROM deep_clarifications WHERE username=%s "
+                    "AND changes_requirement=TRUE AND acknowledged=FALSE", (username,))
+        for cid, tk, q in cur.fetchall():
+            alerts.append({"id": None, "clar_id": cid, "tender_key": tk, "kind": "clarification_changes", "severity": "warn",
+                           "message": f"A buyer answer changes a requirement: {q[:120]}", "ref": f"clar:{cid}"})
+        cur.close()
+    finally:
+        conn.close()
+    today = datetime.now(timezone.utc).date()
+    for key, title, deadline in tracked:
+        source_id, rid = parse_tender_key(key)
+        ck = f"{source_id}:{rid}"
+        crawl = _deep_saved_get("", ck, "crawl")
+        briefing = _deep_saved_get(username, ck, "briefing")
+        forms = [a for a in (crawl or {}).get("action_items", []) if a.get("type") == "form"]
+        keys = {deep_item_key(f"Submit form: {f['url']}") for f in forms}
+        an = (briefing or {}).get("analysis") or {}
+        for x in an.get("how_to_respond") or []:
+            if isinstance(x, dict) and str(x.get("step") or "").strip():
+                keys.add(deep_item_key(x["step"]))
+        for x in an.get("documents_to_submit") or []:
+            if isinstance(x, str) and x.strip():
+                keys.add(deep_item_key(x))
+        if keys:
+            progress[ck] = {"done": len(keys & done.get(ck, set())), "total": len(keys)}
+        dd = _parse_deadline_date(deadline or "")
+        if not dd:
+            continue
+        days = (dd - today).days
+        if days < 0 or days > 7:
+            continue
+        for f in forms:
+            if deep_item_key(f"Submit form: {f['url']}") in done.get(ck, set()):
+                continue
+            alerts.append({
+                "id": None, "tender_key": ck, "kind": "form_due", "title": title or "", "form_url": f["url"],
+                "severity": "red" if days <= 3 else "warn", "days": days,
+                "message": f"Response form not marked as done, {days} day(s) to the deadline.",
+                "ref": f"{f['url']}|{3 if days <= 3 else 7}",
+            })
+    return alerts, progress
+
+
+def send_deep_digests() -> int:
+    """One email per user listing tender alerts not yet emailed. A form-due alert is emailed at most twice
+    (within 7 days, then within 3 days). Honours the user's email-alert switch. Returns emails sent."""
+    from html import escape as _esc
+    sent = 0
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("""SELECT DISTINCT p.username, u.email, u.email_alerts_enabled
+                       FROM pipeline p JOIN users u ON p.username = u.username
+                       WHERE p.stage IN ('watching','bidding')""")
+        users = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+    try:
+        from tender_app.config import get_app_base_url
+        base_url = get_app_base_url()
+    except Exception:
+        base_url = "http://localhost:8092"
+    for username, email, enabled in users:
+        target = (email or username or "").strip()
+        if "@" not in target or (enabled is not None and not enabled):
+            continue
+        try:
+            alerts, _ = deep_alerts_for_user(username)
+            if not alerts:
+                continue
+            conn = get_db_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT tender_key, kind, ref FROM deep_alert_sent WHERE username=%s", (username,))
+                already = {(a, b, c) for a, b, c in cur.fetchall()}
+                cur.execute("SELECT tender_key, title FROM pipeline WHERE username=%s", (username,))
+                titles = {}
+                for tk, title in cur.fetchall():
+                    sid, rid = parse_tender_key(tk)
+                    titles[f"{sid}:{rid}"] = title or tk
+                cur.close()
+            finally:
+                conn.close()
+            fresh = []
+            for a in alerts:
+                sid, rid = parse_tender_key(a["tender_key"])
+                ck = f"{sid}:{rid}"
+                if (ck, a["kind"], a["ref"]) in already:
+                    continue
+                fresh.append((ck, a))
+            if not fresh:
+                continue
+            rows = "".join(
+                f"<tr><td style='padding:10px 0;border-bottom:1px solid #e5e7eb'><b>{_esc(titles.get(ck) or a.get('title') or ck)}</b><br>"
+                f"<span style='color:{'#b91c1c' if a.get('severity') == 'red' else '#92400e'}'>{_esc(a['message'])}</span></td></tr>"
+                for ck, a in fresh)
+            html_body = (f"<div style='font-family:Arial,sans-serif;max-width:560px;margin:auto'><h2 style='color:#0f766e'>Tenders you are tracking need attention</h2>"
+                         f"<table style='width:100%;border-collapse:collapse'>{rows}</table>"
+                         f"<p><a href='{_esc(base_url)}' style='background:#0f766e;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none'>Open TenderFlow</a></p>"
+                         f"<p style='font-size:12px;color:#6b7280'>Open a tender and choose Deep analysis to see the details. "
+                         f"You can switch these emails off in your profile settings.</p></div>")
+            pause_url = None
+            try:
+                import urllib.parse as _up
+                from tender_app.email_svc import alert_pref_token
+                pause_url = f"{base_url}/api/alerts/preference?cadence=off&user={_up.quote(target)}&token={alert_pref_token(target)}"
+            except Exception:
+                pass
+            subject = f"⚠️ TenderFlow: {len(fresh)} tender alert{'s' if len(fresh) != 1 else ''} to check"
+            if _send_smtp_email(target, subject, html_body, list_unsubscribe_url=pause_url):
+                sent += 1
+                conn = get_db_connection()
+                try:
+                    cur = conn.cursor()
+                    for ck, a in fresh:
+                        cur.execute("INSERT INTO deep_alert_sent (username, tender_key, kind, ref) VALUES (%s,%s,%s,%s) "
+                                    "ON CONFLICT DO NOTHING", (username, ck, a["kind"], a["ref"]))
+                    conn.commit()
+                    cur.close()
+                finally:
+                    conn.close()
+        except Exception as exc:
+            print(f"[DeepWatch] digest failed for {username}: {exc}")
+    return sent
 
 
 _DEEP_WATCH_LAST = 0.0
@@ -2980,6 +3161,8 @@ def start_email_scheduler():
             if os.getenv("DEEP_WATCH_ENABLED", "1") == "1":
                 try:
                     deep_watch_scan()
+                    if os.getenv("DEEP_EMAIL_ENABLED", "1") == "1":
+                        send_deep_digests()
                 except Exception as e:
                     print(f"[DeepWatch] Unhandled error: {e}")
             try:
@@ -5129,52 +5312,135 @@ Include every question, in the form's order."""
 
     @app.get("/api/deep-alerts")
     def api_deep_alerts():
-        """Things the user must not miss on tracked tenders: changes found by the nightly re-crawl, and
-        response forms not yet ticked as done when the submission date is within a week."""
+        """Things the user must not miss on tracked tenders, plus checklist progress per tender."""
         username = session.get("username", "")
         if not username:
             return jsonify({"error": "Unauthorized"}), 401
-        alerts: list[dict] = []
         try:
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("SELECT id, tender_key, kind, message FROM deep_alerts WHERE username=%s AND dismissed=FALSE "
-                        "ORDER BY created_at DESC LIMIT 50", (username,))
-            for aid, tk, kind, msg in cur.fetchall():
-                alerts.append({"id": aid, "tender_key": tk, "kind": kind, "message": msg, "severity": "warn"})
-            cur.execute("SELECT tender_key, title, submission_deadline FROM pipeline WHERE username=%s "
-                        "AND stage IN ('watching','bidding')", (username,))
-            tracked = cur.fetchall()
-            cur.execute("SELECT tender_key, item_key FROM deep_checklist WHERE username=%s AND done=TRUE", (username,))
-            done: dict[str, set] = {}
-            for tk, ik in cur.fetchall():
-                done.setdefault(tk, set()).add(ik)
-            cur.close()
-            conn.close()
-            today = datetime.now(timezone.utc).date()
-            for key, title, deadline in tracked:
-                dd = _parse_deadline_date(deadline or "")
-                if not dd:
-                    continue
-                days = (dd - today).days
-                if days < 0 or days > 7:
-                    continue
-                source_id, rid = parse_tender_key(key)
-                ck = f"{source_id}:{rid}"
-                crawl = _deep_saved_get("", ck, "crawl")
-                for a in (crawl or {}).get("action_items", []):
-                    if a.get("type") != "form":
-                        continue
-                    if _deep_item_key(f"Submit form: {a['url']}") in done.get(ck, set()):
-                        continue
-                    alerts.append({
-                        "id": None, "tender_key": ck, "kind": "form_due", "title": title or "", "form_url": a["url"],
-                        "severity": "red" if days <= 3 else "warn", "days": days,
-                        "message": f"Response form not marked as done, {days} day(s) to the deadline.",
-                    })
+            alerts, progress = deep_alerts_for_user(username)
         except Exception as e:
             print("deep alerts failed:", e)
-        return jsonify({"ok": True, "alerts": alerts})
+            alerts, progress = [], {}
+        return jsonify({"ok": True, "alerts": alerts, "progress": progress})
+
+    @app.get("/api/tender-clarifications")
+    def api_clar_list():
+        username = session.get("username", "")
+        if not username:
+            return jsonify({"error": "Unauthorized"}), 401
+        tk = f"{request.args.get('source', '')}:{request.args.get('resource_id', '')}"
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id, question, answer, status, changes_requirement, acknowledged, asked_at, answered_at "
+                    "FROM deep_clarifications WHERE username=%s AND tender_key=%s ORDER BY id", (username, tk))
+        items = [{"id": r[0], "question": r[1], "answer": r[2], "status": r[3], "changes_requirement": r[4],
+                  "acknowledged": r[5], "asked_at": str(r[6])[:10], "answered_at": str(r[7])[:10] if r[7] else ""}
+                 for r in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return jsonify({"ok": True, "items": items})
+
+    @app.post("/api/tender-clarifications")
+    def api_clar_add():
+        username = session.get("username", "")
+        if not username:
+            return jsonify({"error": "Unauthorized"}), 401
+        body = request.get_json(silent=True) or {}
+        q = str(body.get("question") or "").strip()[:2000]
+        if not q or not body.get("source") or not body.get("resource_id"):
+            return jsonify({"ok": False, "error": "question, source and resource_id are required"}), 400
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO deep_clarifications (username, tender_key, question) VALUES (%s,%s,%s) RETURNING id",
+                    (username, f"{body['source']}:{body['resource_id']}", q))
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"ok": True, "id": new_id})
+
+    @app.patch("/api/tender-clarifications/<int:cid>")
+    def api_clar_update(cid: int):
+        username = session.get("username", "")
+        if not username:
+            return jsonify({"error": "Unauthorized"}), 401
+        body = request.get_json(silent=True) or {}
+        sets, args = [], []
+        if "answer" in body:
+            ans = str(body.get("answer") or "").strip()[:4000]
+            sets += ["answer=%s", "status=%s", "answered_at=" + ("CURRENT_TIMESTAMP" if ans else "NULL")]
+            args += [ans, "answered" if ans else "asked"]
+        if "changes_requirement" in body:
+            sets += ["changes_requirement=%s", "acknowledged=FALSE"]
+            args.append(bool(body["changes_requirement"]))
+        if "acknowledged" in body:
+            sets.append("acknowledged=%s")
+            args.append(bool(body["acknowledged"]))
+        if not sets:
+            return jsonify({"ok": False, "error": "nothing to update"}), 400
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(f"UPDATE deep_clarifications SET {', '.join(sets)} WHERE id=%s AND username=%s", (*args, cid, username))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"ok": True})
+
+    @app.delete("/api/tender-clarifications/<int:cid>")
+    def api_clar_delete(cid: int):
+        username = session.get("username", "")
+        if not username:
+            return jsonify({"error": "Unauthorized"}), 401
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM deep_clarifications WHERE id=%s AND username=%s", (cid, username))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"ok": True})
+
+    @app.post("/api/tender-deep-form-prefill")
+    def api_tender_deep_form_prefill():
+        """Free: which form questions the user's Answer Bank already answers (so no AI credits are needed for them)."""
+        import difflib
+        username = session.get("username", "")
+        if not username:
+            return jsonify({"error": "Unauthorized"}), 401
+        body = request.get_json(silent=True) or {}
+        questions = [str((q or {}).get("title") or "") for q in (body.get("questions") or [])][:80]
+        profile_id = body.get("profile_id")
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT category, question, answer FROM answer_bank WHERE username=%s "
+                    "AND (profile_id=%s OR profile_id IS NULL) AND COALESCE(TRIM(answer),'')<>'' LIMIT 500",
+                    (username, profile_id))
+        bank = cur.fetchall()
+        cur.close()
+        conn.close()
+        stop = {"the", "a", "an", "of", "to", "and", "or", "your", "you", "is", "are", "do", "does", "have", "for", "in", "please", "what", "which", "with", "any", "if"}
+
+        def norm(t: str) -> str:
+            return " ".join(re.sub(r"[^a-z0-9 ]+", " ", str(t).lower()).split())
+
+        def toks(t: str) -> set:
+            return {w for w in norm(t).split() if w not in stop}
+
+        matches: dict[str, dict] = {}
+        for i, q in enumerate(questions):
+            nq, tq = norm(q), toks(q)
+            if not nq:
+                continue
+            best, best_score = None, 0.0
+            for cat, bq, ba in bank:
+                nb, tb = norm(bq), toks(bq)
+                ratio = difflib.SequenceMatcher(None, nq, nb).ratio()
+                jac = (len(tq & tb) / len(tq | tb)) if (tq and tb) else 0.0
+                score = max(ratio, jac)
+                if score > best_score:
+                    best, best_score = (cat, bq, ba), score
+            if best and best_score >= 0.72:
+                matches[str(i)] = {"answer": best[2], "bank_question": best[1], "category": best[0], "score": round(best_score, 2)}
+        return jsonify({"ok": True, "matches": matches})
 
     @app.post("/api/deep-alerts/dismiss")
     def api_deep_alerts_dismiss():

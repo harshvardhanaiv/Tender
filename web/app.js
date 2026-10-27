@@ -1591,6 +1591,14 @@ async function loadPipeline() {
 
 // ── Deep-analysis alerts: changed deadlines / new forms from the nightly re-crawl, and response forms not yet ticked as done ──
 let _deepAlerts = [];
+let _deepProgress = {};
+
+function deepProgressChip(key) {
+  const p = _deepProgress[deepAlertKey(key)];
+  if (!p || !p.total) return "";
+  const full = p.done >= p.total;
+  return `<span class="deep-prog-chip${full ? " deep-prog-chip--full" : ""}" title="Response steps ticked off in Deep analysis">✔ ${p.done}/${p.total}</span>`;
+}
 
 function deepAlertKey(key) {
   const k = String(key || "");
@@ -1606,7 +1614,9 @@ async function loadDeepAlerts() {
   try {
     const res = await fetch("/api/deep-alerts");
     if (!res.ok) return;
-    _deepAlerts = (await res.json()).alerts || [];
+    const data = await res.json();
+    _deepAlerts = data.alerts || [];
+    _deepProgress = data.progress || {};
     if (typeof renderRows === "function") renderRows();
     if ($("dashboardBody") && !$("dashboardBody").closest(".hidden")) renderPipelineBoard();
   } catch {/* alerts are optional */ }
@@ -7737,7 +7747,7 @@ function renderPipelineBoard() {
         ? `<span class="dash-card__from" title="Where you added this lead">+ ${esc(window.TFWatch.sourceLabel(item.added_from))}</span>` : "";
       return `
         <div class="dash-card" data-key="${esc(key)}" data-stage="${esc(stage)}" draggable="true">
-          <div class="dash-card__top" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${sourceBadge}${addedFromBadge}${fitHtml}${daysHtml}<button class="dash-card__remove dash-card__remove--top" data-key="${esc(key)}" title="Remove from pipeline" aria-label="Remove from pipeline">✕</button></div>
+          <div class="dash-card__top" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${sourceBadge}${addedFromBadge}${fitHtml}${daysHtml}${deepProgressChip(key)}<button class="dash-card__remove dash-card__remove--top" data-key="${esc(key)}" title="Remove from pipeline" aria-label="Remove from pipeline">✕</button></div>
           <div class="dash-card__title">${esc(item.title || key)}</div>
           ${item.contracting_authority ? `<div class="dash-card__auth">${esc(item.contracting_authority)}</div>` : ""}
           ${item.notes ? `<div class="dash-card__notes">${esc(item.notes)}</div>` : ""}
@@ -10427,6 +10437,17 @@ function deepItemKey(label) {
 }
 
 function updateDeepProgress() {
+  const all = document.querySelectorAll("#modalBody .deep-check");
+  const allDone = Array.from(all).filter(b => b.checked).length;
+  const bar = document.getElementById("deepReadyBar");
+  if (bar) {
+    bar.hidden = !all.length;
+    const pct = all.length ? Math.round((allDone / all.length) * 100) : 0;
+    document.getElementById("deepReadyText").textContent = `${allDone} of ${all.length} steps done`;
+    const fill = document.getElementById("deepReadyFill");
+    fill.style.width = `${pct}%`;
+    fill.style.background = pct === 100 ? "#16a34a" : "#f59e0b";
+  }
   const boxes = document.querySelectorAll("#deepAiBox .deep-check");
   const el = document.getElementById("deepChecklistCount");
   if (!el) return;
@@ -10453,6 +10474,7 @@ document.addEventListener("change", async (e) => {
       body: JSON.stringify({ source: _deepRow.source, resource_id: _deepRow.resource_id, label: cb.getAttribute("data-label"), done: cb.checked }),
     });
     if (!res.ok) throw new Error("save failed");
+    loadDeepAlerts();
   } catch (err) {
     cb.checked = !cb.checked;
     updateDeepProgress();
@@ -10490,6 +10512,8 @@ async function initDeepAi(row, refresh) {
   document.querySelectorAll(".deep-check[data-form-tick]").forEach(cb => {
     cb.checked = _deepDone.has(deepItemKey(cb.getAttribute("data-label")));
   });
+  updateDeepProgress();
+  loadDeepClar();
   const byUrl = {};
   Object.values(saved?.forms || {}).forEach(f => { byUrl[f.form_url] = f.answers; });
   deepForms().forEach((f, i) => {
@@ -10612,9 +10636,40 @@ async function draftFormAnswers(idx, btn) {
     return;
   }
   btn.disabled = true;
-  out.innerHTML = `<span class="blink-cursor">✍️ Drafting answers from your company profile…</span>`;
+  out.innerHTML = `<span class="blink-cursor">✍️ Checking your Answer Bank, then drafting the rest…</span>`;
   try {
-    _deepFormAnswers[idx] = await callFormAnswers(idx, readable ? item.form.questions : [], readable ? "" : pasted);
+    const questions = readable ? item.form.questions : [];
+    let matches = {};
+    if (readable) {
+      try {
+        const pr = await fetch("/api/tender-deep-form-prefill", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ questions, profile_id: getActiveProfile()?.id || null }),
+        });
+        matches = (await pr.json()).matches || {};
+      } catch (e) { matches = {}; }
+    }
+    const remaining = questions.map((q, i) => i).filter(i => !matches[String(i)]);
+    let drafted = [];
+    if (!readable || remaining.length) {
+      drafted = await callFormAnswers(idx, readable ? remaining.map(i => questions[i]) : [], readable ? "" : pasted);
+    }
+    if (readable) {
+      let n = 0;
+      _deepFormAnswers[idx] = questions.map((q, i) => {
+        const m = matches[String(i)];
+        if (m) {
+          return { question: q.title, type: q.type || "", options: q.options || [], answer: m.answer, status: "answered",
+            source: `Answer Bank: "${m.bank_question}"`, note: "Taken from your Answer Bank. Check it still applies to this tender." };
+        }
+        return drafted[n++] || { question: q.title, type: q.type || "", options: q.options || [], answer: "", status: "needs_input", note: "No draft was returned." };
+      });
+      const free = Object.keys(matches).length;
+      if (free) cpShowToast(`${free} answer${free === 1 ? "" : "s"} filled from your Answer Bank${remaining.length ? "" : ". No credits used"}.`, "success");
+    } else {
+      _deepFormAnswers[idx] = drafted;
+    }
     saveFormAnswers(idx);
     drawFormOut(idx);
   } catch (err) {
@@ -10745,6 +10800,8 @@ function renderDeepAnalysis(d, row) {
     }
     if ((d.date_conflicts || []).length) strip.push(`<strong>conflicting dates</strong> found`);
     if (unreadDocs) strip.push(`<strong>${unreadDocs}</strong> document${unreadDocs === 1 ? "" : "s"} not read`);
+    html += `<div class="deep-ready" id="deepReadyBar" hidden><div style="font-size:12px;font-weight:700;margin-bottom:4px">Ready to submit: <span id="deepReadyText"></span></div>
+      <div class="deep-ready__track"><div class="deep-ready__fill" id="deepReadyFill"></div></div></div>`;
     if (strip.length) {
       html += `<div class="deep-mustmiss"><strong>Must not miss:</strong> ${strip.join(" · ")}</div>`;
     }
@@ -10783,6 +10840,10 @@ function renderDeepAnalysis(d, row) {
       `<div style="margin-bottom:6px">${link(p.url, p.label)}<div style="font-size:11px;color:#64748b">Found in: ${esc((p.found_in || []).join(", "))}</div></div>`).join(""));
   }
   html += "<!--TAB:dates-->";
+  if ((d.deadlines || []).some(x => x.iso)) {
+    html += `<div style="margin-bottom:10px"><button type="button" class="btn" data-deep-ics="1">📅 Add dates to my calendar (.ics)</button>
+      <span style="font-size:12px;color:#64748b;margin-left:6px">With reminders 3 days and 1 day before.</span></div>`;
+  }
   const srcLink = (name, url) => url ? link(url, name) : esc(name);
   if ((d.deadlines || []).length) {
     html += sec("⏰ Dates and deadlines", `<ul style="margin:0;padding-left:18px">${d.deadlines.map(x =>
@@ -10823,9 +10884,10 @@ function renderDeepAnalysis(d, row) {
   }
 
   // tabs: the first chunk is the overview, each marker starts the next tab
-  const names = ["overview", "dates", "docs", "text"];
-  const labels = ["Overview", "Dates & asks", "Documents & pages", "Everything read"];
+  const names = ["overview", "dates", "docs", "text", "clar"];
+  const labels = ["Overview", "Dates & asks", "Documents & pages", "Everything read", "Questions to buyer"];
   const chunks = html.split(/<!--TAB:(?:dates|docs|text)-->/);
+  chunks.push(`<div id="deepClarBox"><span style="color:#64748b">Loading…</span></div>`);
   const tabs = `<div class="deep-tabs" role="tablist">${names.map((n, i) =>
     `<button type="button" role="tab" class="deep-tab${i === 0 ? " is-active" : ""}" data-deep-tab="${n}">${labels[i]}</button>`).join("")}</div>`;
   const panels = chunks.map((c, i) => `<div class="deep-tabpanel" data-deeptab="${names[i]}"${i ? " hidden" : ""}>${c}</div>`).join("");
@@ -10895,6 +10957,114 @@ document.addEventListener("click", (e) => {
   }
   const ex = e.target.closest?.("[data-deep-export]");
   if (ex) deepExport(ex.getAttribute("data-deep-export"));
+  if (e.target.closest?.("[data-deep-ics]")) deepDownloadIcs();
+});
+
+// ── Calendar file: submission / clarification dates with reminders 3 days and 1 day before ──
+function deepDownloadIcs() {
+  const d = _deepData || {};
+  const seen = new Set();
+  const events = (d.deadlines || []).filter(x => x.iso && x.kind !== "other").filter(x => {
+    const k = `${x.kind}|${x.iso}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  if (!events.length) { cpShowToast("No dated deadlines were found to add.", "error"); return; }
+  const icsText = (t) => String(t || "").replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/[,;]/g, m => "\\" + m);
+  const title = _deepRow?.title || "Tender";
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//TenderFlow//Deep analysis//EN", "CALSCALE:GREGORIAN"];
+  events.forEach((x, i) => {
+    const day = x.iso.replace(/-/g, "");
+    const next = new Date(`${x.iso}T00:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    const end = next.toISOString().slice(0, 10).replace(/-/g, "");
+    const label = x.kind === "clarification" ? "Clarification deadline" : "Submission deadline";
+    lines.push("BEGIN:VEVENT", `UID:${deepItemKey(title).replace(/\W+/g, "-").slice(0, 40)}-${day}-${x.kind}-${i}@tenderflow`,
+      `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${day}`, `DTEND;VALUE=DATE:${end}`,
+      `SUMMARY:${icsText(`${label}: ${title}`)}`,
+      `DESCRIPTION:${icsText(`${x.context || ""}\n${d.detail_url || ""}`)}`);
+    ["-P3D", "-P1D"].forEach(t => lines.push("BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${icsText(label)}`, `TRIGGER:${t}`, "END:VALARM"));
+    lines.push("END:VEVENT");
+  });
+  lines.push("END:VCALENDAR");
+  const blob = new Blob([lines.join("\r\n")], { type: "text/calendar" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `tender-deadlines-${String(_deepRow?.resource_id || "tender").replace(/[^\w-]+/g, "_")}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+// ── Questions to the buyer: what was asked, what they answered, and answers that change a requirement ──
+let _deepClar = [];
+
+async function loadDeepClar() {
+  if (!_deepRow || !$("deepClarBox")) return;
+  try {
+    const res = await fetch(`/api/tender-clarifications?source=${encodeURIComponent(_deepRow.source)}&resource_id=${encodeURIComponent(_deepRow.resource_id)}`);
+    _deepClar = (await res.json()).items || [];
+  } catch { _deepClar = []; }
+  drawDeepClar();
+}
+
+function drawDeepClar() {
+  const box = $("deepClarBox");
+  if (!box) return;
+  const items = _deepClar.map(c => `<div style="border:1px solid ${c.changes_requirement && !c.acknowledged ? "#f59e0b" : "#e2e8f0"};border-radius:8px;padding:8px 10px;margin-bottom:8px;background:${c.changes_requirement && !c.acknowledged ? "#fffbeb" : "#fff"}">
+      <div style="display:flex;gap:8px;justify-content:space-between"><div><strong>Q:</strong> ${esc(c.question)} <span style="font-size:11px;color:#94a3b8">asked ${esc(c.asked_at)}</span></div>
+        <a href="#" data-clar-del="${c.id}" style="font-size:11px;color:#b91c1c">Delete</a></div>
+      <textarea data-clar-answer="${c.id}" rows="2" style="width:100%;margin-top:4px;font-size:13px" placeholder="Paste the buyer's answer when it arrives">${esc(c.answer)}</textarea>
+      <div style="font-size:12px;margin-top:3px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+        <span style="color:${c.status === "answered" ? "#166534" : "#b45309"}">${c.status === "answered" ? "Answered " + esc(c.answered_at) : "Waiting for the buyer"}</span>
+        <label><input type="checkbox" data-clar-change="${c.id}" ${c.changes_requirement ? "checked" : ""}> This answer changes a requirement</label>
+        ${c.changes_requirement && !c.acknowledged ? `<a href="#" data-clar-ack="${c.id}">I have updated my bid</a>` : ""}</div>
+    </div>`).join("");
+  box.innerHTML = `<p style="font-size:12px;color:#64748b;margin:0 0 8px">Send your questions through the buyer's portal, then log them here. When an answer changes what the bid must contain, tick the box: it stays on your Pipeline until you confirm the bid is updated.</p>
+    ${items || `<p style="color:#64748b">No questions logged yet.</p>`}
+    <textarea id="deepClarNew" rows="2" style="width:100%;font-size:13px" placeholder="Question you sent (or will send) to the buyer"></textarea>
+    <button type="button" class="btn btn--summary" style="margin-top:4px" data-clar-add="1">Log question</button>`;
+}
+
+async function clarCall(method, url, body) {
+  const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  if (!res.ok) throw new Error("Could not save");
+  return res.json();
+}
+
+document.addEventListener("click", async (e) => {
+  const add = e.target.closest?.("[data-clar-add]");
+  const del = e.target.closest?.("[data-clar-del]");
+  const ack = e.target.closest?.("[data-clar-ack]");
+  if (!add && !del && !ack) return;
+  e.preventDefault();
+  try {
+    if (add) {
+      const q = ($("deepClarNew")?.value || "").trim();
+      if (!q) return;
+      await clarCall("POST", "/api/tender-clarifications", { source: _deepRow.source, resource_id: _deepRow.resource_id, question: q });
+    } else if (del) {
+      await clarCall("DELETE", `/api/tender-clarifications/${del.getAttribute("data-clar-del")}`);
+    } else {
+      await clarCall("PATCH", `/api/tender-clarifications/${ack.getAttribute("data-clar-ack")}`, { acknowledged: true });
+    }
+    await loadDeepClar();
+    loadDeepAlerts();
+  } catch (err) { cpShowToast(String(err.message || err), "error"); }
+});
+
+document.addEventListener("change", async (e) => {
+  const ans = e.target.closest?.("[data-clar-answer]");
+  const chg = e.target.closest?.("[data-clar-change]");
+  if (!ans && !chg) return;
+  try {
+    if (ans) await clarCall("PATCH", `/api/tender-clarifications/${ans.getAttribute("data-clar-answer")}`, { answer: ans.value });
+    else await clarCall("PATCH", `/api/tender-clarifications/${chg.getAttribute("data-clar-change")}`, { changes_requirement: chg.checked });
+    await loadDeepClar();
+    loadDeepAlerts();
+  } catch (err) { cpShowToast(String(err.message || err), "error"); }
 });
 
 // ── Date Filter Preset Pills & Slider Helper Functions & Event Handlers ──
