@@ -56,6 +56,8 @@ from tender_app.firebase_auth import init_firebase
 from tender_app.config import (
     CREDIT_COST_AI_DOWNLOAD,
     CREDIT_COST_ANALYSE,
+    CREDIT_COST_DEEP_ANALYSIS,
+    CREDIT_COST_FORM_ANSWERS,
     CREDIT_COST_FIT_SCORE,
     CREDIT_COST_PROPOSAL,
     CREDIT_COST_SUMMARY,
@@ -348,6 +350,43 @@ def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(username, tender_key)
+            );
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deep_checklist (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) NOT NULL,
+                tender_key VARCHAR(300) NOT NULL,
+                item_key VARCHAR(300) NOT NULL,
+                done BOOLEAN NOT NULL DEFAULT FALSE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(username, tender_key, item_key)
+            );
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deep_alerts (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) NOT NULL,
+                tender_key VARCHAR(300) NOT NULL,
+                kind VARCHAR(40) NOT NULL,
+                message TEXT NOT NULL,
+                dismissed BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(username, tender_key, kind, message)
+            );
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deep_saved (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(100) NOT NULL DEFAULT '',
+                tender_key VARCHAR(300) NOT NULL,
+                kind VARCHAR(100) NOT NULL,
+                payload TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(username, tender_key, kind)
             );
         """)
 
@@ -1482,6 +1521,196 @@ def list_non_etenders_documents(source: str, resource_id: str, detail_url: str =
     return docs
 
 
+
+def _deep_saved_get(username: str, tender_key: str, kind: str, max_age_hours: float | None = None):
+    """Saved deep-analysis payload (crawl cache uses username ''), or None."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        sql = "SELECT payload FROM deep_saved WHERE username=%s AND tender_key=%s AND kind=%s"
+        args: list = [username, tender_key, kind]
+        if max_age_hours:
+            sql += " AND updated_at > NOW() - (%s * INTERVAL '1 hour')"
+            args.append(max_age_hours)
+        cur.execute(sql, args)
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return json.loads(row[0]) if row else None
+    except Exception as e:
+        print("deep_saved read failed:", e)
+        return None
+
+
+def _deep_saved_put(username: str, tender_key: str, kind: str, payload) -> None:
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO deep_saved (username, tender_key, kind, payload) VALUES (%s, %s, %s, %s) "
+            "ON CONFLICT (username, tender_key, kind) DO UPDATE SET payload=EXCLUDED.payload, updated_at=CURRENT_TIMESTAMP",
+            (username, tender_key, kind, json.dumps(payload, ensure_ascii=False)),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print("deep_saved write failed:", e)
+
+
+def _run_deep_scrape(source: str, resource_id: str, refresh: bool = False, progress=None):
+    cfg = SOURCES.get(source)
+    if not cfg:
+        return None
+    # Shared across users and server restarts: a crawl under 6 hours old is reused.
+    if not refresh:
+        saved = _deep_saved_get("", f"{source}:{resource_id}", "crawl", max_age_hours=6)
+        if saved:
+            return {**saved, "cached": True}
+    from tender_app.deep_scrape import deep_scrape_tender
+
+    try:
+        details = _get_tender_details_dict(source, resource_id) or {}
+    except Exception:
+        details = {}
+    detail_url = details.get("detail_url") or ""
+    if not detail_url and cfg.get("type") == "etenders":
+        detail_url = f"{cfg['base_url'].rstrip('/')}/{DETAIL_URL_TEMPLATE.format(resource_id=resource_id)}"
+
+    cft_docs: list[dict] = []
+    extra_docs: list[dict] = []
+    if cfg.get("type") == "etenders":
+        try:
+            cft_docs = list_cft_documents(cfg["base_url"], resource_id)[:12]
+            for d in cft_docs:
+                text = fetch_and_extract_text(
+                    cfg["base_url"], resource_id, d["doc_id"], d["filename"], max_chars=60000,
+                )
+                extra_docs.append({
+                    "title": d.get("title") or d["filename"], "filename": d["filename"], "url": "",
+                    "status": "read" if (text or "").strip() else "no_text", "text": text or "",
+                })
+        except Exception:
+            pass
+
+    result = deep_scrape_tender(
+        source, resource_id, detail_url,
+        structured=details, cft_docs=cft_docs, extra_documents=extra_docs,
+        refresh=refresh, progress=progress,
+    )
+    if result and result.get("ok") and not result.get("cached"):
+        _deep_saved_put("", f"{source}:{resource_id}", "crawl", result)
+    return result
+
+
+
+def _crawl_fingerprint(res: dict) -> dict:
+    return {
+        "submission": sorted({d["iso"] for d in (res.get("deadlines") or []) if d.get("kind") == "submission" and d.get("iso")}),
+        "forms": sorted(a["url"] for a in (res.get("action_items") or []) if a.get("type") == "form"),
+        "documents": sorted(d.get("url", "") for d in (res.get("documents") or [])),
+    }
+
+
+_DEEP_WATCH_LAST = 0.0
+
+
+def deep_watch_scan(max_tenders: int = 40, min_interval_hours: float = 20) -> int:
+    """Re-crawl tenders people are watching or bidding on and raise an in-app alert when a submission
+    date, a response form or the document list changed since the last crawl. Never sends email.
+    Returns the number of alerts created."""
+    global _DEEP_WATCH_LAST
+    if time.time() - _DEEP_WATCH_LAST < min_interval_hours * 3600:
+        return 0
+    _DEEP_WATCH_LAST = time.time()
+    created = 0
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT tender_key, username FROM pipeline WHERE stage IN ('watching','bidding') ORDER BY updated_at DESC")
+        watchers: dict[str, list[str]] = {}
+        for key, user in cur.fetchall():
+            watchers.setdefault(key, []).append(user)
+        for key in list(watchers)[:max_tenders]:
+            source_id, rid = parse_tender_key(key)
+            ck = f"{source_id}:{rid}"
+            prev = _deep_saved_get("", ck, "crawl")
+            try:
+                new = _run_deep_scrape(source_id, rid, True)
+            except Exception as exc:
+                print(f"[DeepWatch] crawl failed for {ck}: {exc}")
+                continue
+            if not prev or not new or not new.get("ok"):
+                continue
+            a, b = _crawl_fingerprint(prev), _crawl_fingerprint(new)
+            msgs = []
+            if a["submission"] != b["submission"] and b["submission"]:
+                msgs.append(("deadline_changed", "A submission date changed: was " + (", ".join(a["submission"]) or "none")
+                             + ", now " + ", ".join(b["submission"]) + "."))
+            for u in sorted(set(b["forms"]) - set(a["forms"])):
+                msgs.append(("new_form", f"A new response form was added: {u}"))
+            if len(b["documents"]) > len(a["documents"]):
+                msgs.append(("new_document", f"{len(b['documents']) - len(a['documents'])} new document(s) were added to the notice."))
+            for kind, msg in msgs:
+                for user in watchers[key]:
+                    cur.execute(
+                        "INSERT INTO deep_alerts (username, tender_key, kind, message) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                        (user, ck, kind, msg),
+                    )
+                    created += cur.rowcount or 0
+            conn.commit()
+    except Exception as exc:
+        print("[DeepWatch] scan failed:", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    print(f"[DeepWatch] scan done, {created} alert(s)")
+    return created
+
+
+def deep_crawl_context(source: str, resource_id: str, max_chars: int = 60000) -> tuple[str, str]:
+    """Text block from the deep crawl for the AI features: response requirements first, then the crawled text.
+
+    Returns (block, label). Never raises: a failed crawl just yields an empty block so callers keep working.
+    """
+    try:
+        scrape = _run_deep_scrape(source, resource_id, False)
+    except Exception as exc:
+        print(f"[deep_crawl_context] crawl failed for {source}/{resource_id}: {exc}")
+        return "", ""
+    if not scrape:
+        return "", ""
+    parts = ["=== RESPONSE REQUIREMENTS (found by crawling the notice, its linked pages and documents) ==="]
+    for a in scrape.get("action_items") or []:
+        kind = "RESPONSE FORM" if a.get("type") == "form" else "EXTERNAL PORTAL"
+        parts.append(f"{kind}: {a['url']}")
+        if a.get("context"):
+            parts.append(f"  Notice wording: {a['context']}")
+        form = a.get("form") or {}
+        if form.get("readable"):
+            parts.append("  Form questions:")
+            for i, q in enumerate(form.get("questions") or [], 1):
+                opts = f" Options: {' / '.join(q['options'])}." if q.get("options") else ""
+                req = " (required)" if q.get("required") else ""
+                parts.append(f"   {i}. {q['title']}{req} [{q.get('type')}].{opts}")
+        elif a.get("type") == "form":
+            parts.append("  Form questions could not be read automatically.")
+    for d in scrape.get("deadlines") or []:
+        parts.append(f"DATE: {d['date']} - {d['context']}")
+    for ins in scrape.get("instructions") or []:
+        parts.append(f"INSTRUCTION ({ins['found_in']}): {ins['text']}")
+    if scrape.get("emails"):
+        parts.append("CONTACT EMAILS: " + ", ".join(scrape["emails"]))
+    for d in scrape.get("documents_unread") or []:
+        parts.append(f"DOCUMENT NOT READ: {d.get('title')} {d.get('url')}")
+    if scrape.get("full_text"):
+        parts.append("\n=== FULL CRAWLED TEXT ===\n" + scrape["full_text"])
+    return "\n".join(parts)[:max_chars], "Deep crawl of notice, linked pages and documents"
+
+
+
 def fetch_tender_documents_and_extract(source: str, resource_id: str, detail_url: str, max_chars: int = 120000) -> tuple[str, list[str], list[dict[str, str]]]:
     """Retrieve all available documents from the portal and extract text content.
     Returns (combined_text, list_of_filenames, list_of_docs_meta).
@@ -1578,6 +1807,13 @@ def fetch_tender_documents_and_extract(source: str, resource_id: str, detail_url
         if url_text.strip():
             doc_names.append(f"Tender Notice Page ({detail_url})")
             doc_text += f"\n\n=== Tender Notice Page ===\n{url_text}"
+
+    # Deep crawl (response forms, portals, deadlines, every linked page/document). Placed first so
+    # callers that truncate the text never cut the response requirements.
+    crawl_block, crawl_label = deep_crawl_context(source, resource_id)
+    if crawl_block:
+        doc_text = f"{crawl_block}\n\n{doc_text}"
+        doc_names.append(crawl_label)
 
     return doc_text, doc_names, docs_meta
 
@@ -2741,6 +2977,11 @@ def start_email_scheduler():
                 send_empty_pipeline_recommendation_emails()
             except Exception as e:
                 print(f"[Email Scheduler] Unhandled error: {e}")
+            if os.getenv("DEEP_WATCH_ENABLED", "1") == "1":
+                try:
+                    deep_watch_scan()
+                except Exception as e:
+                    print(f"[DeepWatch] Unhandled error: {e}")
             try:
                 from tender_app.credits import run_credit_expiry_sweep
                 run_credit_expiry_sweep(get_db_connection)
@@ -4586,41 +4827,371 @@ def create_app() -> Flask:
     @app.get("/api/tender-deep/<source>/<resource_id>")
     def api_tender_deep(source: str, resource_id: str):
         """Crawl the notice, its sub-pages and documents for response forms, portals and deadlines."""
-        cfg = SOURCES.get(source)
-        if not cfg:
+        result = _run_deep_scrape(source, resource_id, request.args.get("refresh") == "1")
+        if result is None:
             return jsonify({"ok": False, "error": "unknown source"}), 404
-        from tender_app.deep_scrape import deep_scrape_tender
-
-        try:
-            details = _get_tender_details_dict(source, resource_id) or {}
-        except Exception:
-            details = {}
-        detail_url = details.get("detail_url") or ""
-        if not detail_url and cfg.get("type") == "etenders":
-            detail_url = f"{cfg['base_url'].rstrip('/')}/{DETAIL_URL_TEMPLATE.format(resource_id=resource_id)}"
-
-        cft_docs: list[dict] = []
-        extra_docs: list[dict] = []
-        if cfg.get("type") == "etenders":
-            try:
-                cft_docs = list_cft_documents(cfg["base_url"], resource_id)[:12]
-                for d in cft_docs:
-                    text = fetch_and_extract_text(
-                        cfg["base_url"], resource_id, d["doc_id"], d["filename"], max_chars=60000,
-                    )
-                    extra_docs.append({
-                        "title": d.get("title") or d["filename"], "filename": d["filename"], "url": "",
-                        "status": "read" if (text or "").strip() else "no_text", "text": text or "",
-                    })
-            except Exception:
-                pass
-
-        result = deep_scrape_tender(
-            source, resource_id, detail_url,
-            structured=details, cft_docs=cft_docs, extra_documents=extra_docs,
-            refresh=request.args.get("refresh") == "1",
-        )
         return jsonify(result)
+
+    def _load_bidder_context(username: str, profile_id) -> tuple[str, str]:
+        """Return (company name, profile + answer-bank text) for the selected company profile."""
+        name, parts = "", []
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            if profile_id:
+                cur.execute("SELECT id, name, profile_text, meta_json FROM company_profiles WHERE id=%s AND username=%s",
+                            (profile_id, username))
+            else:
+                cur.execute("SELECT id, name, profile_text, meta_json FROM company_profiles WHERE username=%s "
+                            "ORDER BY is_default DESC, id DESC LIMIT 1", (username,))
+            prow = cur.fetchone()
+            pid = None
+            if prow:
+                pid, name = prow[0], prow[1] or ""
+                parts.append(f"COMPANY PROFILE ({name}):\n{(prow[2] or '')[:6000]}")
+                if prow[3] and prow[3] not in ("{}", ""):
+                    parts.append(f"COMPANY DETAILS (JSON):\n{prow[3][:4000]}")
+            cur.execute("SELECT category, question, answer FROM answer_bank WHERE username=%s "
+                        "AND (profile_id=%s OR profile_id IS NULL) ORDER BY category, id LIMIT 60", (username, pid))
+            ab = [f"[{r[0]}] Q: {r[1]}\nA: {r[2]}" for r in cur.fetchall()]
+            if ab:
+                parts.append("APPROVED ANSWER BANK:\n" + "\n\n".join(ab)[:8000])
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print("deep-analysis profile load failed:", e)
+        return name, "\n\n".join(parts)
+
+    @app.post("/api/tender-deep-ai")
+    @require_credits(CREDIT_COST_DEEP_ANALYSIS, "deep_analysis", get_db_connection)
+    def api_tender_deep_ai():
+        """AI read of the full crawl: a structured briefing so no response step, deadline or mandatory item is missed."""
+        body = request.get_json(silent=True) or {}
+        source = str(body.get("source") or "")
+        resource_id = str(body.get("resource_id") or "")
+        scrape = _run_deep_scrape(source, resource_id, bool(body.get("refresh")))
+        if scrape is None:
+            return jsonify({"ok": False, "error": "unknown source"}), 404
+        username = session.get("username", "admin")
+        company, bidder_ctx = _load_bidder_context(username, body.get("profile_id"))
+
+        coverage = list(scrape.get("notes") or [])
+        for d in scrape.get("documents") or []:
+            if d.get("status") != "read":
+                coverage.append(f"Document '{d.get('title')}' could not be read ({d.get('status')}).")
+        for d in scrape.get("documents_unread") or []:
+            coverage.append(f"Document '{d.get('title')}' was found but not read: {d.get('url')}")
+        for a in scrape.get("action_items") or []:
+            if a.get("type") == "form" and not (a.get("form") or {}).get("readable"):
+                coverage.append(f"The questions of the form {a['url']} could not be read automatically.")
+
+        links_txt = "\n".join(
+            f"- [{a['type']}] {a['url']} (found in: {', '.join(a.get('found_in') or [])}) context: {a.get('context','')[:300]}"
+            for a in scrape.get("action_items") or []
+        ) or "None found."
+        system = (
+            "You are a senior public-procurement analyst. You read the COMPLETE crawled text of one tender and "
+            "produce a briefing whose purpose is that the bidder misses nothing that decides whether their bid "
+            "is valid. Use only the supplied text. Never invent dates, links, requirements or values; write "
+            "'Not stated' when the text does not say. Always say where each important item came from."
+        )
+        user = f"""TENDER: {body.get('title') or ''}
+BIDDER (for relevance flags only): {company or 'not selected'}
+{bidder_ctx[:3000] if bidder_ctx else ''}
+
+LINKS AND FORMS FOUND BY THE CRAWLER:
+{links_txt}
+
+CRAWLED TEXT (notice, sub-pages, documents):
+{(scrape.get('full_text') or '')[:70000]}
+
+Return ONLY JSON with exactly these keys:
+{{
+ "headline": "2 sentences: what is being bought, and what the bidder must do to respond",
+ "how_to_respond": [{{"step": "ordered action", "detail": "exact instruction", "url": "link or ''", "deadline": "date/time or ''", "source": "where in the text"}}],
+ "must_not_miss": [{{"item": "short", "why": "consequence of missing it", "source": "where"}}],
+ "deadlines": [{{"what": "", "when": "", "source": ""}}],
+ "mandatory_requirements": ["pass/fail criteria, accreditations, registrations, insurance, site visits"],
+ "documents_to_submit": ["each form, certificate, questionnaire or template the bidder must return"],
+ "scope_summary": "what the work or goods are",
+ "evaluation_criteria": ["criterion and weighting if stated"],
+ "commercial": {{"value": "", "duration": "", "payment": "", "extension": ""}},
+ "contacts": [{{"name_or_role": "", "email_or_phone": ""}}],
+ "risks_or_ambiguities": ["conflicting dates, unclear instructions, changed notices, missing info"],
+ "notice_changes": ["what changed between notice versions if versions were crawled, e.g. extended deadline"]
+}}
+Every form or portal link in the list above must appear in how_to_respond or must_not_miss."""
+        try:
+            ai = call_chat_json(system, user, max_tokens=4000, temperature=0.1, expect=dict)
+        except Exception as exc:
+            if isinstance(exc, AIServiceError):
+                return jsonify({"ok": False, "error": str(exc)}), exc.status_code
+            return jsonify({"ok": False, "error": str(exc)}), 500
+        _deep_saved_put(username, f"{source}:{resource_id}", "briefing", {"analysis": ai, "coverage": coverage})
+        return jsonify({"ok": True, "analysis": ai, "coverage": coverage})
+
+    @app.post("/api/tender-deep-form-answers")
+    @require_credits(CREDIT_COST_FORM_ANSWERS, "deep_form_answers", get_db_connection)
+    def api_tender_deep_form_answers():
+        """Draft answers to a response form's questions from the company profile, answer bank and tender text.
+
+        Drafts only: nothing is submitted, and facts missing from the profile are marked 'needs_input'
+        rather than invented.
+        """
+        body = request.get_json(silent=True) or {}
+        source = str(body.get("source") or "")
+        resource_id = str(body.get("resource_id") or "")
+        form_url = str(body.get("form_url") or "")
+        questions = body.get("questions") or []
+        pasted = str(body.get("pasted_text") or "").strip()[:20000]
+        if not questions and not pasted:
+            return jsonify({"ok": False, "error": "No questions were provided."}), 400
+        scrape = _run_deep_scrape(source, resource_id, False)
+        if scrape is None:
+            return jsonify({"ok": False, "error": "unknown source"}), 404
+        username = session.get("username", "admin")
+        company, bidder_ctx = _load_bidder_context(username, body.get("profile_id"))
+        if not bidder_ctx:
+            return jsonify({"ok": False, "error": "Select a company profile first so answers can use your company's facts."}), 400
+
+        q_block = (json.dumps(questions, ensure_ascii=False)[:20000] if questions
+                   else f"RAW FORM TEXT PASTED BY THE USER (extract the questions from it):\n{pasted}")
+        system = (
+            "You draft answers to a tender response form on behalf of a bidder. Use ONLY facts found in the "
+            "company profile, answer bank or tender text. Never invent turnover, staff numbers, certifications, "
+            "references, prices, dates or experience. If the facts needed are missing, leave the answer empty and "
+            "set status to needs_input and say exactly what the bidder must supply. For choice questions, answer "
+            "with one of the listed options exactly. Write in plain, professional British English; keep answers "
+            "concise unless the question asks for detail."
+        )
+        user = f"""FORM: {form_url}
+TENDER: {body.get('title') or ''}
+
+{bidder_ctx}
+
+TENDER TEXT (for context on what the buyer wants):
+{(scrape.get('full_text') or '')[:30000]}
+
+FORM QUESTIONS:
+{q_block}
+
+Return ONLY JSON:
+{{"answers": [{{"question": "", "type": "", "options": [], "answer": "", "status": "answered|needs_input", "source": "profile|answer_bank|tender|none", "note": "what to check or supply"}}]}}
+Include every question, in the form's order."""
+        try:
+            ai = call_chat_json(system, user, max_tokens=4000, temperature=0.2, expect=dict)
+        except Exception as exc:
+            if isinstance(exc, AIServiceError):
+                return jsonify({"ok": False, "error": str(exc)}), exc.status_code
+            return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": True, "answers": ai.get("answers") or [], "company": company})
+
+    _DEEP_JOBS: dict[str, dict] = {}
+    _DEEP_JOBS_LOCK = threading.Lock()
+
+    @app.post("/api/tender-deep-start")
+    def api_tender_deep_start():
+        """Start the crawl in the background and return a job id to poll for live progress."""
+        import uuid
+        body = request.get_json(silent=True) or {}
+        source = str(body.get("source") or "")
+        resource_id = str(body.get("resource_id") or "")
+        if source not in SOURCES or not resource_id:
+            return jsonify({"ok": False, "error": "unknown tender"}), 404
+        refresh = bool(body.get("refresh"))
+        job_id = uuid.uuid4().hex[:16]
+        job = {"status": "running", "steps": ["Starting"], "result": None, "error": "", "started": time.time()}
+        with _DEEP_JOBS_LOCK:
+            for k in [k for k, v in _DEEP_JOBS.items() if time.time() - v["started"] > 1800]:
+                _DEEP_JOBS.pop(k, None)
+            _DEEP_JOBS[job_id] = job
+
+        def work():
+            try:
+                job["result"] = _run_deep_scrape(source, resource_id, refresh, progress=job["steps"].append)
+                job["status"] = "done"
+            except Exception as exc:  # noqa: BLE001
+                job["error"] = str(exc)
+                job["status"] = "error"
+
+        threading.Thread(target=work, daemon=True).start()
+        return jsonify({"ok": True, "job_id": job_id})
+
+    @app.get("/api/tender-deep-status/<job_id>")
+    def api_tender_deep_status(job_id: str):
+        job = _DEEP_JOBS.get(job_id)
+        if not job:
+            return jsonify({"ok": False, "error": "job not found"}), 404
+        out = {"ok": True, "status": job["status"], "steps": job["steps"][-12:], "elapsed_s": round(time.time() - job["started"], 1),
+               "costs": {"briefing": CREDIT_COST_DEEP_ANALYSIS, "form_answers": CREDIT_COST_FORM_ANSWERS}}
+        if job["status"] == "done":
+            out["result"] = job["result"]
+        elif job["status"] == "error":
+            out["ok"] = False
+            out["error"] = job["error"] or "Crawl failed"
+        return jsonify(out)
+
+    def _deep_form_kind(form_url: str) -> str:
+        return "form:" + hashlib.sha1(str(form_url or "").encode("utf-8")).hexdigest()[:16]
+
+    @app.get("/api/tender-deep-saved")
+    def api_tender_deep_saved():
+        """The user's saved AI briefing and form-answer drafts for this tender."""
+        source = request.args.get("source", "")
+        resource_id = request.args.get("resource_id", "")
+        username = session.get("username", "admin")
+        tk = f"{source}:{resource_id}"
+        forms: dict = {}
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT kind, payload FROM deep_saved WHERE username=%s AND tender_key=%s AND kind LIKE 'form:%%'",
+                        (username, tk))
+            for kind, payload in cur.fetchall():
+                forms[kind] = json.loads(payload)
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print("deep saved forms read failed:", e)
+        return jsonify({"ok": True, "briefing": _deep_saved_get(username, tk, "briefing"), "forms": forms})
+
+    @app.post("/api/tender-deep-saved-form")
+    def api_tender_deep_saved_form():
+        body = request.get_json(silent=True) or {}
+        if not body.get("source") or not body.get("resource_id") or not body.get("form_url"):
+            return jsonify({"ok": False, "error": "source, resource_id and form_url are required"}), 400
+        answers = body.get("answers")
+        if not isinstance(answers, list):
+            return jsonify({"ok": False, "error": "answers must be a list"}), 400
+        _deep_saved_put(session.get("username", "admin"), f"{body['source']}:{body['resource_id']}",
+                        _deep_form_kind(body["form_url"]), {"form_url": body["form_url"], "answers": answers[:80]})
+        return jsonify({"ok": True})
+
+    @app.post("/api/tender-deep-extract-file")
+    def api_tender_deep_extract_file():
+        """Text of an uploaded questionnaire (Word, PDF, Excel, text) so its questions can be answered."""
+        import base64
+        body = request.get_json(silent=True) or {}
+        fname = str(body.get("filename") or "upload")
+        try:
+            data = base64.b64decode(body.get("content") or "", validate=False)
+        except Exception:
+            return jsonify({"ok": False, "error": "The file could not be read."}), 400
+        if not data or len(data) > 10 * 1024 * 1024:
+            return jsonify({"ok": False, "error": "Choose a file under 10 MB."}), 400
+        text = _extract_bytes(data, fname, max_chars=20000) or ""
+        if not text.strip():
+            return jsonify({"ok": False, "error": "No text could be read from that file."}), 400
+        return jsonify({"ok": True, "text": text})
+
+    def _deep_item_key(label: str) -> str:
+        return " ".join(str(label or "").lower().split())[:280]
+
+    @app.get("/api/tender-deep-checklist")
+    def api_tender_deep_checklist_get():
+        source = request.args.get("source", "")
+        resource_id = request.args.get("resource_id", "")
+        username = session.get("username", "admin")
+        done: list[str] = []
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT item_key FROM deep_checklist WHERE username=%s AND tender_key=%s AND done=TRUE",
+                        (username, f"{source}:{resource_id}"))
+            done = [r[0] for r in cur.fetchall()]
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print("deep checklist load failed:", e)
+        return jsonify({"ok": True, "done": done})
+
+    @app.post("/api/tender-deep-checklist")
+    def api_tender_deep_checklist_set():
+        body = request.get_json(silent=True) or {}
+        key = _deep_item_key(body.get("label"))
+        if not key or not body.get("source") or not body.get("resource_id"):
+            return jsonify({"ok": False, "error": "label, source and resource_id are required"}), 400
+        username = session.get("username", "admin")
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO deep_checklist (username, tender_key, item_key, done) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (username, tender_key, item_key) DO UPDATE SET done=EXCLUDED.done, updated_at=CURRENT_TIMESTAMP",
+                (username, f"{body['source']}:{body['resource_id']}", key, bool(body.get("done"))),
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": True})
+
+    @app.get("/api/deep-alerts")
+    def api_deep_alerts():
+        """Things the user must not miss on tracked tenders: changes found by the nightly re-crawl, and
+        response forms not yet ticked as done when the submission date is within a week."""
+        username = session.get("username", "")
+        if not username:
+            return jsonify({"error": "Unauthorized"}), 401
+        alerts: list[dict] = []
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT id, tender_key, kind, message FROM deep_alerts WHERE username=%s AND dismissed=FALSE "
+                        "ORDER BY created_at DESC LIMIT 50", (username,))
+            for aid, tk, kind, msg in cur.fetchall():
+                alerts.append({"id": aid, "tender_key": tk, "kind": kind, "message": msg, "severity": "warn"})
+            cur.execute("SELECT tender_key, title, submission_deadline FROM pipeline WHERE username=%s "
+                        "AND stage IN ('watching','bidding')", (username,))
+            tracked = cur.fetchall()
+            cur.execute("SELECT tender_key, item_key FROM deep_checklist WHERE username=%s AND done=TRUE", (username,))
+            done: dict[str, set] = {}
+            for tk, ik in cur.fetchall():
+                done.setdefault(tk, set()).add(ik)
+            cur.close()
+            conn.close()
+            today = datetime.now(timezone.utc).date()
+            for key, title, deadline in tracked:
+                dd = _parse_deadline_date(deadline or "")
+                if not dd:
+                    continue
+                days = (dd - today).days
+                if days < 0 or days > 7:
+                    continue
+                source_id, rid = parse_tender_key(key)
+                ck = f"{source_id}:{rid}"
+                crawl = _deep_saved_get("", ck, "crawl")
+                for a in (crawl or {}).get("action_items", []):
+                    if a.get("type") != "form":
+                        continue
+                    if _deep_item_key(f"Submit form: {a['url']}") in done.get(ck, set()):
+                        continue
+                    alerts.append({
+                        "id": None, "tender_key": ck, "kind": "form_due", "title": title or "", "form_url": a["url"],
+                        "severity": "red" if days <= 3 else "warn", "days": days,
+                        "message": f"Response form not marked as done, {days} day(s) to the deadline.",
+                    })
+        except Exception as e:
+            print("deep alerts failed:", e)
+        return jsonify({"ok": True, "alerts": alerts})
+
+    @app.post("/api/deep-alerts/dismiss")
+    def api_deep_alerts_dismiss():
+        username = session.get("username", "")
+        aid = (request.get_json(silent=True) or {}).get("id")
+        if not username or not isinstance(aid, int):
+            return jsonify({"ok": False}), 400
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("UPDATE deep_alerts SET dismissed=TRUE WHERE id=%s AND username=%s", (aid, username))
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": True})
 
     @app.post("/api/download-questionnaire")
     def api_download_questionnaire():
@@ -6412,6 +6983,11 @@ Return ONLY this JSON structure:
                             "content": url_text
                         })
 
+                # Deep crawl: response forms, portals, deadlines and every linked page/document
+                crawl_block, crawl_label = deep_crawl_context(source, resource_id)
+                if crawl_block:
+                    doc_names.append(crawl_label)
+                    documents.insert(0, {"name": crawl_label, "content": crawl_block})
 
                 # Process uploaded tender files
                 for f in uploaded_files:

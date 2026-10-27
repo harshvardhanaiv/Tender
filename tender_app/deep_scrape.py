@@ -30,6 +30,8 @@ HEADERS = {
 
 DOC_EXTS = (".pdf", ".docx", ".doc", ".txt", ".xlsx", ".xls", ".csv", ".zip", ".pptx", ".odt", ".rtf")
 EXTRACTABLE_EXTS = (".pdf", ".docx", ".doc", ".txt", ".xlsx", ".csv", ".rtf")
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff")
+OCR_MAX_PAGES = 8
 
 FORM_HOSTS = (
     "docs.google.com/forms", "forms.gle", "forms.office.com", "forms.cloud.microsoft",
@@ -176,18 +178,48 @@ def _doc_text(content: bytes, filename: str) -> str:
         return ""
 
 
+def _ocr_bytes(content: bytes, filename: str) -> str | None:
+    """Text of a scanned PDF / image via Tesseract. None when OCR is not installed here."""
+    try:
+        import io
+        import pytesseract
+        from PIL import Image
+        pytesseract.get_tesseract_version()
+    except Exception:
+        return None
+    try:
+        images = []
+        if filename.lower().endswith(".pdf"):
+            import fitz  # PyMuPDF
+            with fitz.open(stream=content, filetype="pdf") as pdf:
+                for page in list(pdf)[:OCR_MAX_PAGES]:
+                    pix = page.get_pixmap(dpi=200)
+                    images.append(Image.open(io.BytesIO(pix.tobytes("png"))))
+        else:
+            images.append(Image.open(io.BytesIO(content)))
+        return "\n".join(pytesseract.image_to_string(im, lang="eng") for im in images).strip()
+    except Exception:
+        return ""
+
+
 def _fetch_document(url: str, label: str) -> dict[str, Any]:
     filename = urllib.parse.unquote(urllib.parse.urlparse(url).path.split("/")[-1]) or label or "document"
     item: dict[str, Any] = {"title": label or filename, "filename": filename, "url": url, "status": "not_read", "text": ""}
-    if not filename.lower().endswith(EXTRACTABLE_EXTS):
+    if not filename.lower().endswith(EXTRACTABLE_EXTS + IMAGE_EXTS):
         item["status"] = "listed_only"
         return item
     r = _fetch(url, timeout=25)
     if r is None or r.status_code != 200:
         item["status"] = f"http_{r.status_code}" if r is not None else "unreachable"
         return item
-    text = _doc_text(r.content, filename)
+    text = "" if filename.lower().endswith(IMAGE_EXTS) else _doc_text(r.content, filename)
     item["status"] = "read" if text.strip() else "no_text"
+    if not text.strip() and filename.lower().endswith((".pdf",) + IMAGE_EXTS):
+        ocr = _ocr_bytes(r.content, filename)
+        if ocr is None:
+            item["status"] = "scanned_no_ocr"
+        elif ocr.strip():
+            text, item["status"] = ocr, "read_ocr"
     item["text"] = text
     return item
 
@@ -234,26 +266,119 @@ def _collect_urls(text: str) -> list[str]:
     return [_clean_url(u) for u in URL_RE.findall(text or "")]
 
 
-def _deadlines(text: str) -> list[dict[str, str]]:
+_MONTHS = {m: i + 1 for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"))}
+
+
+def _iso_date(raw: str) -> str:
+    """'23 October 2026 at 12:00' / '23/10/2026' -> '2026-10-23' ('' when unreadable)."""
+    m = re.match(r"(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3})[a-z]*\.?\s+(\d{4})", raw.strip())
+    if m and m.group(2).lower() in _MONTHS:
+        return f"{int(m.group(3)):04d}-{_MONTHS[m.group(2).lower()]:02d}-{int(m.group(1)):02d}"
+    m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", raw.strip())
+    if m and 1 <= int(m.group(2)) <= 12:
+        return f"{int(m.group(3)):04d}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+    return ""
+
+
+def _deadline_kind(ctx: str) -> str:
+    low = ctx.lower()
+    if re.search(r"clarification|question|enquir|query", low):
+        return "clarification"
+    if re.search(r"tender|bid|submi|return|closing|deadline|expression of interest|response|quotation", low):
+        return "submission"
+    return "other"
+
+
+def _deadlines(texts: dict[str, str] | str, urls: dict[str, str] | None = None) -> list[dict[str, str]]:
+    if isinstance(texts, str):
+        texts = {"": texts}
+    urls = urls or {}
     found: list[dict[str, str]] = []
     seen: set[str] = set()
-    for m in DATE_RE.finditer(text or ""):
-        ctx = re.sub(r"\s+", " ", text[max(0, m.start() - 110): m.end() + 40]).strip()
-        if not DEADLINE_CTX.search(ctx):
-            continue
-        key = m.group(0).lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        found.append({"date": m.group(0), "context": ctx})
-        if len(found) >= 12:
-            break
+    for where, text in texts.items():
+        for m in DATE_RE.finditer(text or ""):
+            ctx = re.sub(r"\s+", " ", text[max(0, m.start() - 110): m.end() + 40]).strip()
+            if not DEADLINE_CTX.search(ctx):
+                continue
+            key = m.group(0).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append({"date": m.group(0), "iso": _iso_date(m.group(0)), "kind": _deadline_kind(ctx),
+                          "context": ctx, "found_in": where, "source_url": urls.get(where, "")})
+            if len(found) >= 16:
+                return found
     return found
+
+
+def date_conflicts(deadlines: list[dict[str, str]]) -> list[dict[str, Any]]:
+    """Dates of the same kind (e.g. two different tender return deadlines) that disagree."""
+    out = []
+    for kind in ("submission", "clarification"):
+        group = [d for d in deadlines if d.get("kind") == kind and d.get("iso")]
+        if len({d["iso"] for d in group}) > 1:
+            out.append({"kind": kind, "dates": [{"date": d["date"], "iso": d["iso"], "found_in": d["found_in"],
+                                                   "source_url": d.get("source_url", "")} for d in group]})
+    return out
+
+
+_GOOGLE_Q_TYPES = {
+    0: "short answer", 1: "paragraph", 2: "multiple choice", 3: "dropdown", 4: "checkboxes",
+    5: "linear scale", 7: "grid", 9: "date", 10: "time", 13: "file upload",
+}
+
+
+def read_form_questions(url: str) -> dict[str, Any]:
+    """Read the questions of a public form. Only Google Forms expose them on the public page.
+
+    Other form products (Microsoft Forms, Typeform, ...) load questions through APIs that refuse
+    anonymous callers, so they come back unreadable and the user pastes the questions instead.
+    """
+    low = url.lower()
+    if not ("docs.google.com/forms" in low or "forms.gle" in low):
+        return {"platform": "other", "readable": False, "questions": [],
+                "reason": "This form loads its questions behind a sign-in or script, so they cannot be read automatically."}
+    r = _fetch(url, timeout=15)
+    if r is None or r.status_code != 200:
+        return {"platform": "google", "readable": False, "questions": [], "reason": "The form could not be opened."}
+    if "accounts.google.com" in r.url:
+        return {"platform": "google", "readable": False, "questions": [], "reason": "The form requires a Google sign-in."}
+    marker = "FB_PUBLIC_LOAD_DATA_ = "
+    i = r.text.find(marker)
+    if i < 0:
+        return {"platform": "google", "readable": False, "questions": [], "reason": "The form's questions were not found on the page."}
+    try:
+        import json
+        data, _ = json.JSONDecoder().raw_decode(r.text[i + len(marker):])
+        items = data[1][1] or []
+        questions = []
+        for it in items:
+            title = (it[1] or "").strip() if len(it) > 1 and it[1] else ""
+            desc = (it[2] or "").strip() if len(it) > 2 and it[2] else ""
+            code = it[3] if len(it) > 3 else None
+            if not title or code in (6, 8):  # section / title blocks, not questions
+                continue
+            options: list[str] = []
+            required = False
+            if len(it) > 4 and it[4]:
+                first = it[4][0]
+                if len(first) > 1 and first[1]:
+                    options = [str(o[0]) for o in first[1] if o and o[0] not in (None, "")]
+                required = bool(len(first) > 2 and first[2])
+            questions.append({
+                "title": title, "description": desc,
+                "type": _GOOGLE_Q_TYPES.get(code, "other"), "options": options, "required": required,
+            })
+        return {"platform": "google", "readable": bool(questions), "form_title": str(data[3] or "") if len(data) > 3 else "",
+                "form_description": str(data[1][0] or "") if data[1] else "", "questions": questions,
+                "reason": "" if questions else "The form has no questions on its first page."}
+    except Exception:
+        return {"platform": "google", "readable": False, "questions": [], "reason": "The form's questions could not be parsed."}
 
 
 def deep_scrape_tender(source: str, resource_id: str, detail_url: str, structured: dict | None = None,
                        cft_docs: list[dict] | None = None, refresh: bool = False,
-                       extra_documents: list[dict] | None = None) -> dict[str, Any]:
+                       extra_documents: list[dict] | None = None, progress=None) -> dict[str, Any]:
     key = (source, resource_id)
     now = time.time()
     if not refresh:
@@ -261,6 +386,13 @@ def deep_scrape_tender(source: str, resource_id: str, detail_url: str, structure
             hit = _CACHE.get(key)
             if hit and now - hit[0] < _CACHE_TTL_S:
                 return {**hit[1], "cached": True}
+
+    def say(msg: str) -> None:
+        if progress:
+            try:
+                progress(msg)
+            except Exception:
+                pass
 
     started = time.time()
     structured = structured or {}
@@ -297,6 +429,7 @@ def deep_scrape_tender(source: str, resource_id: str, detail_url: str, structure
     primary_text = ""
     primary_soup_links: list[tuple[str, str]] = []
     if detail_url:
+        say("Reading the notice page")
         page = _fetch_page(detail_url, "Notice page")
         pages.append({k: v for k, v in page.items() if k not in ("text", "links")} | {"chars": len(page["text"])})
         primary_text = page["text"]
@@ -351,6 +484,7 @@ def deep_scrape_tender(source: str, resource_id: str, detail_url: str, structure
             sub_candidates.append((u, label))
     sub_candidates = sub_candidates[:MAX_PAGES]
 
+    say(f"Reading {len(uniq_docs)} document(s) and {len(sub_candidates)} linked page(s)")
     with ThreadPoolExecutor(max_workers=6) as pool:
         doc_futs = [pool.submit(_fetch_document, u, l) for u, l in uniq_docs]
         page_futs = [pool.submit(_fetch_page, u, l) for u, l in sub_candidates]
@@ -383,6 +517,7 @@ def deep_scrape_tender(source: str, resource_id: str, detail_url: str, structure
             for e in EMAIL_RE.findall(d["text"]):
                 register("mailto:" + e, e, where)
 
+    say(f"Checking {len([r for r in found.values() if r['kind'] == 'form'])} form link(s) and portals")
     # 5. Check each discovered form / portal link (title only, best effort)
     forms = [r for r in found.values() if r["kind"] == "form"]
     portals = [r for r in found.values() if r["kind"] == "portal" and
@@ -401,13 +536,17 @@ def deep_scrape_tender(source: str, resource_id: str, detail_url: str, structure
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         list(pool.map(probe, forms + portals[:5]))
+        for rec, fq in zip(forms, pool.map(lambda f: read_form_questions(f["url"]), forms)):
+            rec["form"] = fq
 
+    say("Collecting deadlines and instructions")
     # 6. Action items: forms first, then portals, then sentences that ask the bidder to do something
     action_items: list[dict[str, Any]] = []
     for rec in forms:
         action_items.append({
             "type": "form", "url": rec["url"], "label": rec.get("page_title") or rec["label"] or "Online form",
             "context": rec["context"], "found_in": rec["found_in"], "reachable": rec.get("reachable"),
+            "form": rec.get("form") or {},
         })
     for rec in portals:
         action_items.append({
@@ -440,6 +579,19 @@ def deep_scrape_tender(source: str, resource_id: str, detail_url: str, structure
         if r["kind"] == "other" and not any(j in r["url"].lower() for j in JUNK_PATH)
     ][:40]
 
+    where_urls = {"Notice page": detail_url}
+    for d in documents:
+        where_urls[f"Document: {d['title']}"] = d["url"]
+    for pg in pages:
+        where_urls[f"Page: {pg.get('title', '')}"] = pg.get("url", "")
+    deadlines = _deadlines(texts, where_urls)
+    for it in action_items + instructions:
+        it["source_url"] = where_urls.get(it.get("found_in") if isinstance(it.get("found_in"), str) else "", "")
+    if any(d["status"] == "scanned_no_ocr" for d in documents):
+        notes.append("Some documents are scanned images and OCR is not installed on the server, so their text was not read.")
+    if any(d["status"] == "read_ocr" for d in documents):
+        notes.append("Some scanned documents were read with OCR and may contain recognition errors.")
+
     result = {
         "ok": True,
         "source": source,
@@ -447,7 +599,8 @@ def deep_scrape_tender(source: str, resource_id: str, detail_url: str, structure
         "detail_url": detail_url,
         "action_items": action_items,
         "instructions": instructions,
-        "deadlines": _deadlines(all_text),
+        "deadlines": deadlines,
+        "date_conflicts": date_conflicts(deadlines),
         "emails": emails,
         "documents": [
             {"title": d["title"], "filename": d["filename"], "url": d["url"], "status": d["status"],

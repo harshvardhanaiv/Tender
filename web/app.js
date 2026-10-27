@@ -1585,8 +1585,76 @@ async function loadPipeline() {
     for (const item of (data.items || [])) {
       state.pipeline[item.tender_key] = item;
     }
+    loadDeepAlerts();
   } catch {/* ignore */ }
 }
+
+// ── Deep-analysis alerts: changed deadlines / new forms from the nightly re-crawl, and response forms not yet ticked as done ──
+let _deepAlerts = [];
+
+function deepAlertKey(key) {
+  const k = String(key || "");
+  return k.includes(":") ? k : `etenders_ie:${k}`;
+}
+
+function deepAlertsFor(key) {
+  const k = deepAlertKey(key);
+  return _deepAlerts.filter(a => deepAlertKey(a.tender_key) === k);
+}
+
+async function loadDeepAlerts() {
+  try {
+    const res = await fetch("/api/deep-alerts");
+    if (!res.ok) return;
+    _deepAlerts = (await res.json()).alerts || [];
+    if (typeof renderRows === "function") renderRows();
+    if ($("dashboardBody") && !$("dashboardBody").closest(".hidden")) renderPipelineBoard();
+  } catch {/* alerts are optional */ }
+}
+
+function deepAlertChip(key) {
+  const list = deepAlertsFor(key);
+  if (!list.length) return "";
+  const red = list.some(a => a.severity === "red");
+  const tip = list.map(a => a.message).join(" ");
+  return `<span class="deep-alert-chip${red ? " deep-alert-chip--red" : ""}" title="${esc(tip)}">⚠ ${list.some(a => a.kind === "form_due") ? "Form due" : "Changed"}</span>`;
+}
+
+function deepAlertsBannerHtml() {
+  if (!_deepAlerts.length) return "";
+  const rows = _deepAlerts.slice(0, 8).map(a => {
+    const title = state.pipeline[a.tender_key]?.title || Object.values(state.pipeline).find(p => deepAlertKey(p.tender_key) === deepAlertKey(a.tender_key))?.title || a.title || a.tender_key;
+    const keyAttr = Object.values(state.pipeline).find(p => deepAlertKey(p.tender_key) === deepAlertKey(a.tender_key))?.tender_key || a.tender_key;
+    return `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:4px">
+      <span>⚠</span><div style="flex:1"><button type="button" class="dash-profile-link" data-deep-alert-open="${esc(keyAttr)}" style="font-weight:700">${esc(title)}</button>
+      <div style="font-size:12px">${esc(a.message)}</div></div>
+      ${a.id ? `<button type="button" class="btn" style="font-size:11px;padding:1px 8px" data-deep-alert-dismiss="${a.id}">Dismiss</button>` : ""}</div>`;
+  }).join("");
+  return `<div class="deep-alert-banner"><div style="font-weight:700;margin-bottom:6px">Must not miss: ${_deepAlerts.length} alert${_deepAlerts.length === 1 ? "" : "s"} on tenders you are tracking</div>${rows}</div>`;
+}
+
+document.addEventListener("click", async (e) => {
+  const dis = e.target.closest?.("[data-deep-alert-dismiss]");
+  if (dis) {
+    const id = Number(dis.getAttribute("data-deep-alert-dismiss"));
+    try {
+      await fetch("/api/deep-alerts/dismiss", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      _deepAlerts = _deepAlerts.filter(a => a.id !== id);
+      renderPipelineBoard();
+      if (typeof renderRows === "function") renderRows();
+    } catch {/* ignore */ }
+    return;
+  }
+  const open = e.target.closest?.("[data-deep-alert-open]");
+  if (open) {
+    const key = open.getAttribute("data-deep-alert-open");
+    const item = state.pipeline[key];
+    if (item) {
+      const [src, ...rest] = String(deepAlertKey(key)).split(":");
+      openDeepModal({ source: src, resource_id: rest.join(":"), title: item.title });
+    }
+  }
+});
 
 // `existingKey` is the key a tracked tender already has (moving a card on the board): a pipeline item carries no resource id, so
 // rowKey(item) would make a different, title-based key and the move would save a second card and lose the original's tag.
@@ -6170,6 +6238,7 @@ function buildResultRow(row) {
       matchBadge.textContent = `Matched: ${row._match_reason}`;
       tdTitle.appendChild(matchBadge);
     }
+    if (_deepAlerts.length) tdTitle.insertAdjacentHTML("beforeend", deepAlertChip(rowKey(row)));
     tr.appendChild(tdTitle);
 
     // Buyer / Authority
@@ -6275,6 +6344,7 @@ function buildResultRow(row) {
       matchBadge.textContent = `Matched: ${row._match_reason}`;
       tdTitle.appendChild(matchBadge);
     }
+    if (_deepAlerts.length) tdTitle.insertAdjacentHTML("beforeend", deepAlertChip(rowKey(row)));
     tr.appendChild(tdTitle);
 
     // Awarded Supplier
@@ -6393,6 +6463,7 @@ function buildResultRow(row) {
       matchBadge.textContent = `Matched: ${row._match_reason}`;
       tdTitle.appendChild(matchBadge);
     }
+    if (_deepAlerts.length) tdTitle.insertAdjacentHTML("beforeend", deepAlertChip(rowKey(row)));
     tr.appendChild(tdTitle);
 
     const authTd = document.createElement("td");
@@ -7670,6 +7741,7 @@ function renderPipelineBoard() {
           <div class="dash-card__title">${esc(item.title || key)}</div>
           ${item.contracting_authority ? `<div class="dash-card__auth">${esc(item.contracting_authority)}</div>` : ""}
           ${item.notes ? `<div class="dash-card__notes">${esc(item.notes)}</div>` : ""}
+          ${deepAlertsFor(key).length ? `<div class="deep-alert-strip">${deepAlertsFor(key).map(a => `⚠ ${esc(a.message)}`).join("<br>")}</div>` : ""}
           <div class="dash-card__actions">
             <select class="dash-card__stage-select" data-key="${esc(key)}" title="Change stage" aria-label="Change stage">
               ${stageSelectOptions}
@@ -7692,7 +7764,7 @@ function renderPipelineBoard() {
   }).filter((html, idx) => _pipelineKind === "buyer" || _pipelineKind === "supplier" ? PIPELINE_STAGES[idx] === "watching" : true).join("");
 
   const entityOnly = _pipelineKind === "buyer" || _pipelineKind === "supplier";
-  body.innerHTML = statsHtml + accordionHtml +
+  body.innerHTML = (entityOnly ? "" : deepAlertsBannerHtml()) + statsHtml + accordionHtml +
     `<div class="dash-section"><div class="dash-section__title">Pipeline board${entities.length ? ` <span class="dash-acc__count" title="Watched buyers and suppliers are in the Watching column">${entities.length} watched</span>` : ""}</div></div>` +
     `<div class="dash-kanban${entityOnly ? " dash-kanban--single" : ""}">${colsHtml}</div>`;
 
@@ -10310,17 +10382,336 @@ async function openDeepModal(row, refresh = false) {
   }, 100);
   try {
     if (!source || !rid) throw new Error("This tender has no source or id to crawl.");
-    const res = await fetch(`/api/tender-deep/${encodeURIComponent(source)}/${encodeURIComponent(rid)}${refresh ? "?refresh=1" : ""}`);
-    const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.error || "Deep analysis failed");
-    $("modalBody").innerHTML = renderDeepAnalysis(data, row);
+    const startRes = await fetch("/api/tender-deep-start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source, resource_id: rid, refresh: !!refresh }),
+    });
+    const started = await startRes.json();
+    if (!startRes.ok || !started.ok) throw new Error(started.error || "Could not start the crawl");
+    let data = null;
+    const seenSteps = [];
+    while (!data) {
+      await new Promise(r => setTimeout(r, 700));
+      const st = await (await fetch(`/api/tender-deep-status/${started.job_id}`)).json();
+      if (!st.ok) throw new Error(st.error || "Deep analysis failed");
+      if (st.costs) _deepCosts = st.costs;
+      (st.steps || []).forEach(s => { if (!seenSteps.includes(s)) seenSteps.push(s); });
+      const txt = $("deepLoadingText");
+      if (txt) {
+        txt.classList.remove("blink-cursor");
+        txt.innerHTML = seenSteps.map((s, i) => i < seenSteps.length - 1
+          ? `<div style="color:#166534">✓ ${esc(s)}</div>`
+          : `<div class="blink-cursor">⏳ ${esc(s)}…</div>`).join("");
+      }
+      if (st.status === "done") data = st.result;
+    }
+    _deepData = data;
+    _deepRow = row;
+    $("modalBody").innerHTML = `<div id="deepAiBox"></div>` + renderDeepAnalysis(data, row);
     $("btnDeepRefresh")?.addEventListener("click", () => openDeepModal(row, true));
+    initDeepAi(row, refresh);
   } catch (err) {
     $("modalBody").innerHTML = `<p style="color:#b91c1c;padding:10px 0">Error: ${esc(String(err.message || err))}</p>`;
   } finally {
     clearInterval(timer);
   }
 }
+
+let _deepData = null;
+let _deepRow = null;
+let _deepDone = new Set();
+
+function deepItemKey(label) {
+  return String(label || "").toLowerCase().split(/\s+/).filter(Boolean).join(" ").slice(0, 280);
+}
+
+function updateDeepProgress() {
+  const boxes = document.querySelectorAll("#deepAiBox .deep-check");
+  const el = document.getElementById("deepChecklistCount");
+  if (!el) return;
+  const done = Array.from(boxes).filter(b => b.checked).length;
+  el.textContent = boxes.length ? `${done} of ${boxes.length} done` : "";
+  el.style.color = boxes.length && done === boxes.length ? "#166534" : "#b45309";
+}
+
+function deepCheckRow(label, html) {
+  const done = _deepDone.has(deepItemKey(label));
+  return `<li style="list-style:none;margin-left:-18px;margin-bottom:6px;display:flex;gap:8px;align-items:flex-start">
+    <input type="checkbox" class="deep-check" data-label="${esc(label)}" ${done ? "checked" : ""} style="margin-top:3px">
+    <div>${html}</div></li>`;
+}
+
+document.addEventListener("change", async (e) => {
+  const cb = e.target.closest?.(".deep-check");
+  if (!cb || !_deepRow) return;
+  updateDeepProgress();
+  try {
+    const res = await fetch("/api/tender-deep-checklist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: _deepRow.source, resource_id: _deepRow.resource_id, label: cb.getAttribute("data-label"), done: cb.checked }),
+    });
+    if (!res.ok) throw new Error("save failed");
+  } catch (err) {
+    cb.checked = !cb.checked;
+    updateDeepProgress();
+    cpShowToast("Could not save the tick. Try again.", "error");
+  }
+});
+
+let _deepCosts = { briefing: 5, form_answers: 3 };
+let _deepFormAnswers = {};
+
+function deepForms() {
+  return (_deepData?.action_items || []).filter(a => a.type === "form");
+}
+
+function showDeepBriefing(analysis, coverage) {
+  if (!$("deepAiBox")) return;
+  _deepBriefing = { analysis: analysis || {}, coverage: coverage || [] };
+  $("deepAiBox").innerHTML = renderDeepAi(analysis || {}, coverage || []);
+  updateDeepProgress();
+}
+
+async function initDeepAi(row, refresh) {
+  const box = $("deepAiBox");
+  if (!box) return;
+  _deepFormAnswers = {};
+  let saved = null;
+  try {
+    saved = await (await fetch(`/api/tender-deep-saved?source=${encodeURIComponent(row.source)}&resource_id=${encodeURIComponent(row.resource_id)}`)).json();
+  } catch (e) { /* saved drafts are optional */ }
+  try {
+    const cl = await (await fetch(`/api/tender-deep-checklist?source=${encodeURIComponent(row.source)}&resource_id=${encodeURIComponent(row.resource_id)}`)).json();
+    _deepDone = new Set(cl.done || []);
+  } catch (e) { _deepDone = new Set(); }
+  _deepBriefing = null;
+  document.querySelectorAll(".deep-check[data-form-tick]").forEach(cb => {
+    cb.checked = _deepDone.has(deepItemKey(cb.getAttribute("data-label")));
+  });
+  const byUrl = {};
+  Object.values(saved?.forms || {}).forEach(f => { byUrl[f.form_url] = f.answers; });
+  deepForms().forEach((f, i) => {
+    if (byUrl[f.url]) { _deepFormAnswers[i] = byUrl[f.url]; drawFormOut(i); }
+  });
+  if (saved?.briefing && !refresh) {
+    showDeepBriefing(saved.briefing.analysis, saved.briefing.coverage);
+  } else {
+    box.innerHTML = `<div style="border:1px solid #bae6fd;background:#f0f9ff;border-radius:10px;padding:12px 14px;margin-bottom:16px">
+      <button type="button" class="btn btn--summary" data-deep-run-ai="1">🧠 Run AI briefing (${_deepCosts.briefing} credits)</button>
+      <span style="font-size:12px;color:#475569;margin-left:8px">The crawl results below are free. The briefing lists every step, deadline and requirement.</span></div>`;
+  }
+}
+
+async function runDeepAi(row) {
+  const box = $("deepAiBox");
+  if (!box) return;
+  box.innerHTML = `<div style="border:1px solid #bae6fd;background:#f0f9ff;border-radius:10px;padding:12px 14px;margin-bottom:16px">
+    <span class="blink-cursor">🧠 AI is reading everything that was crawled…</span></div>`;
+  try {
+    const res = await fetch("/api/tender-deep-ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: row.source, resource_id: row.resource_id, title: row.title,
+        profile_id: getActiveProfile()?.id || null,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || "AI analysis failed");
+    refreshCredits();
+    showDeepBriefing(data.analysis, data.coverage);
+  } catch (err) {
+    if ($("deepAiBox")) $("deepAiBox").innerHTML = `<p style="color:#b91c1c;font-size:13px;margin-bottom:12px">AI briefing unavailable: ${esc(String(err.message || err))}. The crawl results below are still complete.
+      <button type="button" class="btn" style="font-size:11px;padding:2px 8px" data-deep-run-ai="1">Try again</button></p>`;
+  }
+}
+
+function renderDeepAi(a, coverage) {
+  const list = (arr, fn) => (arr && arr.length) ? `<ul style="margin:0;padding-left:18px">${arr.map(fn).join("")}</ul>` : `<span style="color:#64748b">Not stated</span>`;
+  const sec = (t, b) => `<div style="margin-bottom:12px"><div style="font-weight:700;font-size:13px;color:#1e293b;margin-bottom:4px">${t}</div>${b}</div>`;
+  const lnk = (u) => u ? ` <a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="word-break:break-all">${esc(u)}</a>` : "";
+  const src = (s) => s ? ` <span style="color:#94a3b8;font-size:11px">(${esc(s)})</span>` : "";
+  const com = a.commercial || {};
+  let h = `<div style="border:1px solid #bae6fd;background:#f0f9ff;border-radius:10px;padding:14px;margin-bottom:16px">
+    <div style="font-weight:700;color:#0369a1;margin-bottom:8px">🧠 AI briefing: nothing to miss</div>
+    <p style="margin:0 0 12px;line-height:1.5">${esc(a.headline || "")}</p>`;
+  h += sec(`✅ How to respond, in order <span id="deepChecklistCount" style="font-weight:600;font-size:12px;margin-left:6px"></span>`, list(a.how_to_respond, x =>
+    deepCheckRow(x.step, `<strong>${esc(x.step)}</strong>${x.deadline ? ` · <span style="color:#b45309">${esc(x.deadline)}</span>` : ""}<br>${esc(x.detail || "")}${lnk(x.url)}${src(x.source)}`)));
+  h += sec("⚠️ Must not miss", list(a.must_not_miss, x => `<li style="margin-bottom:3px"><strong>${esc(x.item)}</strong>: ${esc(x.why || "")}${src(x.source)}</li>`));
+  h += sec("⏰ Deadlines", list(a.deadlines, x => `<li><strong>${esc(x.when)}</strong> ${esc(x.what)}${src(x.source)}</li>`));
+  h += sec("🔒 Mandatory requirements", list(a.mandatory_requirements, x => `<li>${esc(x)}</li>`));
+  h += sec("📎 Documents to submit", list(a.documents_to_submit, x => deepCheckRow(x, esc(x))));
+  h += sec("🎯 Evaluation criteria", list(a.evaluation_criteria, x => `<li>${esc(x)}</li>`));
+  h += sec("📦 Scope", `<div>${esc(a.scope_summary || "Not stated")}</div>`);
+  h += sec("💷 Commercial", `<div>Value: ${esc(com.value || "Not stated")} · Duration: ${esc(com.duration || "Not stated")} · Payment: ${esc(com.payment || "Not stated")} · Extension: ${esc(com.extension || "Not stated")}</div>`);
+  if ((a.notice_changes || []).length) h += sec("🔄 Changes between notice versions", list(a.notice_changes, x => `<li>${esc(x)}</li>`));
+  if ((a.risks_or_ambiguities || []).length) h += sec("❓ Risks and ambiguities", list(a.risks_or_ambiguities, x => `<li>${esc(x)}</li>`));
+  if ((a.contacts || []).length) h += sec("☎️ Contacts", list(a.contacts, x => `<li>${esc(x.name_or_role || "")} ${esc(x.email_or_phone || "")}</li>`));
+  if (coverage.length) {
+    h += `<div style="border-top:1px dashed #94a3b8;padding-top:8px;margin-top:8px"><div style="font-weight:700;font-size:12px;color:#b45309">Not covered by this analysis</div>
+      <ul style="margin:4px 0 0;padding-left:18px;font-size:12px;color:#92400e">${coverage.map(c => `<li>${esc(c)}</li>`).join("")}</ul></div>`;
+  }
+  h += `<div style="font-size:11px;color:#64748b;margin-top:8px">AI summary of the crawled text. Check dates and instructions against the buyer's notice before relying on them. Saved for you.
+    <button type="button" class="btn" style="font-size:11px;padding:2px 8px;margin-left:6px" data-deep-run-ai="1">Re-run (${_deepCosts.briefing} credits)</button></div></div>`;
+  return h;
+}
+
+function saveFormAnswers(idx) {
+  const item = deepForms()[idx];
+  if (!item || !_deepFormAnswers[idx]) return;
+  fetch("/api/tender-deep-saved-form", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source: _deepRow.source, resource_id: _deepRow.resource_id, form_url: item.url, answers: _deepFormAnswers[idx] }),
+  }).catch(() => {});
+}
+
+function drawFormOut(idx) {
+  const out = document.getElementById(`deepFormOut${idx}`);
+  const answers = _deepFormAnswers[idx];
+  if (!out || !answers) return;
+  const act = (name, i, label) => `<a href="#" data-deep-act="${name}" data-form="${idx}" data-i="${i}">${label}</a>`;
+  out.innerHTML = `<div style="font-size:12px;color:#92400e;margin-bottom:6px">Drafts only. Nothing was submitted. Edit any answer below (your edits are saved), fill the ones marked "needs your input", then paste into the form.</div>` +
+    answers.map((a, i) => `<div style="border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:8px;background:${a.status === "needs_input" && !(a.answer || "").trim() ? "#fffbeb" : "#fff"}">
+      <div style="font-weight:600">${i + 1}. ${esc(a.question)}</div>
+      ${(a.options || []).length ? `<div style="font-size:11px;color:#64748b">Options: ${esc(a.options.join(" / "))}</div>` : ""}
+      ${a.status === "needs_input" && !(a.answer || "").trim() ? `<div style="color:#b45309;margin-top:3px">⚠️ Needs your input: ${esc(a.note || "")}</div>` : ""}
+      <textarea class="deep-ans" data-form="${idx}" data-i="${i}" rows="3" style="width:100%;margin-top:4px;font-size:13px">${esc(a.answer || "")}</textarea>
+      <div style="font-size:11px;color:#94a3b8;margin-top:2px">${a.source ? "Based on: " + esc(a.source) + " · " : ""}${act("copy", i, "Copy")} · ${act("redraft", i, `Re-draft (${_deepCosts.form_answers} credits)`)} · ${act("bank", i, "Save to Answer Bank")}</div>
+    </div>`).join("") +
+    `<button type="button" class="btn" data-deep-act="copyall" data-form="${idx}" data-i="0">Copy all answers</button>`;
+}
+
+async function callFormAnswers(idx, questions, pasted) {
+  const item = deepForms()[idx];
+  const res = await fetch("/api/tender-deep-form-answers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      source: _deepRow.source, resource_id: _deepRow.resource_id, title: _deepRow.title,
+      form_url: item.url, profile_id: getActiveProfile()?.id || null,
+      questions: questions || [], pasted_text: pasted || "",
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) throw new Error(data.error || "Could not draft answers");
+  refreshCredits();
+  return data.answers || [];
+}
+
+async function draftFormAnswers(idx, btn) {
+  const item = deepForms()[idx];
+  const out = document.getElementById(`deepFormOut${idx}`);
+  if (!item || !out) return;
+  const readable = !!(item.form && item.form.readable);
+  const pasted = (document.getElementById(`deepFormPaste${idx}`)?.value || "").trim();
+  if (!readable && !pasted) {
+    out.innerHTML = `<span style="color:#b91c1c">Paste the form's questions (or upload the questionnaire) above first.</span>`;
+    return;
+  }
+  btn.disabled = true;
+  out.innerHTML = `<span class="blink-cursor">✍️ Drafting answers from your company profile…</span>`;
+  try {
+    _deepFormAnswers[idx] = await callFormAnswers(idx, readable ? item.form.questions : [], readable ? "" : pasted);
+    saveFormAnswers(idx);
+    drawFormOut(idx);
+  } catch (err) {
+    out.innerHTML = `<span style="color:#b91c1c">${esc(String(err.message || err))}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.addEventListener("click", async (e) => {
+  const runAi = e.target.closest?.("[data-deep-run-ai]");
+  if (runAi && _deepRow) { runDeepAi(_deepRow); return; }
+  const draft = e.target.closest?.("[data-deep-draft]");
+  if (draft) { draftFormAnswers(Number(draft.getAttribute("data-deep-draft")), draft); return; }
+  const el = e.target.closest?.("[data-deep-act]");
+  if (!el) return;
+  e.preventDefault();
+  const idx = Number(el.getAttribute("data-form"));
+  const i = Number(el.getAttribute("data-i"));
+  const answers = _deepFormAnswers[idx] || [];
+  const act = el.getAttribute("data-deep-act");
+  if (act === "copy") {
+    navigator.clipboard?.writeText(answers[i]?.answer || "");
+    el.textContent = "Copied";
+  } else if (act === "copyall") {
+    const lines = [];
+    answers.forEach((a, n) => { lines.push(`${n + 1}. ${a.question}`); lines.push(a.answer || ""); lines.push(""); });
+    navigator.clipboard?.writeText(lines.join("\n"));
+    el.textContent = "Copied all";
+  } else if (act === "bank") {
+    const a = answers[i];
+    if (!a || !(a.answer || "").trim()) { cpShowToast("Write an answer first.", "error"); return; }
+    try {
+      const res = await fetch("/api/answer-bank", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category: "Tender form answers", question: a.question, answer: a.answer, profile_id: getActiveProfile()?.id || null }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Save failed");
+      el.textContent = "Saved to Answer Bank";
+    } catch (err) {
+      cpShowToast(String(err.message || err), "error");
+    }
+  } else if (act === "redraft") {
+    const a = answers[i];
+    if (!a) return;
+    el.textContent = "Re-drafting…";
+    try {
+      const fresh = await callFormAnswers(idx, [{ title: a.question, type: a.type || "", options: a.options || [] }], "");
+      if (fresh[0]) answers[i] = { ...answers[i], ...fresh[0], question: a.question };
+      saveFormAnswers(idx);
+      drawFormOut(idx);
+    } catch (err) {
+      el.textContent = "Re-draft failed";
+      cpShowToast(String(err.message || err), "error");
+    }
+  }
+});
+
+document.addEventListener("change", (e) => {
+  const ta = e.target.closest?.(".deep-ans");
+  if (ta) {
+    const idx = Number(ta.getAttribute("data-form"));
+    const i = Number(ta.getAttribute("data-i"));
+    const a = (_deepFormAnswers[idx] || [])[i];
+    if (a) {
+      a.answer = ta.value;
+      a.status = ta.value.trim() ? "answered" : "needs_input";
+      saveFormAnswers(idx);
+    }
+    return;
+  }
+  const fileInput = e.target.closest?.("[data-deep-file]");
+  if (fileInput && fileInput.files && fileInput.files[0]) {
+    const idx = Number(fileInput.getAttribute("data-deep-file"));
+    const file = fileInput.files[0];
+    const target = document.getElementById(`deepFormPaste${idx}`);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const b64 = String(reader.result).split(",")[1] || "";
+        const res = await fetch("/api/tender-deep-extract-file", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: file.name, content: b64 }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || "Could not read the file");
+        if (target) target.value = data.text;
+      } catch (err) {
+        cpShowToast(String(err.message || err), "error");
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+});
 
 function renderDeepAnalysis(d, row) {
   const link = (u, t) => `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="word-break:break-all">${esc(t || u)}</a>`;
@@ -10329,13 +10720,57 @@ function renderDeepAnalysis(d, row) {
 
   const forms = (d.action_items || []).filter(a => a.type === "form");
   const portals = (d.action_items || []).filter(a => a.type === "portal");
+  {
+    const docsAll = (d.documents || []).length + (d.documents_unread || []).length;
+    const docsOk = (d.documents || []).filter(x => x.status === "read").length;
+    const pagesOk = (d.pages || []).filter(p => p.status === "read").length;
+    const formsOk = forms.filter(f => f.form && f.form.readable).length;
+    const total = docsAll + (d.pages || []).length + forms.length;
+    const ok = docsOk + pagesOk + formsOk;
+    const full = ok === total;
+    html += `<div style="border:1px solid ${full ? "#bbf7d0" : "#fde68a"};background:${full ? "#f0fdf4" : "#fffbeb"};border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:13px;color:${full ? "#166534" : "#92400e"}">
+      <strong>Crawl completeness: ${ok} of ${total} items read</strong> (${(d.pages || []).length} pages, ${docsAll} documents, ${forms.length} forms)${full ? "" : ". Items not read are listed below: check them on the buyer's portal."}</div>`;
+  }
+  {
+    // red "must not miss" strip: everything that loses a bid if it is overlooked, in one place
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const upcoming = (d.deadlines || []).filter(x => x.kind === "submission" && x.iso && new Date(x.iso) >= today)
+      .sort((a, b) => a.iso.localeCompare(b.iso))[0];
+    const unreadDocs = (d.documents || []).filter(x => x.status === "scanned_no_ocr").length + (d.documents_unread || []).length;
+    const strip = [];
+    if (forms.length) strip.push(`<strong>${forms.length}</strong> response form${forms.length === 1 ? "" : "s"} to submit`);
+    if (upcoming) {
+      const days = Math.round((new Date(upcoming.iso) - today) / 864e5);
+      strip.push(`submission date <strong>${esc(upcoming.date)}</strong> (${days === 0 ? "today" : days + " day" + (days === 1 ? "" : "s")})`);
+    }
+    if ((d.date_conflicts || []).length) strip.push(`<strong>conflicting dates</strong> found`);
+    if (unreadDocs) strip.push(`<strong>${unreadDocs}</strong> document${unreadDocs === 1 ? "" : "s"} not read`);
+    if (strip.length) {
+      html += `<div class="deep-mustmiss"><strong>Must not miss:</strong> ${strip.join(" · ")}</div>`;
+    }
+    (d.date_conflicts || []).forEach(c => {
+      html += `<div style="border:1px solid #fdba74;background:#fff7ed;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#9a3412">
+        <strong>⚠ The ${c.kind === "clarification" ? "clarification" : "submission"} date is given as more than one value.</strong> Confirm the right one with the buyer:
+        <ul style="margin:4px 0 0;padding-left:18px">${c.dates.map(x => `<li>${esc(x.date)} ${x.source_url ? link(x.source_url, x.found_in) : `<span style="color:#94a3b8">(${esc(x.found_in)})</span>`}</li>`).join("")}</ul></div>`;
+    });
+  }
   if (forms.length) {
     html += `<div style="border:1px solid #fca5a5;background:#fef2f2;border-radius:10px;padding:12px 14px;margin-bottom:16px">
       <div style="font-weight:700;color:#b91c1c;margin-bottom:6px">⚠️ Action required: ${forms.length === 1 ? "a response form must be submitted" : forms.length + " response forms found"}</div>
-      ${forms.map(f => `<div style="margin-bottom:10px">
+      ${forms.map((f, fi) => `<div style="margin-bottom:10px">
         <div>${link(f.url, f.label)}${f.reachable === false ? ' <span style="color:#b91c1c">(link did not open)</span>' : ""}</div>
+        <label style="font-size:12px;display:inline-flex;gap:6px;align-items:center;margin-top:3px"><input type="checkbox" class="deep-check" data-form-tick="1" data-label="${esc("Submit form: " + f.url)}"> I have submitted this form</label>
         ${f.context ? `<div style="font-size:12px;color:#475569;margin-top:3px">…${esc(f.context)}…</div>` : ""}
         <div style="font-size:11px;color:#64748b;margin-top:2px">Found in: ${esc((f.found_in || []).join(", "))}</div>
+        <div style="margin-top:8px">
+          ${f.form && f.form.readable
+            ? `<div style="font-size:12px;color:#166534">Read ${f.form.questions.length} questions from this form.</div>`
+            : `<div style="font-size:12px;color:#92400e">${esc((f.form && f.form.reason) || "Questions could not be read.")} Open the form, copy its questions and paste them here:</div>
+               <textarea id="deepFormPaste${fi}" rows="4" style="width:100%;margin-top:4px;font-size:12px" placeholder="Paste the form's questions here"></textarea>
+               <div style="font-size:12px;color:#475569;margin-top:2px">Or upload the questionnaire (Word, PDF, Excel or text): <input type="file" data-deep-file="${fi}" accept=".docx,.doc,.pdf,.txt,.xlsx"></div>`}
+          <button type="button" class="btn btn--summary" style="margin-top:6px" data-deep-draft="${fi}">✍️ Draft answers with AI (${_deepCosts.form_answers} credits)</button>
+          <div id="deepFormOut${fi}" style="margin-top:8px;font-size:13px"></div>
+        </div>
       </div>`).join("")}
     </div>`;
   } else {
@@ -10347,17 +10782,20 @@ function renderDeepAnalysis(d, row) {
     html += sec("🔗 Portals and external systems", portals.map(p =>
       `<div style="margin-bottom:6px">${link(p.url, p.label)}<div style="font-size:11px;color:#64748b">Found in: ${esc((p.found_in || []).join(", "))}</div></div>`).join(""));
   }
+  html += "<!--TAB:dates-->";
+  const srcLink = (name, url) => url ? link(url, name) : esc(name);
   if ((d.deadlines || []).length) {
     html += sec("⏰ Dates and deadlines", `<ul style="margin:0;padding-left:18px">${d.deadlines.map(x =>
-      `<li style="margin-bottom:4px"><strong>${esc(x.date)}</strong> <span style="color:#64748b;font-size:12px">…${esc(x.context)}…</span></li>`).join("")}</ul>`);
+      `<li style="margin-bottom:4px"><strong>${esc(x.date)}</strong>${x.kind && x.kind !== "other" ? ` <span style="font-size:11px;background:#e2e8f0;border-radius:4px;padding:0 5px">${x.kind === "submission" ? "submission" : "clarification"}</span>` : ""} <span style="color:#64748b;font-size:12px">…${esc(x.context)}…</span> <span style="font-size:11px">(${srcLink(x.found_in || "source", x.source_url)})</span></li>`).join("")}</ul>`);
   }
   if ((d.instructions || []).length) {
     html += sec("📌 What the buyer asks bidders to do", `<ul style="margin:0;padding-left:18px">${d.instructions.map(x =>
-      `<li style="margin-bottom:4px">${esc(x.text)} <span style="color:#94a3b8;font-size:11px">(${esc(x.found_in)})</span></li>`).join("")}</ul>`);
+      `<li style="margin-bottom:4px">${esc(x.text)} <span style="color:#94a3b8;font-size:11px">(${srcLink(x.found_in, x.source_url)})</span></li>`).join("")}</ul>`);
   }
   if ((d.emails || []).length) {
     html += sec("✉️ Contact emails", d.emails.map(e => `<a href="mailto:${esc(e)}">${esc(e)}</a>`).join(" · "));
   }
+  html += "<!--TAB:docs-->";
   if ((d.documents || []).length || (d.documents_unread || []).length) {
     html += sec(`📎 Documents (${(d.documents || []).length} read)`, [
       ...(d.documents || []).map(x => `<div style="margin-bottom:8px">
@@ -10376,13 +10814,88 @@ function renderDeepAnalysis(d, row) {
       <ul style="margin:6px 0 0;padding-left:18px">${d.other_links.map(l => `<li>${link(l.url, l.label || l.url)}</li>`).join("")}</ul></details>`;
   }
   (d.notes || []).forEach(n => { html += `<p style="font-size:12px;color:#b45309">${esc(n)}</p>`; });
+  html += "<!--TAB:text-->";
   if (d.full_text) {
-    html += `<details style="margin-bottom:12px"><summary style="cursor:pointer;font-weight:600;font-size:13px">Everything that was read (${(d.text_chars || 0).toLocaleString()} characters)</summary>
-      <pre style="white-space:pre-wrap;font-size:12px;max-height:340px;overflow:auto;background:#f8fafc;padding:10px;border-radius:8px">${esc(d.full_text)}</pre></details>`;
+    html += `<div style="font-weight:600;font-size:13px;margin-bottom:6px">Everything that was read (${(d.text_chars || 0).toLocaleString()} characters)</div>
+      <pre style="white-space:pre-wrap;font-size:12px;max-height:60vh;overflow:auto;background:#f8fafc;padding:10px;border-radius:8px">${esc(d.full_text)}</pre>`;
+  } else {
+    html += `<p style="color:#64748b">No text was read.</p>`;
   }
-  html += `<div style="font-size:11px;color:#64748b">Crawled in ${d.elapsed_s}s${d.cached ? " (saved result)" : ""} · <button type="button" id="btnDeepRefresh" class="btn" style="font-size:11px;padding:2px 8px">Re-scan</button></div>`;
-  return html;
+
+  // tabs: the first chunk is the overview, each marker starts the next tab
+  const names = ["overview", "dates", "docs", "text"];
+  const labels = ["Overview", "Dates & asks", "Documents & pages", "Everything read"];
+  const chunks = html.split(/<!--TAB:(?:dates|docs|text)-->/);
+  const tabs = `<div class="deep-tabs" role="tablist">${names.map((n, i) =>
+    `<button type="button" role="tab" class="deep-tab${i === 0 ? " is-active" : ""}" data-deep-tab="${n}">${labels[i]}</button>`).join("")}</div>`;
+  const panels = chunks.map((c, i) => `<div class="deep-tabpanel" data-deeptab="${names[i]}"${i ? " hidden" : ""}>${c}</div>`).join("");
+  const footer = `<div style="font-size:11px;color:#64748b;margin-top:8px">Crawled in ${d.elapsed_s}s${d.cached ? " (saved result)" : ""} ·
+    <button type="button" id="btnDeepRefresh" class="btn" style="font-size:11px;padding:2px 8px">Re-scan</button>
+    <button type="button" class="btn" style="font-size:11px;padding:2px 8px" data-deep-export="word">Download Word</button>
+    <button type="button" class="btn" style="font-size:11px;padding:2px 8px" data-deep-export="pdf">Print / save as PDF</button></div>`;
+  return tabs + panels + footer;
 }
+
+let _deepBriefing = null;
+
+function deepExportHtml() {
+  const d = _deepData || {};
+  const e = esc;
+  const ul = (arr, fn) => (arr && arr.length) ? `<ul>${arr.map(fn).join("")}</ul>` : "<p>None found.</p>";
+  const b = _deepBriefing;
+  let h = `<h1>Deep analysis: ${e(_deepRow?.title || "tender")}</h1><p>Source: ${e(_deepRow?.source || "")} · ${d.detail_url ? e(d.detail_url) : ""}</p>`;
+  h += "<h2>Must not miss</h2>" + ul((d.action_items || []), a => `<li><b>${a.type === "form" ? "Form" : "Portal"}:</b> ${e(a.label || "")} - ${e(a.url)}</li>`);
+  (d.date_conflicts || []).forEach(c => { h += `<p><b>Conflicting ${e(c.kind)} dates:</b> ${c.dates.map(x => e(x.date) + " (" + e(x.found_in) + ")").join("; ")}</p>`; });
+  h += "<h2>Dates and deadlines</h2>" + ul(d.deadlines, x => `<li><b>${e(x.date)}</b> ${e(x.context)} (${e(x.found_in || "")})</li>`);
+  h += "<h2>What the buyer asks bidders to do</h2>" + ul(d.instructions, x => `<li>${e(x.text)} (${e(x.found_in)})</li>`);
+  deepForms().forEach((f, i) => {
+    const ans = _deepFormAnswers[i];
+    if (ans && ans.length) h += `<h2>Draft answers: ${e(f.label || f.url)}</h2><p>Drafts only, not submitted.</p>` +
+      ans.map((a, n) => `<p><b>${n + 1}. ${e(a.question)}</b><br>${e(a.answer || "(needs input)")}</p>`).join("");
+  });
+  if (b && b.analysis) {
+    const a = b.analysis;
+    h += `<h2>AI briefing</h2><p>${e(a.headline || "")}</p><h3>How to respond</h3>` + ul(a.how_to_respond, x => `<li><b>${e(x.step)}</b> ${e(x.deadline || "")} ${e(x.detail || "")}</li>`) +
+      "<h3>Must not miss</h3>" + ul(a.must_not_miss, x => `<li><b>${e(x.item)}</b>: ${e(x.why || "")}</li>`) +
+      "<h3>Mandatory requirements</h3>" + ul(a.mandatory_requirements, x => `<li>${e(x)}</li>`) +
+      "<h3>Documents to submit</h3>" + ul(a.documents_to_submit, x => `<li>${e(x)}</li>`);
+  }
+  h += "<h2>Documents read</h2>" + ul(d.documents, x => `<li>${e(x.title)} (${e(x.status)}) ${e(x.url || "")}</li>`);
+  return h;
+}
+
+function deepExport(kind) {
+  const body = deepExportHtml();
+  const doc = `<html><head><meta charset="utf-8"><title>Deep analysis</title><style>body{font-family:Calibri,Arial,sans-serif;font-size:11pt}h1{font-size:18pt}h2{font-size:14pt;margin-top:16pt}</style></head><body>${body}</body></html>`;
+  if (kind === "word") {
+    const blob = new Blob(["﻿", doc], { type: "application/msword" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `deep-analysis-${String(_deepRow?.resource_id || "tender").replace(/[^\w-]+/g, "_")}.doc`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  } else {
+    const w = window.open("", "_blank");
+    if (!w) { cpShowToast("Allow pop-ups to print or save as PDF.", "error"); return; }
+    w.document.write(doc);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 300);
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const tab = e.target.closest?.("[data-deep-tab]");
+  if (tab) {
+    const name = tab.getAttribute("data-deep-tab");
+    document.querySelectorAll(".deep-tab").forEach(t => t.classList.toggle("is-active", t === tab));
+    document.querySelectorAll(".deep-tabpanel").forEach(p => { p.hidden = p.getAttribute("data-deeptab") !== name; });
+    return;
+  }
+  const ex = e.target.closest?.("[data-deep-export]");
+  if (ex) deepExport(ex.getAttribute("data-deep-export"));
+});
 
 // ── Date Filter Preset Pills & Slider Helper Functions & Event Handlers ──
 

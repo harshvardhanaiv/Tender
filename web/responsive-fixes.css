@@ -20,8 +20,11 @@ body.tf-shell .profile-header__title-row { flex-wrap: wrap; }
 body.tf-shell .tf-keyword { flex: 1 1 360px; min-width: min(100%, 190px); } /* shrinks first, so "Clear all" and the star stay on the first row */
 body.tf-shell .tf-keyword .sidebar-search-input { min-width: 0; text-overflow: ellipsis; }
 /* Summary / Clarifications / Bid Response: one even row that wraps instead of squeezing */
-.details-panel__btn-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.details-panel__btn-row .btn { flex: 1 1 auto; white-space: nowrap; min-width: max-content; }
+/* two even columns (four buttons = 2 rows, not four stacked rows that leave no room for the details to scroll) */
+.details-panel__btn-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.details-panel__btn-row .btn { white-space: nowrap; min-width: 0; width: 100%; }
+/* the details body is the scroller: always vertical, never sideways */
+.card--side .details { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 
 /* ── Table beside the open details panel (1,420px of columns in an 807px area) ── */
 .table-wrap { container-type: inline-size; container-name: results; }
@@ -34,9 +37,11 @@ body.tf-shell .tf-keyword .sidebar-search-input { min-width: 0; text-overflow: e
   .table col.col-fit, .table th.col-fit { width: 112px !important; min-width: 0 !important; }
 }
 @container results (max-width: 1000px) {
-  .table :is(.col-source, .col-ai-score, .col-procedure, .col-status) { display: none; }
-  .table col.col-title, .table th.col-title { width: 240px !important; }
-  .table col.col-authority, .table th.col-authority { width: 160px !important; }
+  /* Source stays: it is how people tell which portal a tender came from */
+  .table :is(.col-ai-score, .col-procedure, .col-status) { display: none; }
+  .table col.col-title, .table th.col-title { width: 220px !important; }
+  .table col.col-authority, .table th.col-authority { width: 150px !important; }
+  .table col.col-source, .table th.col-source { width: 90px !important; min-width: 0 !important; }
 }
 @container results (max-width: 860px) {
   .table col.col-title, .table th.col-title { width: 210px !important; }
@@ -131,4 +136,20 @@ body.search-quiet #status { display: none !important; }
 .table th.col-ai-score .sort-label, .table th.col-ai-score { overflow-wrap: anywhere; word-break: normal; }
 @container results (max-width: 1180px) {
   .table col.col-ai-score, .table th.col-ai-score { width: 108px !important; }
+}
+
+/* ── Deep analysis: tabs, must-not-miss strip, alerts ── */
+.deep-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border, #e2e8f0); margin-bottom: 12px; }
+.deep-tab { border: 0; background: none; padding: 8px 12px; font: inherit; font-size: 13px; font-weight: 600; color: #64748b; cursor: pointer; border-bottom: 2px solid transparent; }
+.deep-tab.is-active { color: #0f766e; border-bottom-color: #0f766e; }
+.deep-tabpanel[hidden] { display: none; }
+.deep-mustmiss { border: 1px solid #dc2626; background: #fee2e2; color: #991b1b; border-radius: 10px; padding: 9px 14px; margin-bottom: 12px; font-size: 13px; }
+.deep-alert-chip { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 700; background: #fef3c7; color: #92400e; white-space: nowrap; }
+.deep-alert-chip--red { background: #fee2e2; color: #b91c1c; }
+.deep-alert-banner { border: 1px solid #dc2626; background: #fef2f2; color: #991b1b; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; }
+.deep-alert-strip { margin: 6px 0; padding: 4px 8px; border-radius: 6px; background: #fee2e2; color: #b91c1c; font-size: 11px; font-weight: 600; }
+@media (max-width: 640px) {
+  .deep-tab { padding: 6px 8px; font-size: 12px; }
+  #modalBody textarea, #modalBody pre { max-width: 100%; }
+  #modalBody a { overflow-wrap: anywhere; }
 }
