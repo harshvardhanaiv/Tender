@@ -30,6 +30,8 @@ CREDIT_COST_FUNDING_ANALYSIS = int(os.environ.get("CREDIT_COST_FUNDING_ANALYSIS"
 CREDIT_COST_FUNDING_QUESTIONS = int(os.environ.get("CREDIT_COST_FUNDING_QUESTIONS", "2"))
 CREDIT_COST_FUNDING_BUDGET = int(os.environ.get("CREDIT_COST_FUNDING_BUDGET", "2"))
 CREDIT_COST_FUNDING_EVIDENCE = int(os.environ.get("CREDIT_COST_FUNDING_EVIDENCE", "2"))
+# Policy templates (anti-bribery, modern slavery ...): one AI-written policy saved into Documents. Answer Bank starter packs are free.
+CREDIT_COST_POLICY = int(os.environ.get("CREDIT_COST_POLICY", "3"))
 # Planning Leads is free -- no credit charge for keyword/filter searches, paging, or the
 # unfiltered default list. cost <= 0 makes require_credits() skip charging entirely (see
 # metering.py) and also zeroes the "credit_cost_per_search" the frontend uses to decide

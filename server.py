@@ -86,6 +86,7 @@ from tender_app.blueprints.planning_bp import init_planning_blueprint
 from tender_app.blueprints.market_radar_bp import init_market_radar_blueprint
 from tender_app.blueprints.market_engagement_bp import init_market_engagement_blueprint
 from tender_app.blueprints.funding_bp import init_funding_blueprint
+from tender_app.blueprints.policy_bp import init_policy_blueprint
 from tender_app.blueprints.growth_bp import init_growth_blueprint
 from tender_app.blueprints.email_bp import init_email_blueprint
 from tender_app.blueprints.watchlist_bp import init_watchlist_blueprint
@@ -3508,6 +3509,7 @@ def create_app() -> Flask:
     app.register_blueprint(init_email_blueprint(get_db_connection))
     app.register_blueprint(init_watchlist_blueprint(get_db_connection))
     app.register_blueprint(init_funding_blueprint(get_db_connection))
+    app.register_blueprint(init_policy_blueprint(get_db_connection))
     if ENABLE_BUYER_WORKSPACE:
         app.register_blueprint(init_market_radar_blueprint(get_db_connection))
         app.register_blueprint(init_market_engagement_blueprint(get_db_connection))

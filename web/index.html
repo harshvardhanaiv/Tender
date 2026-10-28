@@ -33,7 +33,7 @@
   <link rel="stylesheet" href="/mobile.css?v=4" />
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=19" />
-  <link rel="stylesheet" href="/funding.css?v=4" />
+  <link rel="stylesheet" href="/funding.css?v=6" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
   <script src="/translations.js?v=6"></script>
@@ -1678,19 +1678,8 @@
 
   <!-- AIV Dashboard Modal -->
   <div id="aivDashboardModal" class="modal-overlay hidden aiv-modal-overlay" role="dialog" aria-modal="true"
-    aria-labelledby="aivDashboardTitle">
+    aria-label="AIV dashboard">
     <div class="modal modal--fullscreen modal--aiv">
-      <div class="modal__header modal__header--aiv">
-        <div class="aiv-modal-header-left">
-          <span class="aiv-modal-icon">📈</span>
-          <div>
-            <h2 class="modal__title" id="aivDashboardTitle">AIV Dashboard</h2>
-            <p class="modal__subtitle">Analytics &amp; Intelligence View. If the page below shows a sad-face icon, <a id="aivOpenTab" href="#" target="_blank" rel="noopener noreferrer">open the dashboard in a new tab</a>.</p>
-          </div>
-        </div>
-        <button id="btnCloseAivDashboard" class="btn btn--icon" type="button"
-          aria-label="Close AIV dashboard">×</button>
-      </div>
       <div class="aiv-modal-body">
         <div class="aiv-loader" id="aivLoader">
           <div class="aiv-spinner"></div>
@@ -1772,6 +1761,7 @@
             <!-- Tabs generated dynamically -->
           </div>
           <button type="button" class="ab-add-btn ab-add-btn--ghost" id="abChecklistBtn" title="See which of the documents most tenders ask for you already have">✔ Document checklist</button>
+          <button type="button" class="ab-add-btn ab-add-btn--ghost" id="abStartersBtn" title="Add standard tender questions with an editable first answer">Starter packs</button>
           <button type="button" class="ab-add-btn" id="abNewBtn">＋ Add Answer</button>
         </div>
         <div class="ab-legend-row">
@@ -3201,6 +3191,7 @@
           </span>
 
           <div id="userDocsAlertBanner" class="hidden" style="margin-bottom: 14px;"></div>
+          <div style="margin-bottom: 14px;"><button type="button" class="btn" id="btnCertGuides" title="Step-by-step help to get ISO 9001, Cyber Essentials, health and safety accreditation and more">Get a certificate (ISO…)</button> <button type="button" class="btn" id="btnGeneratePolicy" title="Write a policy such as anti-bribery or modern slavery for your company and save it here">Generate a policy</button> <span class="profile-section__sub" style="font-size:12px;color:var(--muted);">Anti-bribery, modern slavery, equality, health and safety, data protection and more.</span></div>
 
           <div class="profile-upload-zone" id="profileUploadZone">
             <span class="profile-upload-zone__icon">📤</span>
@@ -3358,6 +3349,7 @@
   <script src="/planning.js?v=18"></script>
   <script src="/funding.js?v=3"></script>
   <script src="/funding-ai.js?v=2"></script>
+  <script src="/policy-lib.js?v=2"></script>
   <script src="/responsive-fixes.js?v=1" defer></script>
   <script src="/tooltips.js?v=4"></script>
   <script src="/connections.js?v=28"></script>

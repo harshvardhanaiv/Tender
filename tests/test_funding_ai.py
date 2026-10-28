@@ -110,7 +110,10 @@ def test_best_picks():
 
 # ─────────────────────────────────────── API ──────────────────────────────────────────────────────
 
-class Skip(Exception):
+import unittest
+
+
+class Skip(unittest.SkipTest):
     pass
 
 
