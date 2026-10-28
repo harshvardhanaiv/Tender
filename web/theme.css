@@ -278,7 +278,7 @@ body.tf-rail-collapsed .tf-nav__pin { display: none; }
 
 /* ── Sections shown as pages beside the sidebar ───────────────────────── */
 body.tf-shell :is(#dashboardModal, #abModal, #supplierIntelligenceModal, #buyerIntelligenceModal, #cpModal,
-  #userDocumentsModal, #historyModal, #profileModal, #pricingModal, #planningLeadsModal, #growthStudioModal, #fundingModal).modal-overlay {
+  #userDocumentsModal, #historyModal, #profileModal, #pricingModal, #planningLeadsModal, #growthStudioModal, #fundingModal, #aivDashboardModal).modal-overlay {
   inset: calc(var(--tf-head) + 3px) 0 0 var(--tf-rail) !important;
   z-index: 150 !important;
   padding: 0 !important;
@@ -290,7 +290,7 @@ body.tf-shell :is(#dashboardModal, #abModal, #supplierIntelligenceModal, #buyerI
   overflow: hidden !important;
 }
 body.tf-shell :is(#dashboardModal, #abModal, #supplierIntelligenceModal, #buyerIntelligenceModal, #cpModal,
-  #userDocumentsModal, #historyModal, #profileModal, #pricingModal, #planningLeadsModal, #growthStudioModal, #fundingModal).modal-overlay > :is(.modal, .cp-modal, .ab-modal, .profile-modal) {
+  #userDocumentsModal, #historyModal, #profileModal, #pricingModal, #planningLeadsModal, #growthStudioModal, #fundingModal, #aivDashboardModal).modal-overlay > :is(.modal, .cp-modal, .ab-modal, .profile-modal) {
   width: 100% !important;
   max-width: none !important;
   height: 100% !important;
@@ -1743,7 +1743,7 @@ body.tf-shell .buyer-tabs { gap: 2px; padding: 0 12px; }
 
 /* ── Every page: a white header, a tinted filter bar, then white cards on a grey ground ─────────
    Only the cards scroll, so a scrollbar always sits inside a card, never at the window edge. */
-body.tf-shell :is(#dashboardModal, #abModal, #supplierIntelligenceModal, #buyerIntelligenceModal, #cpModal, #userDocumentsModal, #historyModal, #profileModal, #pricingModal, #planningLeadsModal, #growthStudioModal, #fundingModal).modal-overlay > :is(.modal, .cp-modal, .ab-modal, .profile-modal) {
+body.tf-shell :is(#dashboardModal, #abModal, #supplierIntelligenceModal, #buyerIntelligenceModal, #cpModal, #userDocumentsModal, #historyModal, #profileModal, #pricingModal, #planningLeadsModal, #growthStudioModal, #fundingModal, #aivDashboardModal).modal-overlay > :is(.modal, .cp-modal, .ab-modal, .profile-modal) {
   background: var(--paper) !important;
 }
 body.tf-shell :is(#abModal .ab-body, #cpModal .cp-list-view__body, #cpModal .cp-body, #userDocumentsModal .profile-body, #profileModal .profile-body, #historyModal .modal__body, #pricingModal .modal__body) {
@@ -2250,3 +2250,7 @@ body.tf-shell #pipelineKindPills { display: inline-flex; gap: 4px; }
   body.tf-shell #focusPillBar .tf-clearall,
   body.tf-shell #focusPillBar .tf-filterbar__actions { flex: none; }
 }
+
+/* AIV dashboard shown inside the app (an iframe filling the page) */
+.aiv-page { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.aiv-frame { flex: 1 1 auto; min-height: 0; width: 100%; border: 0; background: var(--card, #fff); }

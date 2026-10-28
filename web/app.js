@@ -617,16 +617,31 @@ function updateAivDashboardUrl(username) {
 
   const newUrl = currentHref.replace(/a_u__[^&]+/, "a_u__" + encodeURIComponent(user));
 
-  if (btn) btn.href = newUrl;
-  if (iframe && iframe.src !== newUrl) iframe.src = newUrl;
+  if (btn && btn.tagName === "A") btn.href = newUrl;
+  const tab = document.getElementById("aivOpenTab");
+  if (tab) tab.href = newUrl;
+  window._aivUrl = newUrl;
+  // Only reload the frame while it is showing; a closed dashboard loads when it is opened.
+  const open = !document.getElementById("aivDashboardModal")?.classList.contains("hidden");
+  if (iframe && open && iframe.getAttribute("src") !== newUrl) iframe.setAttribute("src", newUrl);
 }
+
+function openAivDashboard() {
+  updateAivDashboardUrl();
+  const iframe = document.getElementById("aivDashboardFrame");
+  document.getElementById("aivDashboardModal")?.classList.remove("hidden");
+  if (iframe && iframe.getAttribute("src") !== window._aivUrl) iframe.setAttribute("src", window._aivUrl);
+}
+
+function closeAivDashboard() {
+  document.getElementById("aivDashboardModal")?.classList.add("hidden");
+}
+window.closeAivDashboard = closeAivDashboard;
 
 document.addEventListener("DOMContentLoaded", () => {
   const btn = document.getElementById("btnAivDashboard");
-  if (btn) {
-    btn.addEventListener("click", () => updateAivDashboardUrl());
-    btn.addEventListener("mouseenter", () => updateAivDashboardUrl());
-  }
+  btn?.addEventListener("click", openAivDashboard);
+  document.getElementById("aivDashboardClose")?.addEventListener("click", closeAivDashboard);
 });
 
 async function loadCurrentUser() {

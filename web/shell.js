@@ -9,6 +9,7 @@
     ["btnConnectionsNav", "connectionsModal", "closeConnections"],
     ["btnDashboard", "dashboardModal", "closeDashboard"],
     ["btnFunding", "fundingModal", "closeFunding"],
+    ["btnAivDashboard", "aivDashboardModal", "closeAivDashboard"],
     ["btnPlanningLeads", "planningLeadsModal", "closePlanningLeads"],
     ["btnGrowthStudio", "growthStudioModal", "closeGrowthStudio"],
     ["btnBuyerIntelligence", "buyerIntelligenceModal", "closeBuyerIntelligenceModal"],
