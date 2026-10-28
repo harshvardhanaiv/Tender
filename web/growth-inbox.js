@@ -115,7 +115,8 @@
   function inboxPane(m) {
     if (!m || m.status === "idle" || (m.status === "loading" && !m.info)) return V.loading("Checking Outreach…");
     const info = m.info || {};
-    if (!info.ready) return V.note(esc(info.problem || m.error || "Outreach is not available."), "bad") + accountsCard(info) + V.outreachConnectBox(info, { mail: false });
+    const notice = V.channelConnectNotice("mail", m);
+    if (!info.ready) return notice + V.note(esc(info.problem || m.error || "Outreach is not available."), "bad") + (notice ? "" : accountsCard(info)) + V.outreachConnectBox(info, { mail: false });
     const items = m.items || [];
     let list;
     if (m.loading && !items.length) list = V.loading("Reading your emails from Outreach…");

@@ -515,6 +515,17 @@ test("a refused call shows the reason in the form", () => {
   assert.match(C.callForm(model({ calls: { status: "ok", list: [], form: callForm({ error: "That is a mobile number." }), scripts: [], details: {} } })), /role="alert">That is a mobile number\./);
 });
 
+test("Social and Calls show the not-connected box until Outreach, a social account or a phone number is there", () => {
+  const V = require("../web/growth-view.js");
+  const off = { status: "ok", info: { ready: false, problem: "Outreach is not connected." } };
+  assert.match(V.channelConnectNotice("social", off), /Social is not connected[\s\S]*Connect Outreach[\s\S]*Refresh accounts/);
+  assert.match(V.channelConnectNotice("calls", off), /Calls are not connected/);
+  const noPhone = { status: "ok", info: { ready: true, wallet: { phone_numbers: 0, social_channels: ["linkedin"] } } };
+  assert.match(V.channelConnectNotice("calls", noPhone), /no phone number yet/);
+  assert.equal(V.channelConnectNotice("social", noPhone), "");
+  assert.equal(V.channelConnectNotice("social", { status: "loading", info: null }), "");
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try {

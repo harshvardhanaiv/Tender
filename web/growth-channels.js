@@ -146,7 +146,7 @@
   function gate(m, which) {
     if (!m || m.status === "idle" || (m.status === "loading" && !m.info)) return V.loading("Checking Outreach…");
     const info = m.info || {};
-    if (!info.ready) return V.note(esc(info.problem || m.error || "Outreach is not available."), "bad") + V.outreachConnectBox(info, { mail: false });
+    if (!info.ready) return V.channelConnectNotice(which, m) + V.note(esc(info.problem || m.error || "Outreach is not available."), "bad") + (V.channelConnectNotice(which, m) ? "" : V.outreachConnectBox(info, { mail: false }));
     return null;
   }
 
@@ -411,7 +411,7 @@
 
   function socialPane(m) {
     return gate(m, "social") || (
-      infoBar(m, "social") +
+      V.channelConnectNotice("social", m) + infoBar(m, "social") +
       `<div class="gs-sp-grid"><div class="gs-sp-left">${socialComposer(m)}${socialHistory(m)}</div><div class="gs-sp-right">${socialPreview(m)}</div></div>`
     );
   }
@@ -495,7 +495,7 @@
 
   function callsPane(m) {
     return gate(m, "calls") || (
-      infoBar(m, "calls") + `<div class="gs-ch-grid">${callForm(m)}${callHistory(m)}</div>`
+      V.channelConnectNotice("calls", m) + infoBar(m, "calls") + `<div class="gs-ch-grid">${callForm(m)}${callHistory(m)}</div>`
     );
   }
 

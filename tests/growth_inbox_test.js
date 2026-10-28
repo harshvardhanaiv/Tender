@@ -83,7 +83,8 @@ test("names are escaped, and an unverified account is not shown as able to send"
 test("when Outreach is not connected the Inbox still offers the email account and a way to connect Outreach", () => {
   const html = I.inboxPane(model({ info: { ready: false, configured: false, problem: "Outreach is not connected." } }));
   assert.match(html, /Outreach is not connected\./);
-  assert.match(html, /gs-in-accounts/);
+  assert.match(html, /Email is not connected/);
+  assert.match(html, /data-open-connections="mail"[^>]*>＋ Add an email account</);
   assert.match(html, /data-open-connections="outreach"[^>]*>Connect Outreach</);
   assert.ok(!html.includes("target=\"_blank\""));
 });

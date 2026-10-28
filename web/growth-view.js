@@ -656,10 +656,43 @@
     if (info.ready || ownAccount(info)) return "";
     return (
       `<section class="gs-card gs-conn-card" aria-label="Email is not connected"><div class="gs-conn-card__txt"><div class="gs-card__title">Email is not connected</div>` +
-      `<p class="gs-hint gs-hint--warn">No email account is set up yet, so this campaign cannot be sent. Add your own email account (Gmail, Outlook or any SMTP login) or connect Outreach. The window opens on this page.</p></div>` +
+      `<p class="gs-hint gs-hint--warn">No email account is set up yet, so nothing can be sent. Add your own email account (Gmail, Outlook or any SMTP login) or connect Outreach. The window opens on this page.</p></div>` +
       `<div class="gs-actions gs-actions--tight">${openConnections("mail", "＋ Add an email account", true, "Open Connections on this page to add your own email account (Gmail, Outlook or any other provider).")}` +
       `${openConnections("outreach", "Connect Outreach", false, "Sign in to Outreach, or create an account, in a window on this page.")}` +
       `<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-check" data-tip="Ask again which email accounts you have.">Refresh accounts</button></div></section>`
+    );
+  }
+
+  // The same box for the Social, Calls and Inbox tabs (kind "social" | "calls" | "mail"). Shown while that channel cannot be used.
+  // Outreach not connected: a connect button; connected but no number / social account yet: the Connections button.
+  function channelConnectNotice(kind, o) {
+    if (kind === "mail") return emailConnectNotice(o);
+    const info = o && o.info;
+    if (!info || (o.status !== "ok" && o.status !== "error")) return "";
+    const w = info.wallet || {};
+    let title, text;
+    if (kind === "calls") {
+      const phones = w.phone_status && Number.isFinite(w.phone_status.active) ? w.phone_status.active : Number(w.phone_numbers) || 0;
+      if (info.ready && phones > 0) return "";
+      title = "Calls are not connected";
+      text = info.ready
+        ? "Your Outreach account has no phone number yet, so the AI has no line to call from. Phone numbers belong to the Outreach account: once it has one, open Connections and press Refresh."
+        : "Outreach is not connected, so no calls can be made. Connect Outreach, then add a phone number to it. The window opens on this page.";
+    } else {
+      const nets = (Array.isArray(w.social_channels) ? w.social_channels : []).filter(Boolean);
+      if (info.ready && nets.length) return "";
+      title = "Social is not connected";
+      text = info.ready
+        ? "No social account is connected yet, so posts cannot be published. Open Connections to connect LinkedIn, Facebook, Instagram, X or Threads."
+        : "Outreach is not connected, so nothing can be posted. Connect Outreach, then connect your social accounts. The window opens on this page.";
+    }
+    return (
+      `<section class="gs-card gs-conn-card" aria-label="${esc(title)}"><div class="gs-conn-card__txt"><div class="gs-card__title">${esc(title)}</div>` +
+      `<p class="gs-hint gs-hint--warn">${esc(text)}</p></div>` +
+      `<div class="gs-actions gs-actions--tight">${info.ready
+        ? openConnections("outreach", "Open Connections", true, "Open Connections on this page to connect it.")
+        : openConnections("outreach", "Connect Outreach", true, "Sign in to Outreach, or create an account, in a window on this page.")}` +
+      `<button type="button" class="gs-btn gs-btn--sm" data-action="outreach-check" data-tip="Ask again what is connected.">Refresh accounts</button></div></section>`
     );
   }
 
@@ -1118,7 +1151,7 @@
   const api = {
     esc, safeUrl, fmtDate, fmtMoney, fmtMoneyShort, plural, inDays, parseServerTime, timeAgo, fitBand, filenameFromDisposition, insertAt,
     hasCategory, defaultFilters, filtersBody, signalsQuery, campaignKeys, safeHtml, textToHtml, fillRich, richToolbar, attachmentsBlock, companySelect,
-    signalCard, signalsPane, selectionBar, campaignsPane, builderPane, connectionChips, emailConnectNotice, previewHtml, warningsHtml, mailchimpBox, targetRow, mergeChips, performancePane,
+    signalCard, signalsPane, selectionBar, campaignsPane, builderPane, connectionChips, emailConnectNotice, channelConnectNotice,previewHtml, warningsHtml, mailchimpBox, targetRow, mergeChips, performancePane,
     badge, note, empty, loading, errorBox,
     outreachPanel, outreachConnectBox, openConnections, outreachMailboxLine, senderPicker, senderChoice, ownAccount, ownAccounts, isOwnChoice, accountForChoice, outreachSeenNote, outreachDraftRow, outreachResult,
     suppressionsBlock, fitParts, funnelBars, countsLine, TYPES, TARGET_STATUS, CAMPAIGN_STATUS,
