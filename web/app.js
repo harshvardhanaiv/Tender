@@ -18656,14 +18656,9 @@ function initProfile() {
 
   $("btnUserDocuments")?.addEventListener("click", openUserDocuments);
   $("userDocumentsClose")?.addEventListener("click", closeUserDocuments);
-  $("userDocsCompanyFilter")?.addEventListener("change", (e) => {
-    const val = e.target.value;
-    if (val && val !== "all" && val !== "global") {
-      handleCompanyProfileSelectionChange(val, { makeDefault: false });
-    } else {
-      filterAndRenderUserDocuments();
-    }
-  });
+  // This box only chooses which company's documents are listed (and which company new uploads go to).
+  // It must not switch the company the rest of the app is working as.
+  $("userDocsCompanyFilter")?.addEventListener("change", filterAndRenderUserDocuments);
 
   $("adminUserSearch")?.addEventListener("input", e => {
     profileState.search = e.target.value;
@@ -23638,7 +23633,6 @@ async function populateUserDocsCompanyFilter() {
   const currentVal = filter.value || "";
   filter.innerHTML = `
     <option value="all">📁 All Documents</option>
-    <option value="global">🌐 Global Only</option>
   `;
 
   try {
@@ -23663,7 +23657,7 @@ async function populateUserDocsCompanyFilter() {
                        (state.companyProfiles || []).find(p => String(p.id) === String(state.defaultProfileId || state.activeProfileId));
     const targetId = defProfile ? String(defProfile.id) : (state.activeProfileId || state.defaultProfileId);
 
-    if (currentVal && currentVal !== "all" && currentVal !== "global" && (state.companyProfiles || []).some(p => String(p.id) === String(currentVal))) {
+    if (currentVal && currentVal !== "all" && (state.companyProfiles || []).some(p => String(p.id) === String(currentVal))) {
       filter.value = String(currentVal);
     } else if (targetId && (state.companyProfiles || []).some(p => String(p.id) === String(targetId))) {
       filter.value = String(targetId);
@@ -23678,9 +23672,7 @@ function filterAndRenderUserDocuments() {
   const filterVal = filter ? filter.value : "all";
   let docs = state.userDocuments || [];
 
-  if (filterVal === "global") {
-    docs = docs.filter(d => d.type !== "profile");
-  } else if (filterVal !== "all") {
+  if (filterVal !== "all") {
     const profileId = parseInt(filterVal);
     docs = docs.filter(d => d.type === "profile" && d.profile_id === profileId);
   }
@@ -23831,7 +23823,7 @@ async function uploadUserDocument(file) {
   const filterVal = filter ? filter.value : "all";
   let targetProfileId = null;
 
-  if (filterVal && filterVal !== "all" && filterVal !== "global") {
+  if (filterVal && filterVal !== "all") {
     targetProfileId = filterVal;
   } else if (filterVal === "all" && state.activeProfileId) {
     targetProfileId = state.activeProfileId;

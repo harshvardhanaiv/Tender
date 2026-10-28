@@ -244,6 +244,12 @@ body.tf-rail-collapsed .tf-rail__collapse-btn svg { transform: rotate(180deg); }
   font-weight: 600;
 }
 .tf-nav.is-active svg { color: var(--teal); opacity: 1; }
+/* Landing page star: shown on hover or focus, always for the one that is set. */
+.tf-nav__pin { margin-left: auto; padding: 0 2px; font-size: 13px; line-height: 1; opacity: 0; color: var(--slate); }
+.tf-nav:hover .tf-nav__pin, .tf-nav:focus-visible .tf-nav__pin { opacity: 0.6; }
+.tf-nav .tf-nav__pin:hover { opacity: 1; color: var(--teal); }
+.tf-nav .tf-nav__pin.is-on { opacity: 1; color: var(--teal); }
+body.tf-rail-collapsed .tf-nav__pin { display: none; }
 /* Short windows: a slightly tighter menu so every item fits without scrolling. */
 @media (max-height: 820px) {
   .tf-rail__list { padding: 4px 0 6px; }

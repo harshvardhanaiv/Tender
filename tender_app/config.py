@@ -21,6 +21,15 @@ CREDIT_COST_METHODOLOGY = int(os.environ.get("CREDIT_COST_METHODOLOGY", "2"))
 # Growth Studio: an AI-written first draft of an outreach message. Signals, template drafts, exports
 # and campaign tracking are free. 0 makes the AI draft free too (require_credits skips a cost <= 0).
 CREDIT_COST_GROWTH_DRAFT = int(os.environ.get("CREDIT_COST_GROWTH_DRAFT", "2"))
+# Funding AI tools (one grant): eligibility check, summary, application draft, deep analysis. A saved result is shown
+# again free; "Run again" is charged. 0 makes a tool free.
+CREDIT_COST_FUNDING_ELIGIBILITY = int(os.environ.get("CREDIT_COST_FUNDING_ELIGIBILITY", "1"))
+CREDIT_COST_FUNDING_SUMMARY = int(os.environ.get("CREDIT_COST_FUNDING_SUMMARY", "2"))
+CREDIT_COST_FUNDING_DRAFT = int(os.environ.get("CREDIT_COST_FUNDING_DRAFT", "6"))
+CREDIT_COST_FUNDING_ANALYSIS = int(os.environ.get("CREDIT_COST_FUNDING_ANALYSIS", "5"))
+CREDIT_COST_FUNDING_QUESTIONS = int(os.environ.get("CREDIT_COST_FUNDING_QUESTIONS", "2"))
+CREDIT_COST_FUNDING_BUDGET = int(os.environ.get("CREDIT_COST_FUNDING_BUDGET", "2"))
+CREDIT_COST_FUNDING_EVIDENCE = int(os.environ.get("CREDIT_COST_FUNDING_EVIDENCE", "2"))
 # Planning Leads is free -- no credit charge for keyword/filter searches, paging, or the
 # unfiltered default list. cost <= 0 makes require_credits() skip charging entirely (see
 # metering.py) and also zeroes the "credit_cost_per_search" the frontend uses to decide

@@ -60,6 +60,7 @@
       (g.total_award != null ? "<div><dt>Total pot</dt><dd>" + esc(money(g.total_award)) + "</dd></div>" : "") +
       "</dl>" +
       '<div class="funding-card__actions">' +
+      (g.label ? '<button type="button" class="btn funding-ai-btn" data-ai-label="' + esc(g.label) + '" title="Check eligibility, summarise, draft an application or analyse this grant with AI">AI tools</button>' : "") +
       '<a class="btn btn--primary funding-apply" href="' + esc(apply) + '" target="_blank" rel="noopener noreferrer">Apply on GOV.UK ↗</a>' +
       (g.apply_url && g.url ? '<a class="funding-more" href="' + esc(g.url) + '" target="_blank" rel="noopener noreferrer">Full details</a>' : "") +
       "</div></article>"
@@ -102,6 +103,39 @@
     list.forEach((name) => sel.add(new Option(name, name)));
   }
 
+  // "Best matches for your profile": the grants sharing the most words with the company profile, closing soonest first.
+  // Shown above the list only while no search or filter is set and on the first page.
+  function bestHtml(items) {
+    if (!items || !items.length) return "";
+    const cards = items.map((g) => cardHtml(g).replace('<article class="funding-card">', '<article class="funding-card funding-card--best">' + (g.closing_soon ? '<span class="funding-flag">Closing soon</span>' : ""))).join("");
+    return '<h3 class="funding-best__title">Best matches for your profile</h3><div class="funding-list">' + cards + "</div>" +
+      '<h3 class="funding-best__title funding-best__title--all">All open grants</h3>';
+  }
+
+  function filtersActive() {
+    const p = params();
+    p.delete("page");
+    p.delete("sort");
+    return Array.from(p.keys()).length > 0 || (byId("selFundingSort")?.value || "relevance") !== "relevance";
+  }
+
+  async function showBest() {
+    const box = byId("fundingBest");
+    if (!box) return;
+    if (state.page !== 1 || filtersActive()) { box.innerHTML = ""; return; }
+    if (state.best === undefined) {
+      state.best = null;
+      try {
+        const resp = await fetch("/api/funding/best", { credentials: "same-origin" });
+        const data = resp.ok ? await resp.json() : null;
+        state.best = data && data.items ? data.items : [];
+      } catch (err) { state.best = []; }
+      state.bestItems = {};
+      (state.best || []).forEach((g) => { if (g.label) { state.bestItems[g.label] = g; (state.items = state.items || {})[g.label] = g; } });
+    }
+    if (state.page === 1 && !filtersActive()) box.innerHTML = bestHtml(state.best);
+  }
+
   async function load() {
     const list = byId("fundingList");
     if (!list) return;
@@ -114,7 +148,10 @@
       const data = await resp.json();
       fillLocations(data.locations || []);
       byId("fundingMeta").textContent = metaText(data);
+      state.items = Object.assign({}, state.bestItems);
+      (data.items || []).forEach((g) => { if (g.label) state.items[g.label] = g; });
       list.innerHTML = (data.items || []).map(cardHtml).join("");
+      showBest();
       byId("fundingPager").innerHTML = pagerHtml(data);
     } catch (err) {
       if (err && err.name === "AbortError") return;
@@ -150,6 +187,16 @@
     ["selFundingApplicant", "selFundingLocation", "selFundingAward", "selFundingSort", "chkFundingSoon"].forEach((id) => {
       byId(id)?.addEventListener("change", () => reload(0));
     });
+    byId("fundingBest")?.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-ai-label]");
+      const grant = btn && state.items && state.items[btn.getAttribute("data-ai-label")];
+      if (grant && window.FundingAI) window.FundingAI.open(grant);
+    });
+    byId("fundingList")?.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-ai-label]");
+      const grant = btn && state.items && state.items[btn.getAttribute("data-ai-label")];
+      if (grant && window.FundingAI) window.FundingAI.open(grant);
+    });
     byId("fundingPager")?.addEventListener("click", (e) => {
       const btn = e.target.closest("button[data-page]");
       if (!btn || btn.disabled) return;
@@ -159,7 +206,7 @@
     });
   }
 
-  const api = { cardHtml, awardText, money, closingHtml, pagerHtml, metaText };
+  const api = { bestHtml, cardHtml,awardText, money, closingHtml, pagerHtml, metaText };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") {
     window.openFunding = openFunding;

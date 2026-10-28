@@ -57,8 +57,78 @@
     });
   }
 
+  // ── landing page: any sidebar page can be the one the app opens on ──────────────────────────────
+  // Kept in the user's server preferences ("landing_page" = a sidebar button id). Hover a menu item and press its star
+  // (or right-click the item) to make it the landing page; press it again to go back to Tender search.
+  const LANDING_KEY = "landing_page";
+  const LANDING_NAVS = ["navSearch"].concat(SECTIONS.map((s) => s[0]));
+  let landingId = "navSearch";
+
+  function savePref(value) {
+    fetch("/api/user-prefs", {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prefs: { [LANDING_KEY]: value } }),
+    }).catch(() => { /* the star still shows the choice for this visit */ });
+  }
+
+  function paintLanding() {
+    LANDING_NAVS.forEach((id) => {
+      const star = byId(id)?.querySelector(".tf-nav__pin");
+      if (!star) return;
+      const on = id === landingId;
+      star.textContent = on ? "★" : "☆";
+      star.classList.toggle("is-on", on);
+      star.setAttribute("aria-pressed", on ? "true" : "false");
+      star.title = on ? "This is your landing page. Press to go back to Tender search." : "Open the app on this page";
+    });
+  }
+
+  function setLanding(id) {
+    landingId = landingId === id ? "navSearch" : id;
+    paintLanding();
+    savePref(landingId);
+  }
+
+  function addLandingStars() {
+    LANDING_NAVS.forEach((id) => {
+      const nav = byId(id);
+      if (!nav || nav.querySelector(".tf-nav__pin")) return;
+      const star = document.createElement("span");
+      star.className = "tf-nav__pin";
+      star.setAttribute("role", "button");
+      star.setAttribute("aria-label", "Make this my landing page");
+      star.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); setLanding(id); });
+      nav.appendChild(star);
+      nav.addEventListener("contextmenu", (e) => { e.preventDefault(); setLanding(id); });
+    });
+    paintLanding();
+  }
+
+  // Opens the chosen page once, unless the address already points somewhere or something is already open.
+  async function openLanding() {
+    let saved = null;
+    try {
+      const res = await fetch("/api/user-prefs", { credentials: "same-origin" });
+      if (!res.ok) return;
+      const data = await res.json();
+      saved = data && data.prefs ? data.prefs[LANDING_KEY] : null;
+    } catch (e) { return; }
+    if (!saved || !LANDING_NAVS.includes(saved)) return;
+    landingId = saved;
+    paintLanding();
+    if (saved === "navSearch" || location.search || location.hash) return;
+    for (let i = 0; i < 20; i++) { // Growth Studio's button appears once the server config has loaded
+      if (SECTIONS.some(([, sectionId]) => isOpen(byId(sectionId)))) return;
+      const btn = byId(saved);
+      if (btn && !btn.classList.contains("hidden")) { btn.click(); return; }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+
   function init() {
     if (!document.body.classList.contains("tf-shell")) return;
+    addLandingStars();
+    openLanding();
 
     // Capture phase: close the current section before the button's own handler opens the next one.
     SECTIONS.forEach(([navId, sectionId]) => {

@@ -39,6 +39,31 @@ def _public(row: tuple, today: date) -> dict[str, Any]:
     return rec
 
 
+BEST_LIMIT = 6
+
+
+def best_of(items: list[dict[str, Any]], limit: int = BEST_LIMIT) -> list[dict[str, Any]]:
+    """The grants worth a look first: a real word match with the profile (two shared words or more), the stronger band
+    first, and within a band the ones closing within CLOSING_SOON_DAYS before the rest. Each gets `closing_soon`."""
+    picks = []
+    for rec in items:
+        if len(rec.get("matches") or []) < 2:
+            continue
+        days = rec.get("days_left")
+        picks.append({**rec, "closing_soon": not rec["ongoing"] and days is not None and 0 <= days <= CLOSING_SOON_DAYS})
+    picks.sort(key=lambda r: (r["band"] != "high", not r["closing_soon"], -len(r["matches"]), r["days_left"] if r["days_left"] is not None else 99999, r["name"]))
+    return picks[:limit]
+
+
+def get_one(cursor: Any, label: str, today: date | None = None) -> dict[str, Any] | None:
+    """One grant by its label (closed ones included, so a saved result can still be opened), or None."""
+    if not _tables_exist(cursor):
+        return None
+    cursor.execute(_SELECT + " WHERE label = %s", (label,))
+    row = cursor.fetchone()
+    return _public(row, today or date.today()) if row else None
+
+
 def relevance(keywords: frozenset[str], rec: dict[str, Any]) -> list[str]:
     """The profile words that also appear in the grant, as the grant spells them, sorted. Empty without a profile."""
     if not keywords:
