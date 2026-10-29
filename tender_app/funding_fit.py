@@ -178,6 +178,23 @@ def _project_cost_floor(text: str) -> float | None:
         return None
 
 
+def _facts_to_check(text: str) -> list[str]:
+    """Hard numbers a grant states that the applicant has to meet, as plain checks (project cost range, project length)."""
+    out: list[str] = []
+    m = re.search(r"total costs? between ([£$€])\s?([\d,.]+)\s?(k|m|million)?\s+and\s+([£$€])?\s?([\d,.]+)\s?(k|m|million)?", text, re.I)
+    if m:
+        try:
+            lo = float(m.group(2).replace(",", "")) * _SCALE.get((m.group(3) or "").lower(), 1.0) * _FX.get(m.group(1), 1.0)
+            hi = float(m.group(5).replace(",", "")) * _SCALE.get((m.group(6) or m.group(3) or "").lower(), 1.0) * _FX.get(m.group(4) or m.group(1), 1.0)
+            out.append("Project costs must be between " + money(lo) + " and " + money(hi))
+        except ValueError:
+            pass
+    m = re.search(r"last(?:s)? between (\d+) and (\d+) (months?|years?)", text, re.I)
+    if m:
+        out.append(f"Project must last {m.group(1)} to {m.group(2)} {m.group(3).lower()}")
+    return out
+
+
 def assess(grant: dict[str, Any], applicant: dict[str, Any], *, kind: str = "", where: str = "", has_profile: bool = False) -> dict[str, str]:
     """{'verdict': likely|check|unlikely, 'why'|'check'|'blocker': one line}. `kind` and `where` are the page filters."""
     kind = kind or applicant.get("kind") or ""
@@ -193,7 +210,11 @@ def assess(grant: dict[str, Any], applicant: dict[str, Any], *, kind: str = "", 
     if kind and types and kind not in types:
         blockers.append("Open to " + ", ".join(types).lower() + " applicants; you are applying as " + APPLICANT_LABEL.get(kind, kind.lower()))
 
-    if UK_WIDE in locs:
+    if locs and set(locs) <= {"International"}:
+        # GOV.UK tags a call "International" when the partner is abroad; the applicant is still a UK business, so this is never a
+        # location blocker, only something to confirm.
+        checks.append("International collaboration: the project needs a partner outside the UK. Read the call for which countries")
+    elif UK_WIDE in locs:
         if applicant.get("abroad"):
             checks.append("UK-wide, but your profile address is outside the UK: confirm you can apply")
         else:
@@ -238,15 +259,24 @@ def assess(grant: dict[str, Any], applicant: dict[str, Any], *, kind: str = "", 
         checks.append("You must create a new role for an 18 to 24 year old")
     if re.search(r"\b20%.{0,80}(growth|grow)|(growth|grow).{0,80}\b20%", text, re.I):
         checks.append("Needs 20%+ annual growth in staff or turnover for 3 years: not in your profile")
-    if re.search(r"led by (?:a |an )?(?:uk )?(?:research|university|academic)|research organisations? (?:to )?lead|research-led", text, re.I):
-        checks.append("Usually led by a research organisation: check if a business can lead")
+    funder = str(grant.get("funder") or "")
+    research_council = bool(re.search(r"UKRI individual eligibility|research and innovation communities|research organisations? eligible for UKRI|may (?:only )?join as (?:a )?partner", text, re.I))         and not re.match(r"\s*Innovate UK\b", funder)
+    if research_council or re.search(r"led by (?:a |an )?(?:uk )?(?:research|university|academic)|research organisations? (?:to )?lead|research-led", text, re.I):
+        checks.append("Usually led by a research organisation or university: a business may be able to join as a partner. Confirm with the funder")
+
+    for line in _facts_to_check(text):
+        checks.append(line)
 
     if blockers:
-        return {"verdict": "unlikely", "blocker": blockers[0]}
+        return {"verdict": "unlikely", "blocker": blockers[0], "blockers": blockers, "checks": checks, "reasons": whys}
     if checks:
-        return {"verdict": "check", "check": checks[0]}
+        return {"verdict": "check", "check": checks[0], "checks": checks, "blockers": [], "reasons": whys}
     # "Likely" needs real evidence the work fits, not just no obstacle.
     reason = affinity_reason(grant, applicant) if has_profile else ""
     if reason and whys:
-        return {"verdict": "likely", "why": " · ".join([reason] + whys)}
-    return {"verdict": "check", "check": "Nothing in your profile rules it out: read the full criteria" if has_profile else "Add a company profile to check this against your business"}
+        return {"verdict": "likely", "why": " · ".join([reason] + whys), "reasons": [reason] + whys, "checks": [], "blockers": []}
+    if has_profile:
+        seen = ("Matched so far: " + " · ".join(whys) + ". ") if whys else ""
+        return {"verdict": "check", "check": seen + "Nothing in your profile rules it out, but nothing in the grant points to your sector either: read the full criteria",
+                "checks": [], "blockers": [], "reasons": whys}
+    return {"verdict": "check", "check": "Add a company profile to check this against your business", "checks": [], "blockers": [], "reasons": whys}

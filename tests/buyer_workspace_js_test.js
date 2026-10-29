@@ -347,11 +347,11 @@ test("suppliersPanelHtml", () => {
 });
 
 const cost = (over = {}) => ({
-  overall: { type: null, label: "All buyers in this view", contracts: 8, annualised: 6,
+  overall: { type: null, label: "All buyers in this view", contracts: 20, annualised: 12,
     annual: { p10: 150000, median: 225000, p90: 300000, min: 100000, max: 300000 },
     total: { p10: 150000, median: 350000, p90: 550000, min: 100000, max: 600000 } },
   by_type: [
-    { type: "london-borough", label: "London boroughs", contracts: 5, annualised: 3, annual: null, total: { p10: 120000, median: 200000, p90: 360000, min: 100000, max: 400000 } },
+    { type: "london-borough", label: "London boroughs", contracts: 14, annualised: 10, annual: null, total: { p10: 120000, median: 200000, p90: 360000, min: 100000, max: 400000 } },
     { type: "county", label: "County councils", contracts: 3, annualised: 3, annual: null, total: null },
   ],
   excluded_frameworks: 3, excluded_no_value: 2, ...over,
@@ -359,7 +359,7 @@ const cost = (over = {}) => ({
 
 test("costPanelHtml shows annual or total ranges and says what is left out", () => {
   const annual = BW.costPanelHtml(cost(), "annual");
-  has(annual, "Typical annual value", "£150k to £300k a year · typical £225k", "6 contracts with a stated term (of 8 with a value)",
+  has(annual, "Typical annual value", "£150k to £300k a year · typical £225k", "12 contracts with a stated term (of 20 with a value)",
     "smallest £100k, largest £300k", 'data-basis="annual" aria-pressed="true"', 'data-basis="total" aria-pressed="false"',
     "3 framework or call-off awards (shared ceilings) and 2 awards without a value are left out");
   assert.equal((annual.match(/class="bw-range"/g) || []).length, 1, "only blocks that have an annual range");
@@ -384,6 +384,12 @@ test("costPanelHtml shows annual or total ranges and says what is left out", () 
   const none = BW.costPanelHtml(cost({ overall: { ...cost().overall, annual: null, total: null }, by_type: [] }), "total");
   has(none, "Not enough published values", "Fewer than 5 direct contracts");
   lacks(none, "bw-range__track");
+});
+
+test("costPanelHtml shows a small sample as its values, not a percentile bar", () => {
+  const small = BW.costPanelHtml(cost({ overall: { ...cost().overall, contracts: 5, annualised: 5 } }), "total");
+  has(small, "small sample (5 contracts): smallest £100k, typical £350k, largest £600k", "Too few contracts to show a range");
+  assert.equal((small.match(/class="bw-range__fill"/g) || []).length, 1, "only the group with enough contracts gets a bar");
 });
 
 test("costPanelHtml keeps every bar inside its track", () => {

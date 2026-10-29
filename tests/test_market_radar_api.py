@@ -70,7 +70,7 @@ def client(user=None):
     c = app().test_client()
     if user:
         with c.session_transaction() as s:
-            s.update(logged_in=True, username=user, email=f"{user}@test.invalid", last_activity=time.time(), csrf_token=CSRF)
+            s.update(logged_in=True, username=user, email=f"{user}@test.gov.uk", last_activity=time.time(), csrf_token=CSRF)
     return c
 
 

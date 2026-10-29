@@ -54,6 +54,7 @@ def cleanup():
                         ([BIG["number"], SMALL["number"]],))
             cur.execute("DELETE FROM contract_awards WHERE company_number = ANY(%s)", ([BIG["number"], SMALL["number"]],))
             cur.execute("DELETE FROM suppliers WHERE company_number = ANY(%s)", ([BIG["number"], SMALL["number"]],))
+            cur.execute("DELETE FROM award_values WHERE company_number = ANY(%s)", ([BIG["number"], SMALL["number"]],))
         conn.commit()
     finally:
         conn.close()
@@ -84,6 +85,9 @@ def make_fixtures():
                     (IDS[key], s["value"], s["value"]),
                 )
         conn.commit()
+        # a typed search and the profile read the award_values table, rebuilt from the awards; put the two probe awards in it
+        from tender_app import stats
+        stats.refresh_award_values(conn)
     finally:
         conn.close()
 
@@ -122,7 +126,11 @@ def test_a_small_flagged_sme_stays_an_sme_in_both():
 
 
 def setup_module(module=None):
-    cleanup()
+    import unittest
+    try:
+        cleanup()
+    except Exception as exc:  # noqa: BLE001
+        raise unittest.SkipTest(f"no database: {exc}")
     make_fixtures()
 
 

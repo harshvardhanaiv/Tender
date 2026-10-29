@@ -76,3 +76,21 @@ def test_extra_filters_become_conditions():
 def test_buyer_names_that_differ_in_case_are_one_buyer():
     assert sb._nicer_name("Ministry of Defence", "MINISTRY OF DEFENCE") is True
     assert sb._nicer_name("MINISTRY OF DEFENCE", "Ministry of Defence") is False
+
+
+def test_a_three_letter_search_matches_word_starts_only():
+    """QA N4: 'IBM' also returned Gibmaroc and LEIB Medical."""
+    rows = [{"name": "IBM United Kingdom Limited"}, {"name": "Gibmaroc Ltd"}, {"name": "LEIB MEDICAL LTD"}, {"name": "UK IBM Services"}]
+    assert [r["name"] for r in sb._drop_inside_word_matches(rows, "IBM")] == ["IBM United Kingdom Limited", "UK IBM Services"]
+    assert sb._drop_inside_word_matches(rows, "ibm ltd") == rows and sb._drop_inside_word_matches(rows, "") == rows
+
+
+def test_merged_cards_are_ordered_by_the_figures_they_show():
+    """QA N2: 'sort by wins' put 694 awards above 1,628 because the order was set before records were merged."""
+    cards = [{"name": "Specialist Computer Centres PLC", "total_awards": 694, "total_value": 5e8}, {"name": "Softcat PLC", "total_awards": 1628, "total_value": 9e8},
+             {"name": "WSP UK Limited", "total_awards": 594, "total_value": 4e8}]
+    assert [c["total_awards"] for c in sb._order_merged(cards, {"sort": "wins"})] == [1628, 694, 594]
+    assert [c["name"] for c in sb._order_merged(cards, {"sort": "value"})][0] == "Softcat PLC"
+    assert [c["name"] for c in sb._order_merged(cards, {"sort": "name"})][0] == "Softcat PLC"
+    named = sb._order_merged(cards, {"sort": "wins"}, q_key="WSPUK", q="WSP UK")
+    assert named[0]["name"] == "WSP UK Limited", "the supplier actually named stays first"

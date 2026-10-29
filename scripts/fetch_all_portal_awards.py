@@ -53,7 +53,7 @@ SKIPPED_PORTALS = {
 }
 
 
-def _portal_jobs(limit: int, days_back: int) -> dict[str, Callable[[Any], list[dict[str, Any]]]]:
+def _portal_jobs(limit: int, days_back: int, pcs_start_page: int | None = None) -> dict[str, Callable[[Any], list[dict[str, Any]]]]:
     from etenders_scraper.awards import (
         scrape_live_contracts_finder_awards,
         scrape_live_find_tender_awards,
@@ -64,12 +64,12 @@ def _portal_jobs(limit: int, days_back: int) -> dict[str, Callable[[Any], list[d
         "contracts_finder": lambda conn: scrape_live_contracts_finder_awards(limit=limit, days_back=days_back, conn=conn),
         "find_tender": lambda conn: scrape_live_find_tender_awards(max_records=limit, conn=conn),
         "sell2wales": lambda conn: scrape_live_bravo_awards("sell2wales", "https://www.sell2wales.gov.wales", "Sell2Wales", limit=limit, conn=conn),
-        "pcs": lambda conn: scrape_live_bravo_awards("pcs", "https://www.publiccontractsscotland.gov.uk", "Public Contracts Scotland", limit=limit, conn=conn),
+        "pcs": lambda conn: scrape_live_bravo_awards("pcs", "https://www.publiccontractsscotland.gov.uk", "Public Contracts Scotland", limit=limit, conn=conn, start_page=pcs_start_page),
     }
 
 
-def run(conn, *, portals: list[str], limit: int, days_back: int, run_audit: bool) -> int:
-    jobs = _portal_jobs(limit=limit, days_back=days_back)
+def run(conn, *, portals: list[str], limit: int, days_back: int, run_audit: bool, pcs_start_page: int | None = None) -> int:
+    jobs = _portal_jobs(limit=limit, days_back=days_back, pcs_start_page=pcs_start_page)
 
     unknown = [p for p in portals if p not in jobs and p not in SKIPPED_PORTALS]
     if unknown:
@@ -136,6 +136,10 @@ def main() -> int:
              "(the last two are always skipped with a reason — see module docstring).",
     )
     parser.add_argument("--limit", type=int, default=50, help="Max notices to fetch per portal (default: 50)")
+    parser.add_argument("--pcs-start-page", type=int, default=None,
+                        help="Public Contracts Scotland: first page of its Contract Results list to read (10 notices a page). Default: carry on "
+                             "from where the last run stopped, which is what the scheduler does. Older pages name a winner almost every time, "
+                             "so --portals pcs --limit 2000 reads 200 pages.")
     parser.add_argument("--days-back", type=int, default=30, help="Contracts Finder lookback window in days (default: 30)")
     parser.add_argument("--dry-run", action="store_true", help="Fetch and parse only — do not write to the database")
     parser.add_argument("--no-audit", action="store_true", help="Skip the post-run contact-info quality audit")
@@ -163,7 +167,7 @@ def main() -> int:
         print("DRY RUN — fetching and parsing only, nothing will be written to the database.")
 
     try:
-        return run(conn, portals=portals, limit=args.limit, days_back=args.days_back, run_audit=not args.no_audit)
+        return run(conn, portals=portals, limit=args.limit, days_back=args.days_back, run_audit=not args.no_audit, pcs_start_page=args.pcs_start_page)
     finally:
         if conn:
             conn.close()

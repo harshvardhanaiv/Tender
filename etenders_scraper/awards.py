@@ -209,7 +209,7 @@ deduped_priced AS (
 ),
 deduped_awards AS (
     SELECT {outer_cols},
-           CASE WHEN p.ceiling_copy THEN NULL ELSE p.contract_value END AS contract_value,
+           CASE WHEN p.ceiling_copy OR (p.contract_value > 0 AND p.contract_value < 1) THEN NULL ELSE p.contract_value END AS contract_value,
            p.contract_value_notice, p.shared_n, p.auth_key, p.ceiling_copy
     FROM (SELECT q.*, {CEILING_COPY_SQL} AS ceiling_copy FROM deduped_priced q) p
 )"""
@@ -418,7 +418,7 @@ _BUYER_AUTHORITY_NAME_RE = re.compile(
 
 # Text lifted from a notice page that is not a name: a section heading read as the buyer ("one.1) Name and addressesI.1) Name
 # and addresses") or the middle of a sentence read as the winner ("is PwC, with a committed").
-_JUNK_AUTHORITY_RE = re.compile(r"name\s+and\s+address|^\s*(?:one|[ivx]+|\d+)\.\d+\)|^\s*section\s+[ivx\d]+", re.IGNORECASE)
+_JUNK_AUTHORITY_RE = re.compile(r"name\s+and\s+address|^\s*(?:one|[ivx]+|\d+)\.\d+\)|^\s*section\s+[ivx\d]+\b", re.IGNORECASE)
 _JUNK_SUPPLIER_RE = re.compile(r"^(?:is|are|was|were|has|have|will|and|being|which|that|by)\s+\S")
 
 
@@ -430,6 +430,56 @@ def is_junk_supplier_name(name: str | None) -> bool:
     """A lower-case verb or joining word at the start: a fragment of prose ("is PwC, with a committed"), never a company
     ("IS Group" is upper-case and is kept)."""
     return bool(name) and bool(_JUNK_SUPPLIER_RE.match(name.strip()))
+
+
+# One public body published under several names: NHS England as "The NHS Commissioning Board (operating under the name of NHS England)",
+# "NHS COMMISSIONING BOARD" and "NHS England (NHS Commissioning Board)"; a council's own procurement unit as "Leeds City Council - PACS".
+# These are the same legal body, so their awards belong on one buyer page. Regional teams ("NHS England - North West") are separate
+# publishers and are left alone.
+_BUYER_ALIAS_RULES = (
+    (re.compile(r"^\s*(?:the\s+)?nhs\s+commissioning\s+board(?:\s*\(?\s*(?:operating\s+(?:under\s+the\s+name\s+of|as)\s+nhs\s+england)\s*\)?)?\s*$"
+                r"|^\s*nhs\s+england\s*\(\s*nhs\s+commissioning\s+board\s*\)\s*$|^\s*nhs\s+england\s*$", re.IGNORECASE), lambda m: "NHS England"),
+    (re.compile(r"^\s*(.+?\bcouncil)\s*[-–]\s*PACS\s*$", re.IGNORECASE), lambda m: m.group(1).strip()),
+)
+
+
+# "Camden Council" and "London Borough of Camden" are one body: the 32 London boroughs are always written as the latter.
+_LONDON_BOROUGHS = (
+    "Barking and Dagenham", "Barnet", "Bexley", "Brent", "Bromley", "Camden", "Croydon", "Ealing", "Enfield", "Hackney",
+    "Hammersmith and Fulham", "Haringey", "Harrow", "Havering", "Hillingdon", "Hounslow", "Islington", "Lambeth", "Lewisham", "Merton",
+    "Newham", "Redbridge", "Richmond upon Thames", "Southwark", "Sutton", "Tower Hamlets", "Waltham Forest", "Wandsworth",
+)
+_LONDON_BOROUGH_RE = re.compile(
+    r"^\s*(?:london\s+borough\s+(?:of\s+)?)?(" + "|".join(re.escape(b).replace(r"\ ", r"\s+") for b in _LONDON_BOROUGHS).replace('\\s+and\\s+', '\\s+(?:and|&)\\s+')
+    + r")(?:\s+(?:borough\s+)?council)?\s*$", re.IGNORECASE)
+_BOROUGH_CANON = {b.lower(): b for b in _LONDON_BOROUGHS}
+# a name that says it is a London borough, or is "<borough> Council": "Sutton Council" is not turned into a London borough by a loose
+# match, so the plain "<borough>" form with no "council" or "london borough" is left alone.
+
+
+def _london_borough(name: str) -> str | None:
+    m = _LONDON_BOROUGH_RE.match(name)
+    if not m:
+        return None
+    low = name.lower()
+    if "council" not in low and "london borough" not in low:
+        return None
+    key = re.sub(r"\s+", " ", m.group(1).lower().replace("&", "and"))
+    return "London Borough of " + _BOROUGH_CANON.get(key, m.group(1).title())
+
+
+def canonical_authority_name(name: str | None) -> str | None:
+    """The buyer's usual name when `name` is a known alias of it, else `name` unchanged."""
+    if not name:
+        return name
+    borough = _london_borough(name)
+    if borough:
+        return borough
+    for rx, repl in _BUYER_ALIAS_RULES:
+        m = rx.match(name)
+        if m:
+            return repl(m)
+    return name
 
 
 def looks_like_buyer_authority(name: str) -> bool:
@@ -469,11 +519,18 @@ def ingest_award_record(contract_record: dict[str, Any], conn: Any, overwrite: b
     if supplier_name.lower() in PLACEHOLDER_SUPPLIER_NAMES:
         return False
 
+    import html as _html
+    for _key in ("tender_title", "authority_name", "supplier_name"):
+        _val = contract_record.get(_key)
+        if isinstance(_val, str) and "&" in _val:
+            contract_record[_key] = _html.unescape(_val)
+    supplier_name = (contract_record.get("supplier_name") or "").strip()
     # Prose or a section heading picked up from the notice page is not a name; a heading as the buyer is stored as "unknown buyer".
     if is_junk_supplier_name(supplier_name):
         return False
     if is_junk_authority_name(contract_record.get("authority_name")):
         contract_record["authority_name"] = ""
+    contract_record["authority_name"] = canonical_authority_name(contract_record.get("authority_name")) or contract_record.get("authority_name")
 
     # A buyer authority (NHS trust, ICB, council, police/fire authority, ...) is never a real
     # supplier -- reject rather than upsert it (e.g. a delivery-partner field that got
@@ -1413,7 +1470,7 @@ def scrape_live_bravo_awards(
 
         scraped_records.append(contract_record)
 
-    if source_id == "pcs" and next_page and conn:
+    if source_id == "pcs" and next_page and conn and not start_page:  # a run for chosen pages (a backfill) leaves the scheduler's place alone
         _save_cursor(conn, "pcs_contract_results_page", next_page)
     return scraped_records
 

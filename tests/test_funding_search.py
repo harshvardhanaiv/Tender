@@ -57,3 +57,17 @@ def test_duplicate_slugs_keep_the_newest():
     b = rec(label="youth-jobs-grant-2", name="Youth  Jobs grant")
     c = rec(label="other", name="Other grant")
     assert [r["label"] for r in funding.dedupe([a, b, c])] == ["youth-jobs-grant-2", "other"]
+
+
+def test_a_term_and_its_long_form_find_the_same_grants():
+    """QA R5: 'AI' found 9 grants and 'artificial intelligence' 4; 'analytics' found none."""
+    grants = [rec(name="Frontier AI grant"), rec(name="Uses artificial intelligence for care"), rec(name="Data programme for councils"), rec(name="Airport works")]
+    count = lambda q: sum(funding.text_matches(funding._query_groups(q), g) for g in grants)
+    assert count("AI") == count("artificial intelligence") == 2
+    assert count("analytics") == 1, "analytics finds data grants too"
+
+
+def test_a_source_reference_is_not_part_of_a_grant_name():
+    from datetime import date
+    row = ("l", "itt_4092 - GRANT- Centre of Excellence Phase 2", "Funder", "", None, None, None, [], [], None, "2026-12-01", None, False, "", "", "")
+    assert funding._public(row, date(2026, 10, 29))["name"] == "Centre of Excellence Phase 2"

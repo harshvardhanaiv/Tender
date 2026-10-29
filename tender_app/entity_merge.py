@@ -19,10 +19,16 @@ _LOT_PREFIX_RE = re.compile(r"^LOT\s*[0-9]+\s*\([^)]*\)\s*:\s*")
 _TRADING_AS_RE = re.compile(r"\(\s*(T/A|TRADING AS)[^)]*\)| (T/A|TRADING AS) .*$")
 
 
+# "Sports and Leisure Management Limited (Everyone Active)": a bracket after the legal form is a trading name. A bracket before it
+# ("Aspire Services (Leeds) LTD", "Carillion (AMBS) Ltd") names a different body and is kept.
+_BRACKETED_TRADING_NAME_RE = re.compile(r"\b(LTD|LIMITED|PLC|LLP|LLC|INC)\.?\s*\([^)]*\)\s*$")
+
+
 def entity_name_key(name: str | None) -> str:
     text = str(name or "").replace("&", " and ").upper().replace("UNITED KINGDOM", "UK")
     text = _LOT_PREFIX_RE.sub("", text.strip())
     text = _TRADING_AS_RE.sub("", _LOT_SUFFIX_RE.sub("", text))
+    text = _BRACKETED_TRADING_NAME_RE.sub(r"\1", text)
     text = re.sub(r"[^A-Z0-9]+", " ", text).strip()
     text = _SUFFIX_RE.sub(" ", text)
     return re.sub(r"[\s]+", "", re.sub(r"\bAND\b", " ", text))

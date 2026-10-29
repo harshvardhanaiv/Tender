@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable
 
 from etenders_scraper.awards import (
@@ -96,7 +96,9 @@ TABLES = ("supplier_stats", "buyer_stats")
 # the stats all read the same rows, so their numbers cannot differ.
 AWARD_VALUES_TABLE = "award_values"
 _AWARD_VALUES_INDEXES = (("supplier_id", "supplier_id"), ("company_number", "company_number"), ("date_signed", "date_signed"), ("auth_key", "auth_key"))
-_MATERIALISED_CTE = f"deduped_awards AS (SELECT * FROM {AWARD_VALUES_TABLE})"
+# NOT MATERIALIZED: a CTE read twice is copied in full (450,000 wide rows, 1 s per search); inlined, the planner reads only the
+# rows of the suppliers that matched, through the table's own indexes.
+_MATERIALISED_CTE = f"deduped_awards AS NOT MATERIALIZED (SELECT * FROM {AWARD_VALUES_TABLE})"
 
 
 def award_values_ready(cursor) -> bool:
@@ -135,10 +137,11 @@ def refresh_award_values(conn) -> int:
 # words ignored. Stored on supplier_stats so every record of one company can be found whatever the search was, which is what
 # keeps a merged card's totals the same for "Capita" and "Capita plc". (\y is Postgres's word boundary.)
 ENTITY_KEY_SQL = (
-    r"""REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE("""
+    r"""REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE("""
     r"""REPLACE(UPPER(REPLACE(TRIM({col}), '&', ' AND ')), 'UNITED KINGDOM', 'UK'), '^LOT\s*[0-9]+\s*\([^)]*\)\s*:\s*', '', 'g'), """
     r"""'\(\s*(APPOINTED TO )?LOTS?\s*[0-9A-Z ,&/-]*\)', '', 'g'), """
     r"""'\(\s*(T/A|TRADING AS)[^)]*\)| (T/A|TRADING AS) .*$', '', 'g'), """
+    r"""'\y(LTD|LIMITED|PLC|LLP|LLC|INC)\.?\s*\([^)]*\)\s*$', '\1', 'g'), """
     r"""'[^A-Z0-9]+', ' ', 'g'), """
     r"""'\y(LTD|LIMITED|PLC|LLP|LLC|INC|CORP|CO)\y', ' ', 'g'), '\yAND\y|\s+', '', 'g')"""
 )
@@ -172,6 +175,7 @@ def ensure_stats_tables(cursor) -> None:
         cursor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_awards_supname_trgm ON contract_awards USING gin (LOWER(supplier_name) gin_trgm_ops)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_supplier_stats_entity_trgm ON supplier_stats USING gin (entity_key gin_trgm_ops)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_suppliers_name_trgm ON suppliers USING gin (LOWER(name) gin_trgm_ops)")
         cursor.execute("RELEASE SAVEPOINT trgm")
     except Exception:
         cursor.execute("ROLLBACK TO SAVEPOINT trgm")
@@ -200,6 +204,10 @@ def ensure_stats_tables(cursor) -> None:
     """)
     # average value of the direct contracts that state one, so the buyer search can read it instead of re-aggregating
     cursor.execute("ALTER TABLE buyer_stats ADD COLUMN IF NOT EXISTS avg_contract_value NUMERIC")
+    # what the buyer buys, as {CPV division: awards}, so a buyer can be scored by its spend in a company's sector rather than by its name;
+    # and the first contract end at least 60 days away, the earliest a company can still act on.
+    cursor.execute("ALTER TABLE buyer_stats ADD COLUMN IF NOT EXISTS cpv_shares JSONB")
+    cursor.execute("ALTER TABLE buyer_stats ADD COLUMN IF NOT EXISTS next_renewal_actionable TEXT")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_buyer_stats_spend ON buyer_stats (total_spend DESC)")
 
 
@@ -298,7 +306,7 @@ def refresh_buyer_stats(conn, from_table: bool = False) -> int:
         INSERT INTO buyer_stats
             (authority_key, authority_name, buyer_type, total_contracts, total_spend, total_spend_all,
              unique_suppliers, next_renewal_date, latest_award_date, max_renewal_date,
-             latitude, longitude, cpv_divisions, refreshed_at, avg_contract_value)
+             latitude, longitude, cpv_divisions, refreshed_at, avg_contract_value, next_renewal_actionable)
         SELECT k,
                (ARRAY_AGG(TRIM(authority_name) ORDER BY
                     (TRIM(authority_name) = UPPER(TRIM(authority_name))) ASC,
@@ -315,7 +323,8 @@ def refresh_buyer_stats(conn, from_table: bool = False) -> int:
                (ARRAY_AGG(longitude ORDER BY date_signed DESC NULLS LAST) FILTER (WHERE {_REAL_COORD_SQL}))[1],
                ARRAY_AGG(DISTINCT LEFT(cpv_code, 2)) FILTER (WHERE cpv_code IS NOT NULL AND cpv_code <> ''),
                CURRENT_TIMESTAMP,
-               AVG(CASE WHEN is_framework = 1 OR contract_value < 0 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN NULL ELSE contract_value END)
+               AVG(CASE WHEN is_framework = 1 OR contract_value < 0 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN NULL ELSE contract_value END),
+               MIN(CASE WHEN contract_end_date >= %s THEN contract_end_date END)
         FROM (
             SELECT *, {_norm_auth_sql('authority_name')} AS k
             FROM deduped_awards
@@ -330,9 +339,21 @@ def refresh_buyer_stats(conn, from_table: bool = False) -> int:
             next_renewal_date = EXCLUDED.next_renewal_date, latest_award_date = EXCLUDED.latest_award_date,
             max_renewal_date = EXCLUDED.max_renewal_date, latitude = EXCLUDED.latitude,
             longitude = EXCLUDED.longitude, cpv_divisions = EXCLUDED.cpv_divisions,
-            refreshed_at = EXCLUDED.refreshed_at, avg_contract_value = EXCLUDED.avg_contract_value
-    """, (today,))
+            refreshed_at = EXCLUDED.refreshed_at, avg_contract_value = EXCLUDED.avg_contract_value,
+            next_renewal_actionable = EXCLUDED.next_renewal_actionable
+    """, (today, (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")))
     n = cur.rowcount
+    cur.execute(f"""
+        WITH {deduped_cte(cur) if from_table else DEDUPED_AWARDS_CTE_SQL}
+        UPDATE buyer_stats b SET cpv_shares = t.shares
+        FROM (SELECT k, jsonb_object_agg(div, n) AS shares FROM (
+                  SELECT {_norm_auth_sql('authority_name')} AS k, LEFT(cpv_code, 2) AS div, COUNT(*) AS n
+                  FROM deduped_awards
+                  WHERE authority_name IS NOT NULL AND cpv_code ~ '^[0-9][0-9]' AND cpv_code NOT LIKE '00%'
+                  GROUP BY 1, 2) d GROUP BY k) t
+        WHERE b.authority_key = t.k
+    """)
+    cur.execute("UPDATE buyer_stats SET cpv_shares = '{}'::jsonb WHERE cpv_shares IS NULL")  # no CPV on any award: empty, not unknown
     # Stale rows (a buyer whose awards were all removed) are found with the SAME key the insert above groups by.
     # This used to repeat a shorter copy of the formula without the punctuation step, so every buyer whose name
     # has punctuation ("St. Mary's NHS Trust", "Newcastle-upon-Tyne ...") was deleted right after being written.
@@ -412,6 +433,21 @@ def ensure_fresh_async(get_connection: Callable[[], Any], cursor=None) -> None:
                 return True
             # a table built before the panel-notice rule: it still holds large shared values that rule now withholds
             cur.execute(f"SELECT EXISTS (SELECT 1 FROM {AWARD_VALUES_TABLE} WHERE shared_n >= {PANEL_MIN_SUPPLIERS} AND contract_value_notice >= {PANEL_MIN_VALUE} AND NOT COALESCE(ceiling_copy, FALSE) AND COALESCE(is_framework, 0) = 0 LIMIT 1)")
+            if cur.fetchone()[0]:
+                return True
+            # buyer_stats rows written before the buyer's CPV mix and its first actionable renewal were stored
+            cur.execute("SELECT EXISTS (SELECT 1 FROM buyer_stats WHERE cpv_shares IS NULL AND total_contracts > 0 LIMIT 1) AND EXISTS (SELECT 1 FROM contract_awards WHERE cpv_code ~ '^[0-9][0-9]' LIMIT 1)")
+            if cur.fetchone()[0]:
+                return True
+            # values under GBP 1 (a notice value split into fractions) are now withheld; trading names in brackets after Ltd/plc now
+            # merge; a postcode now decides the region. Each needs one rebuild on a table built before it.
+            cur.execute(f"SELECT EXISTS (SELECT 1 FROM {AWARD_VALUES_TABLE} WHERE contract_value > 0 AND contract_value < 1 LIMIT 1)")
+            if cur.fetchone()[0]:
+                return True
+            cur.execute(
+                r"""SELECT EXISTS (SELECT 1 FROM supplier_stats st JOIN suppliers s ON s.id = st.supplier_id
+                    WHERE s.name ~* '\y(LTD|LIMITED|PLC|LLP|LLC|INC)\.?\s*\([^)]*\)\s*$'
+                      AND st.entity_key IS DISTINCT FROM """ + ENTITY_KEY_SQL.format(col="s.name") + " LIMIT 1)")
             if cur.fetchone()[0]:
                 return True
             # rows written before entity_key existed, or with the first version of it (lot suffixes not yet removed)

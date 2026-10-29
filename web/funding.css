@@ -194,3 +194,10 @@ body.tf-shell #fundingAiModal .btn--primary, body.tf-shell #policyLibModal .btn-
 .supplier-hint + .supplier-hint { margin-top: 4px; }
 .supplier-hint__n { color: var(--muted, #64748b); font-size: 11px; }
 .tf-chip--input { min-width: 130px; max-width: 170px; cursor: text; }
+
+/* The drawer lists every blocker, check and reason for the fit verdict. */
+.funding-fitlist { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+.funding-fitlist li { padding-left: 10px; border-left: 3px solid var(--border, #e2e8f0); }
+.funding-fitlist__no { border-left-color: #dc2626 !important; }
+.funding-fitlist__maybe { border-left-color: #d97706 !important; }
+.funding-fitlist__yes { border-left-color: #059669 !important; }

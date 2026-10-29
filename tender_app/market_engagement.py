@@ -269,7 +269,9 @@ def step_states(plan: dict[str, Any], included_suppliers: int) -> list[dict[str,
     steps = []
     active_assigned = False
     for index, title in enumerate(STEP_TITLES):
-        if done[index]:
+        # A step is done only when every step before it is: a plan with suppliers chosen but its notice details unfinished
+        # shows step 1 as the current one, not a bar with a tick after a gap.
+        if done[index] and not active_assigned:
             state = "done"
         elif not active_assigned:
             state, active_assigned = "active", True

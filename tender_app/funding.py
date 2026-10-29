@@ -38,6 +38,9 @@ def _tables_exist(cursor: Any) -> bool:
 
 def _public(row: tuple, today: date) -> dict[str, Any]:
     rec = dict(zip(_KEYS, row))
+    # A reference left in the name by the source ("itt_4092 - GRANT- Centre of Excellence ...") is not part of it.
+    if rec.get("name"):
+        rec["name"] = re.sub(r"^\s*itt_\d+\s*-\s*(?:GRANT-?\s*)?", "", rec["name"], flags=re.I).strip() or rec["name"]
     for key in ("min_award", "max_award", "total_award"):
         rec[key] = float(rec[key]) if rec[key] is not None else None
     # Source quirks: a minimum of £1 means "not stated", and a maximum equal to a big pot is the pot, not one award.
@@ -64,6 +67,8 @@ _SYNONYMS = {
     "r&d": ("r&d", "research and development"),
     "rd": ("r&d", "research and development"),
     "netzero": ("net zero",),
+    "analytics": ("analytics", "data", "business intelligence", "insight"),
+    "bi": ("bi", "business intelligence", "analytics"),
 }
 _TERM = re.compile(r"[a-z0-9&]+")
 
@@ -82,10 +87,17 @@ def _norm(text: str | None) -> str:
     return " " + " ".join(_search_stem(w) for w in _TERM.findall((text or "").lower().replace("-", " "))) + " "
 
 
+# The long form of a term finds what the short form finds: "artificial intelligence" and "AI" are one search.
+_LONG_FORMS = {phrase: key for key, phrases in _SYNONYMS.items() for phrase in phrases if " " in phrase and key not in ("smes", "rd", "bi", "netzero")}
+
+
 def _query_groups(q: str) -> list[list[str]]:
     """One group per query word (all groups must match); a group is the phrases any of which satisfies it."""
     groups: list[list[str]] = []
-    for word in _TERM.findall(q.lower().replace("-", " ")):
+    text = q.lower().replace("-", " ")
+    for long_form, key in sorted(_LONG_FORMS.items(), key=lambda kv: -len(kv[0])):
+        text = re.sub(r"\b" + re.escape(long_form) + r"\b", key, text)
+    for word in _TERM.findall(text):
         phrases = _SYNONYMS.get(word, (word,))
         groups.append([_norm(p) for p in phrases])
     return groups
@@ -235,7 +247,7 @@ def search(cursor: Any, *, q: str = "", applicant: str = "", location: str = "",
         items.sort(key=lambda r: (rank.get(r.get("fit", {}).get("verdict"), 1), -len(r["matches"]), r["ongoing"] or not r["close_date"], r["close_date"] or far, r["name"]))
     total = len(items)
     pages = max(1, -(-total // PAGE_SIZE))
-    page = min(max(1, page), pages)
+    page = max(1, page)  # a page past the end is an empty page (the Funding page steps back to the last one itself)
     cursor.execute("SELECT DISTINCT UNNEST(locations) FROM funding_opportunities ORDER BY 1")
     locations = [r[0] for r in cursor.fetchall()]
     cursor.execute("SELECT MAX(seen_at) FROM funding_opportunities")

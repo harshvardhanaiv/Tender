@@ -243,9 +243,10 @@
       );
     }
     // The free rule-based check comes first: when it says this grant is unlikely to suit the company, say why before credits are spent.
-    const blocked = grant && grant.fit && grant.fit.verdict === "unlikely" && kind !== "eligibility" && cost > 0;
+    const blocked = grant && grant.fit && grant.fit.verdict === "unlikely" && cost > 0;
+    const runAnyway = blocked && kind !== "eligibility";
     const warn = blocked ? `<p class="fai-warn" role="alert"><strong>Unlikely to qualify.</strong> ${esc(grant.fit.blocker || "A condition of this grant does not match your company profile.")} The AI will work from the same facts, so check the full criteria with the funder before spending credits.</p>` : "";
-    return `<p>${esc(tool[2])}</p>${warn}<button type="button" class="btn btn--primary" data-fai-run="${kind}">${blocked ? "Run anyway" : "Run"}: ${esc(price)}</button>`;
+    return `<p>${esc(tool[2])}</p>${warn}<button type="button" class="btn btn--primary" data-fai-run="${kind}">${runAnyway ? "Run anyway" : "Run"}: ${esc(price)}</button>`;
   }
 
   function modalHtml(grant, active, states, costs) {

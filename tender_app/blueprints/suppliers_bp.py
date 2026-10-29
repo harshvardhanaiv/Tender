@@ -19,7 +19,7 @@ from tender_app.security import rate_limit
 from tender_app.grants import grants_for_supplier
 from tender_app.charities import charities_for_suppliers, charity_for_supplier
 from tender_app.geo import geo_radius_clause
-from tender_app.regions import itl1_region
+from tender_app.regions import REGIONS, itl1_region
 from tender_app.supplier_classifier import classify_supplier_real_data, is_known_large_enterprise
 from tender_app.ch_matcher import normalize_ch_company_number, is_valid_ch_company_number, calculate_name_similarity, clean_contact_field
 
@@ -470,7 +470,14 @@ _VALID_COMPANY_NUMBER_SQL = """(
 )"""
 
 
-_SME_IMPLAUSIBLE_TOTAL_GBP = 100_000_000
+_SME_IMPLAUSIBLE_TOTAL_GBP = 50_000_000
+# A company that has won this many public contracts is not a small or medium business whatever one notice ticked: Dell, CDW and
+# Insight Direct showed as SMEs with 265, 436 and 383 awards. A guide from the data, not a statement about their accounts.
+_SME_IMPLAUSIBLE_AWARDS = 150
+
+
+def _implausible_sme(total_value: Any, total_awards: Any) -> bool:
+    return float(total_value or 0) > _SME_IMPLAUSIBLE_TOTAL_GBP or int(total_awards or 0) >= _SME_IMPLAUSIBLE_AWARDS
 
 
 def _shape_supplier_rows(cursor, raw_rows, sme_only: bool, vcse_only: bool) -> list[dict[str, Any]]:
@@ -487,10 +494,10 @@ def _shape_supplier_rows(cursor, raw_rows, sme_only: bool, vcse_only: bool) -> l
         )
         # A supplier with hundreds of millions of pounds of awards is not an SME (turnover cap about EUR 50m),
         # whatever a scraped flag says: Scott Aerospace showed "SME" beside GBP 2.33bn.
-        if sme_st == "SME" and float(r.get("total_value") or 0) > _SME_IMPLAUSIBLE_TOTAL_GBP:
-            sme_st = "Non-SME Enterprise"
-        # A subsidiary of a listed group ("Bunzl UK Ltd", with "Bunzl plc" in the data) is not an SME whatever the notice says.
         sme_note = "From the award notice, not verified against Companies House accounts"
+        if sme_st == "SME" and _implausible_sme(r.get("total_value"), r.get("total_awards")):
+            sme_st, sme_note = "Non-SME Enterprise", "Too much public contract value or too many awards for a small or medium business"
+        # A subsidiary of a listed group ("Bunzl UK Ltd", with "Bunzl plc" in the data) is not an SME whatever the notice says.
         if sme_st == "SME" and r.get("group_large"):
             sme_st, sme_note = "Non-SME Enterprise", "Part of a plc group of the same name"
         # Strict filtering: exclude unclassified & non-SME / non-VCSE when those filters are active
@@ -563,6 +570,70 @@ def _nicer_name(candidate: str, current: str) -> bool:
 
 
 SUPPLIER_SORTS = ("value", "wins", "recent", "name")
+
+
+def _matched_ids_sql(q_pattern: str, q_clean_pattern: str, q_key: str = "") -> tuple[str, list[Any]]:
+    """The ids of suppliers a typed text can match, as one UNION of single-column lookups, each able to use its own index (the old
+    "name LIKE ? OR number LIKE ? OR region LIKE ?" had to read every supplier). The company number is only tried when the text has
+    a digit, and the region only when the text could be part of a region name."""
+    parts = ["SELECT id FROM suppliers WHERE LOWER(name) LIKE LOWER(?)"]
+    params: list[Any] = [q_clean_pattern]
+    if re.search(r"\d", q_pattern):
+        parts.append("SELECT id FROM suppliers WHERE company_number LIKE ?")
+        params.append(q_pattern)
+    needle = q_clean_pattern.strip("%").lower()
+    if needle and any(needle in r.lower() for r in REGIONS):
+        parts.append("SELECT id FROM suppliers WHERE LOWER(region) LIKE LOWER(?)")
+        params.append(q_clean_pattern)
+    if q_key:
+        parts.append("SELECT supplier_id FROM supplier_stats WHERE entity_key LIKE ?")
+        params.append(f"%{q_key}%")
+    return " UNION ".join(parts), params
+
+
+def _value_note(ceiling_copy: bool, over_ceiling: bool, is_framework: bool, notice_value: Any = None) -> str | None:
+    """Why an award's value is not in the supplier's totals, or None when it is. Every row left out says so."""
+    if ceiling_copy:
+        shown = f" (£{notice_value:,.0f} on the notice)" if isinstance(notice_value, (int, float)) and notice_value else ""
+        return ("A value shared by many suppliers or by every call-off of one framework, not this order's" + shown + ": the award is counted, its value is not")
+    if over_ceiling:
+        return (f"Above £{SINGLE_AWARD_STATS_CEILING_GBP / 1e6:,.0f}m: too large to trust as one award, so it is not added to the totals. "
+                "The award is counted; check the notice for the real value")
+    if is_framework:
+        return "A framework's ceiling is shared by every appointed supplier, so it is shown separately and never added to value won"
+    return None
+
+
+def _drop_inside_word_matches(suppliers: list[dict[str, Any]], q: str) -> list[dict[str, Any]]:
+    """A search of three letters or fewer ("IBM") matches inside longer words ("Gibmaroc", "Leib Medical"). Keep a supplier only when
+    the letters start a word of its name (or match its company number); longer searches are left alone."""
+    text = (q or "").strip().lower()
+    if not text or len(text) > 3 or not re.fullmatch(r"[a-z]+", text):
+        return suppliers
+    word_start = re.compile(r"(^|[^a-z0-9])" + re.escape(text))
+    return [s for s in suppliers if word_start.search((s.get("name") or "").lower())]
+
+
+def _order_merged(suppliers: list[dict[str, Any]], opts: dict | None, q_key: str = "", q: str = "") -> list[dict[str, Any]]:
+    """Put a page in order by the figures its cards show. The query ranks single records; once records of one company are merged
+    a card's wins and value are bigger than any one record's, so "Softcat 1,628" could sit under "Specialist Computer Centres 694"."""
+    sort = (opts or {}).get("sort") or "value"
+    if sort == "recent" or len(suppliers) < 2:
+        return suppliers
+    key_fn = {"value": lambda s: (-(s.get("total_value") or 0), -(s.get("total_awards") or 0)),
+              "wins": lambda s: (-(s.get("total_awards") or 0), -(s.get("total_value") or 0)),
+              "name": lambda s: ((s.get("name") or "").lower(),)}.get(sort)
+    if not key_fn:
+        return suppliers
+    from tender_app.entity_merge import entity_name_key
+
+    def tier(s: dict[str, Any]) -> int:
+        if q and q_key and (entity_name_key(s.get("name")) == q_key or (s.get("name") or "").lower() == q.lower()):
+            return 0
+        return 1 if (s.get("total_awards") or 0) > 0 or sort == "name" else 2
+    if not q:
+        return sorted(suppliers, key=key_fn)
+    return sorted(suppliers, key=lambda s: (tier(s), key_fn(s)))
 
 
 def _refine_conditions(opts: dict | None, value_expr: str) -> tuple[list[str], list[Any]]:
@@ -655,7 +726,7 @@ def _sibling_ids(cursor, conn, ids: list[int]) -> list[int]:
     try:
         _execute(cursor, conn, """
             SELECT DISTINCT o.supplier_id FROM supplier_stats st
-            JOIN supplier_stats o ON o.entity_key = st.entity_key AND o.listable AND o.supplier_id <> ALL(?::int[])
+            JOIN supplier_stats o ON o.entity_key = st.entity_key AND o.entity_key <> '' AND o.listable AND o.supplier_id <> ALL(?::int[])
             WHERE st.supplier_id = ANY(?::int[]) AND st.entity_key IS NOT NULL AND st.entity_key <> ''
             LIMIT ?""", [list(ids), list(ids), SIBLING_LIMIT])
         return [r[0] for r in cursor.fetchall()]
@@ -680,15 +751,15 @@ def _supplier_page_from_stats(cursor, conn, q_patterns, sme_only, vcse_only, onl
     elif q_patterns:
         q_pattern, q_clean_pattern = q_patterns
         q_key = (opts or {}).get("q_key") or ""
-        if q_key:  # also match the name key: "Sainsbury's", "serco ltd" and "Serco Limited" are one search
-            where.append("(LOWER(s.name) LIKE LOWER(?) OR s.company_number LIKE ? OR LOWER(s.region) LIKE LOWER(?) OR st.entity_key LIKE ?)")
-            params += [q_clean_pattern, q_pattern, q_clean_pattern, f"%{q_key}%"]
-        else:
-            where.append("(LOWER(s.name) LIKE LOWER(?) OR s.company_number LIKE ? OR LOWER(s.region) LIKE LOWER(?))")
-            params += [q_clean_pattern, q_pattern, q_clean_pattern]
+        # also match the name key: "Sainsbury's", "serco ltd" and "Serco Limited" are one search
+        ids_sql, ids_params = _matched_ids_sql(q_pattern, q_clean_pattern, q_key)
+        where.append(f"s.id IN ({ids_sql})")
+        params += ids_params
         needs_supplier_row = True
     if sme_only:
-        where.append("s.sme_status = 'SME'")
+        # The same tests _shape_supplier_rows applies afterwards, in SQL, so the page is filled with SMEs: with an empty search the
+        # top 25 by value are all large groups, and dropping them afterwards left an empty list under a count of 97,000.
+        where.append(f"s.sme_status = 'SME' AND st.total_value <= {_SME_IMPLAUSIBLE_TOTAL_GBP} AND st.total_awards < {_SME_IMPLAUSIBLE_AWARDS} AND NOT COALESCE(st.group_large, FALSE)")
         needs_supplier_row = True
     if vcse_only:
         where.append("s.vcse_status = 'VCSE'")
@@ -772,6 +843,7 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
         q_key = (opts or {}).get("q_key") or ""
         key_clause = "UNION SELECT st.supplier_id FROM supplier_stats st WHERE st.entity_key LIKE ?" if (q_key and use_listable) else ""
         key_params = [f"%{q_key}%"] if key_clause else []
+        base_sql, base_params = _matched_ids_sql(q_pattern, q_clean_pattern, q_key if use_listable else "")
         if widen_match:
             ctes.append(f"""matched AS (
                 SELECT s.id FROM suppliers s
@@ -787,15 +859,13 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
             params += [q_clean_pattern, q_pattern, q_clean_pattern] + key_params + [q_clean_pattern, q_pattern, q_pattern, q_pattern, q_pattern]
         else:
             ctes.append(f"""matched AS (
-                SELECT s.id FROM suppliers s
-                WHERE LOWER(s.name) LIKE LOWER(?) OR s.company_number LIKE ? OR LOWER(s.region) LIKE LOWER(?)
-                {key_clause}
+                {base_sql}
                 UNION
                 SELECT a.supplier_id FROM contract_awards a
                 WHERE a.supplier_id IS NOT NULL AND a.source_portal IN ({_PORTALS_SQL_LIST})
                   AND LOWER(a.supplier_name) LIKE LOWER(?)
             )""")
-            params += [q_clean_pattern, q_pattern, q_clean_pattern] + key_params + [q_clean_pattern]
+            params += base_params + [q_clean_pattern]
 
     def date_sql() -> tuple[str, list[Any]]:
         conds, vals = [], []
@@ -839,7 +909,8 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
     # verdict per supplier (listable), so use it whenever the stats exist.
     where = ["st.listable" if use_listable else SUPPLIER_NAME_NOT_PLACEHOLDER_SQL]
     if sme_only:
-        where.append("s.sme_status = 'SME'")
+        where.append(f"s.sme_status = 'SME' AND COALESCE(g.total_value, 0) <= {_SME_IMPLAUSIBLE_TOTAL_GBP} AND COALESCE(g.total_awards, 0) < {_SME_IMPLAUSIBLE_AWARDS}"
+                     + (" AND NOT COALESCE(st.group_large, FALSE)" if use_listable else ""))
     if vcse_only:
         where.append("s.vcse_status = 'VCSE'")
     if geo:
@@ -1002,6 +1073,7 @@ def search_suppliers():
                 widen_match=widen_match, opts=opts)
 
         suppliers = _shape_supplier_rows(cursor, raw_rows, sme_only, vcse_only)
+        suppliers = _drop_inside_word_matches(suppliers, q)
         # The other records of a company already on the page come with it, filtered the same way (same date range), so the
         # merged card shows the same totals whatever was typed ("Capita" and "Capita plc" used to differ by the records that
         # happened to match the text).
@@ -1022,6 +1094,15 @@ def search_suppliers():
                 suppliers = [sp for sp in suppliers if sp.get("id") not in sib or sp.get("id") in members]
         except Exception:
             pass   # never fail a search over the tidy-up
+        for sp in suppliers:  # a merged card carries the totals of all its records
+            if sp.get("sme_status") == "SME" and _implausible_sme(sp.get("total_value"), sp.get("total_awards")):
+                sp["sme_status"], sp["sme_source"] = "Non-SME Enterprise", "Too much public contract value or too many awards for a small or medium business"
+        if sme_only:
+            suppliers = [sp for sp in suppliers if sp.get("sme_status") == "SME"]
+        suppliers = _order_merged(suppliers, opts, q_key=opts["q_key"], q=q)
+        if opts.get("region"):  # a merged card is filtered by its own region, not by the region of one of its records
+            suppliers = [sp for sp in suppliers if (sp.get("region") or "").lower() == opts["region"].lower()]
+        buyers = _matching_buyers(cursor, conn, q) if q and not request.args.get("widen") else []
         return jsonify({
             "ok": True,
             "query": q,
@@ -1034,8 +1115,8 @@ def search_suppliers():
             "fast": use_stats,
             "approximate": approximate,
             "sort": sort,
-            "buyers": _matching_buyers(cursor, conn, q) if q and not request.args.get("widen") else [],
-            "did_you_mean": _did_you_mean(cursor, conn, opts["q_key"]) if (q and total_count == 0 and opts["q_key"]) else None,
+            "buyers": buyers,
+            "did_you_mean": _did_you_mean(cursor, conn, opts["q_key"]) if (q and total_count == 0 and opts["q_key"] and not buyers) else None,
             "attribution": OGL_V3_ATTRIBUTION,
         })
     except Exception as ex:
@@ -1303,6 +1384,9 @@ def enrich_supplier_contacts(supplier_id: int):
         conn.close()
 
 
+_MAX_GROUP_RECORDS = 25
+
+
 @suppliers_bp.route("/api/suppliers/<int:supplier_id>/group", methods=["GET"])
 def get_supplier_group(supplier_id: int):
     """Records that share this supplier's leading name ("Serco Limited", "Serco Leisure Operating Limited", "Serco Group plc"), with
@@ -1322,6 +1406,8 @@ def get_supplier_group(supplier_id: int):
             ORDER BY st.total_value DESC, st.total_awards DESC LIMIT 60""", [brand])
         members = [{"id": r[0], "name": r[1], "company_number": r[2] if is_valid_ch_company_number(r[2]) else "Not available",
                     "awards": int(r[3] or 0), "value": float(r[4] or 0), "framework_places": int(r[5] or 0)} for r in cursor.fetchall()]
+        if len(members) > _MAX_GROUP_RECORDS:  # "Sports ..." names 35 unrelated companies: a common word, not a group
+            return jsonify({"ok": True, "brand": "", "members": [], "totals": {"records": 0, "awards": 0, "value": 0.0}})
         return jsonify({
             "ok": True, "brand": brand.title(), "members": members,
             "totals": {"records": len(members), "awards": sum(m["awards"] for m in members), "value": sum(m["value"] for m in members)},
@@ -1494,6 +1580,7 @@ def get_supplier_detail(identifier: str):
             over_ceiling = (not is_fw) and val > SINGLE_AWARD_STATS_CEILING_GBP
             # A call-off published with its framework's value has no value of its own: it is a win, but never money.
             ceiling_copy = bool(a.get("ceiling_copy"))
+            raw_over_ceiling = over_ceiling
             if ceiling_copy:
                 over_ceiling = True
             if is_fw:
@@ -1544,8 +1631,9 @@ def get_supplier_detail(identifier: str):
                 "cpv_code": a.get("cpv_code"),
                 "cpv_description": a.get("cpv_description"),
                 "contract_value": val,
-                "value_note": "The framework's value, not this order's: not counted" if ceiling_copy else None,
+                "value_note": _value_note(ceiling_copy, raw_over_ceiling, is_fw, a.get("contract_value_notice")),
                 "ceiling_copy": ceiling_copy,
+                "over_ceiling": bool(raw_over_ceiling and not ceiling_copy),
                 "currency": a.get("currency") or "GBP",
                 "date_signed": str(a.get("date_signed") or ""),
                 "contract_duration": a.get("contract_duration"),
@@ -1566,7 +1654,7 @@ def get_supplier_detail(identifier: str):
 
         # Same rule as the list card (_shape_supplier_rows): a supplier with this much award value is not an SME,
         # whatever a scraped flag says, so the profile and the list can no longer disagree.
-        if supplier_info.get("sme_status") == "SME" and float(total_value or 0) > _SME_IMPLAUSIBLE_TOTAL_GBP:
+        if supplier_info.get("sme_status") == "SME" and _implausible_sme(total_value, total_awards):
             supplier_info["sme_status"] = "Non-SME Enterprise"
 
         return jsonify({

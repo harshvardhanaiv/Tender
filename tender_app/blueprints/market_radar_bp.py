@@ -552,11 +552,18 @@ def workspace_me():
         watch = _watchlist(conn, username)
     finally:
         conn.close()
+    from tender_app import org_verify
+    conn = _connect()
+    try:
+        verification = org_verify.status_for_request(conn)
+    finally:
+        conn.close()
     return jsonify({
         "username": username,
         "organisation": org,
         "watchlist": [c.to_public() for c in watch],
         "insights": ENABLE_BUYER_INSIGHTS,
+        "verification": verification,
     })
 
 

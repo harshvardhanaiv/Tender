@@ -58,7 +58,9 @@ assert(ev.includes('data-fai-have="Bank details" checked') || ev.includes('data-
 const risky = { name: "G", fit: { verdict: "unlikely", blocker: "Needs a project costing <£100m> or more" } };
 const warned = f.paneHtml("draft", { status: "idle" }, { draft: 6 }, risky);
 assert(warned.includes("Unlikely to qualify") && warned.includes("&lt;£100m&gt;") && warned.includes("Run anyway: 6 credits"));
-assert(!f.paneHtml("eligibility", { status: "idle" }, { eligibility: 1 }, risky).includes("Unlikely to qualify"), "the free-ish eligibility check is never blocked");
+const eligPane = f.paneHtml("eligibility", { status: "idle" }, { eligibility: 1 }, risky);
+assert(eligPane.includes("Unlikely to qualify") && !eligPane.includes("Run anyway") && eligPane.includes("Run: 1 credit"), "the eligibility check costs a credit too: the blocker is shown before Run, but it is the check, so it is not 'run anyway'");
+assert(!f.paneHtml("eligibility", { status: "idle" }, { eligibility: 0 }, risky).includes("Unlikely to qualify"), "a free tool shows no warning");
 assert(!f.paneHtml("draft", { status: "idle" }, { draft: 6 }, { name: "G", fit: { verdict: "likely" } }).includes("Run anyway"));
 
 // Using a result: plain text for Copy and Download, the profile it was based on, and Save to Answer Bank for drafts

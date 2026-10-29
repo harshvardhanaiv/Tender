@@ -70,6 +70,18 @@
     return text ? '<p class="funding-card__line"><strong>' + f.head + ":</strong> " + esc(text) + "</p>" : "";
   }
 
+  // The drawer lists every blocker, check and reason, not just the first.
+  function fitDetail(g) {
+    const f = g.fit && FIT[g.fit.verdict];
+    if (!f) return "";
+    const rows = [];
+    (g.fit.blockers || []).forEach((t) => rows.push(["Blocker", t, "no"]));
+    (g.fit.checks || []).forEach((t) => rows.push(["Check", t, "maybe"]));
+    (g.fit.reasons || []).forEach((t) => rows.push(["Fits", t, "yes"]));
+    if (!rows.length) return fitLine(g);
+    return '<ul class="funding-fitlist" aria-label="Why this fit">' + rows.map((r) => '<li class="funding-fitlist__' + r[2] + '"><strong>' + r[0] + ":</strong> " + esc(r[1]) + "</li>").join("") + "</ul>";
+  }
+
   function cardHtml(g) {
     const where = whereText(g);
     return (
@@ -155,6 +167,7 @@
       const resp = await fetch("/api/funding?" + params().toString(), { credentials: "same-origin", signal: state.controller.signal });
       if (!resp.ok) throw new Error("status " + resp.status);
       const data = await resp.json();
+      if (!(data.items || []).length && state.page > 1 && data.pages >= 1 && state.page > data.pages) { state.page = data.pages; return load(); }
       if (data.applied && !state.touchedApplicant && byId("selFundingApplicant")) byId("selFundingApplicant").value = data.applied.applicant;
       byId("fundingMeta").textContent = metaText(data);
       state.items = {};
@@ -297,6 +310,7 @@
       const resp = await fetch("/api/funding/save", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label, saved: next }) });
       if (!resp.ok) throw new Error("status " + resp.status);
       if (window.TFGrantsBoard) window.TFGrantsBoard.reset();  // the Pipeline board reads the list again next time
+      if (typeof window._showToast === "function") window._showToast(next ? "Saved to Pipeline › Grants. We remind you 7 days before it closes." : "Removed from Pipeline › Grants.", "success");
       if (!next && byId("chkFundingSaved")?.checked) load();
     } catch (err) {
       g.saved = !next;
@@ -362,7 +376,7 @@
       '<div class="funding-card__funder">' + esc(g.funder || "Funder not stated") + "</div></div>" +
       '<button type="button" class="profile-header__close" data-drawer-close aria-label="Close details">×</button></div>' +
       '<div class="funding-drawer__body">' +
-      '<div class="funding-card__tags">' + fitPill(g) + closingHtml(g) + "</div>" + fitLine(g) +
+      '<div class="funding-card__tags">' + fitPill(g) + closingHtml(g) + "</div>" + fitDetail(g) +
       '<dl class="funding-facts">' + facts.map((f) => "<div><dt>" + esc(f[0]) + "</dt><dd>" + esc(f[1]) + "</dd></div>").join("") + "</dl>" +
       (g.summary ? "<h3>About this grant</h3>" + paragraphs(g.summary) : "") +
       (g.eligibility ? "<h3>Who can apply</h3>" + paragraphs(g.eligibility) : '<p class="funding-card__line">The service does not list eligibility details for this grant. Check the full page.</p>') +

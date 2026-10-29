@@ -281,7 +281,7 @@
   function suggestionItems(data, text) {
     const items = [];
     (data.presets || []).forEach((p) => items.push({ group: "Categories", label: p.label, meta: p.hint, spec: { preset: p.preset } }));
-    (data.cpv || []).forEach((c) => items.push({ group: "CPV codes", label: c.label, meta: `${c.cpv} · ${fmtInt(c.awards)} awards`, spec: { cpv: c.cpv } }));
+    (data.cpv || []).forEach((c) => items.push({ group: "CPV codes", label: c.label, meta: `${c.cpv} · ${plural(c.awards, "award")}`, spec: { cpv: c.cpv } }));
     if (text) items.push({ group: "Search", label: `Search award titles for “${text}”`, meta: "", spec: { q: text } });
     return items;
   }
@@ -465,6 +465,11 @@
     const rows = blocks.map((b) => {
       const r = b[use];
       const n = use === "annual" ? b.annualised : b.contracts;
+      if (n < 10) {  // 5 contracts do not make a 10th to 90th percentile: show what they are
+        return `<div class="bw-range"><div class="bw-range__head"><b>${esc(b.label)}</b>
+          <span>small sample (${plural(n, "contract")}): smallest ${fmtMoney(r.min)}, typical ${fmtMoney(r.median)}, largest ${fmtMoney(r.max)}${use === "annual" ? " a year" : ""}</span></div>
+          <div class="bw-range__foot">Too few contracts to show a range. Treat these as examples, not a benchmark.</div></div>`;
+      }
       return `<div class="bw-range"><div class="bw-range__head"><b>${esc(b.label)}</b>
           <span>${fmtMoney(r.p10)} to ${fmtMoney(r.p90)}${use === "annual" ? " a year" : ""} · typical ${fmtMoney(r.median)}</span></div>
         <div class="bw-range__track" role="img" aria-label="${esc(b.label)}: ${fmtMoney(r.p10)} to ${fmtMoney(r.p90)}, typical ${fmtMoney(r.median)}">
@@ -1092,6 +1097,7 @@
       S.org = ws.organisation;
       S.watchlist = ws.watchlist;
       S.insights = Boolean(ws.insights);
+      S.verification = ws.verification || { verified: true };
       updateMasthead();
     } catch (err) {
       if (err.status === 404) { document.getElementById("bwMain").innerHTML = '<div class="bw-page"><div class="bw-card"><div class="bw-empty"><strong>The buyer workspace is not available</strong>It has been switched off for this site.</div></div></div>'; return; }
@@ -1099,7 +1105,22 @@
       return;
     }
     route();
+    showVerificationNotice();
   };
+
+  // An account that does not work for a public body can read Market Radar but cannot plan an engagement in a body's name (QA W1).
+  function showVerificationNotice() {
+    const v = S.verification;
+    const main = document.getElementById("bwMain");
+    if (!v || v.verified || !main || document.getElementById("bwVerifyNote")) return;
+    const note = document.createElement("div");
+    note.id = "bwVerifyNote";
+    note.className = "bw-card";
+    note.setAttribute("role", "note");
+    note.style.cssText = "margin:12px 16px;border-left:4px solid #d97706;";
+    note.innerHTML = `<strong>Planning an engagement needs a verified public-body account.</strong> ${esc(v.message || "")}`;
+    main.parentElement.insertBefore(note, main);
+  }
 
   BW.registerView("dashboard", renderDashboard, "Dashboard");
   BW.registerView("radar", renderRadar, "Market Radar");

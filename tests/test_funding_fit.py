@@ -34,7 +34,8 @@ def test_likely_when_everything_lines_up():
 
 def test_wrong_nation_is_a_blocker():
     out = ff.assess(grant(locations=["Scotland"]), SOFTWARE, has_profile=True)
-    assert out == {"verdict": "unlikely", "blocker": "Only open in Scotland; you're based in South East England"}
+    assert out["verdict"] == "unlikely" and out["blocker"] == "Only open in Scotland; you're based in South East England"
+    assert out["blockers"] == [out["blocker"]]
 
 
 def test_applicant_type_blocker_uses_the_page_filter():
@@ -44,7 +45,7 @@ def test_applicant_type_blocker_uses_the_page_filter():
 
 def test_sector_mismatch_and_farming():
     bio = ff.assess(grant(name="Engineering Biology Collaborative R&D"), SOFTWARE, has_profile=True)
-    assert bio == {"verdict": "unlikely", "blocker": "Sector mismatch: engineering biology"}
+    assert bio["verdict"] == "unlikely" and bio["blocker"] == "Sector mismatch: engineering biology"
     farm = ff.assess(grant(name="ADOPT Facilitator Support Grant", summary="For farming, growing or forestry businesses.", locations=["England"]), SOFTWARE, has_profile=True)
     assert farm["blocker"] == "Must be a farming, growing or forestry business"
 
@@ -80,3 +81,26 @@ def test_likely_needs_real_affinity():
     builder = ff.applicant_from_profile({"company_type": "private", "enterprise_type": "micro", "business_type": "F", "postcode": "SO23"}, "driveways", "TVD")
     assert ff.assess(grant(name="Boiler Upgrade Scheme", locations=["England"]), builder, has_profile=True)["verdict"] == "likely"
     assert ff.assess(grant(name="International Travel Award", summary="Supports capacity building overseas"), builder, has_profile=True)["verdict"] == "check"
+
+
+def test_international_calls_are_not_a_location_blocker():
+    """GOV.UK tags a call 'International' when the partner is abroad; a UK business is still the applicant (QA R1)."""
+    out = ff.assess(grant(name="UK-Germany Bilateral Collaborative R&D: Round 5", locations=["International"], eligibility="Open to UK businesses."), SOFTWARE, has_profile=True)
+    assert out["verdict"] == "check" and "partner outside the UK" in out["check"]
+    assert not out["blockers"]
+
+
+def test_research_council_grants_need_a_check_but_innovate_uk_ones_do_not():
+    ukri = ff.assess(grant(name="Integration of AI and HPC with quantum computing", funder="UK Research and Innovation (UKRI)",
+                           eligibility="Open to organisations with standard eligibility. UKRI individual eligibility rules apply."), SOFTWARE, has_profile=True)
+    assert ukri["verdict"] == "check" and "research organisation" in ukri["check"]
+    iuk = ff.assess(grant(name="Frontier AI: SME Champions", funder="Innovate UK", eligibility="UK wide. Open to SMEs. UKRI individual eligibility rules apply."), SOFTWARE, has_profile=True)
+    assert iuk["verdict"] == "likely"
+
+
+def test_every_reason_is_listed_and_numbers_become_checks():
+    out = ff.assess(grant(locations=["Scotland"], eligibility="Your project must have total costs between £150,000 and £250,000 and last between 1 and 3 months."),
+                    SOFTWARE, has_profile=True)
+    assert out["verdict"] == "unlikely"
+    assert "Project costs must be between £150k and £250k" in out["checks"]
+    assert "Project must last 1 to 3 months" in out["checks"]

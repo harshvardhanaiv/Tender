@@ -30,7 +30,9 @@ KNOWN_LARGE_ENTERPRISES = {
     "bam construct", "costain", "mace", "laing o'rourke", "sir robert mcalpine",
     "volkerwessels", "isg", "wates", "bouygues", "vinci", "skanska", "dragados",
     "ferrovial", "acciona", "strabag", "multiplex", "wincanton", "dhl", "fedex", "ups",
-    "royal mail", "civica", "eircom", "virgin media O2", "openreach", "ee limited"
+    "royal mail", "civica", "eircom", "virgin media O2", "openreach", "ee limited",
+    # IT resellers and vendors that notices tick as SMEs
+    "dell corporation", "dell technologies", "insight direct", "bytes software", "phoenix software", "cdw ltd", "cdw limited"
 }
 
 # VCSE registry indicators (Charities, CICs, Social Enterprises)

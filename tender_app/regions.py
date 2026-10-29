@@ -42,15 +42,17 @@ _POSTCODE = re.compile(r"\b([A-Z]{1,2})\d[A-Z\d]?\s*\d[A-Z]{2}\b", re.I)
 
 def itl1_region(region: str | None, address: str | None = None) -> str:
     """The supplier's region from REGIONS (or "UK" when neither the region nor the address says)."""
-    cleaned = _ITL_PREFIX.sub("", str(region or "").strip())
-    named = _ALIASES.get(cleaned.lower())
-    if named:
-        return named
+    # The registered address's postcode decides when it names a region: a "region" stored on the record is where contracts were
+    # won, so Galliford Try (Uxbridge, UB8) and Mears (Gloucester, GL3) were labelled Scotland and London.
     m = _POSTCODE.search(str(address or ""))
     if m:
         found = AREA_REGION.get(m.group(1).upper())
         if found:
             return found
+    cleaned = _ITL_PREFIX.sub("", str(region or "").strip())
+    named = _ALIASES.get(cleaned.lower())
+    if named:
+        return named
     if re.search(r"\b(dublin|cork|galway|limerick|ireland|eire)\b", str(address or ""), re.I):
         return "Ireland"
     return "UK"
@@ -61,7 +63,7 @@ def itl1_region(region: str | None, address: str | None = None) -> str:
 _GENERIC_FIRST = frozenset("""THE UK NHS BRITISH NATIONAL ROYAL FIRST NEW GLOBAL INTERNATIONAL GROUP CITY COUNTY LONDON UNIVERSITY COLLEGE HOUSING
     CONSTRUCTION SERVICES SERVICE SOLUTIONS CARE HEALTH HEALTHCARE TRUST COMMUNITY ENERGY ENGINEERING TECHNOLOGY TECHNOLOGIES SECURITY
     CLEANING PROPERTY PROJECT PROJECTS MANAGEMENT CONSULTING CONSULTANCY SUPPLY SUPPLIES EDUCATION TRAINING DIGITAL DATA MEDICAL
-    PROFESSIONAL ASSOCIATES PARTNERS PARTNERSHIP COMPANY WORKS ASSOCIATION FOUNDATION""".split())
+    SPORTS SPORT LEISURE PROFESSIONAL ASSOCIATES PARTNERS PARTNERSHIP COMPANY WORKS ASSOCIATION FOUNDATION""".split())
 
 
 def brand_key(name: str | None) -> str:

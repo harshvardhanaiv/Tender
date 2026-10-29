@@ -67,6 +67,23 @@ def _username() -> str:
     return (session.get("username") or "").strip()
 
 
+@market_engagement_bp.before_request
+def _only_verified_may_plan():
+    """Drafting, inviting and handing over a market engagement is for people who work for the public body (QA W1). Reading and
+    deleting your own plans stays open."""
+    if request.method in ("GET", "HEAD", "OPTIONS", "DELETE") or not _username():
+        return None
+    from tender_app import org_verify
+    conn = _connect()
+    try:
+        verdict = org_verify.status_for_request(conn)
+    finally:
+        conn.close()
+    if verdict["verified"]:
+        return None
+    return jsonify({"error": verdict["message"], "verification_required": True}), 403
+
+
 def _error(message: str, status: int = 400):
     return jsonify({"error": message}), status
 
@@ -101,6 +118,9 @@ def _load_suppliers(cur, plan_id: int) -> list[dict[str, Any]]:
         r["stats"] = json.loads(r.pop("stats_json")) if r.get("stats_json") else None
         r.pop("stats_json", None)
         out.append(r)
+    # most relevant first: the suppliers that won for the most buyers in the category, then the most awards; A to Z only breaks ties
+    out.sort(key=lambda r: (not r.get("included"), -int((r.get("stats") or {}).get("buyers") or 0), -int((r.get("stats") or {}).get("awards") or 0),
+                            str(r.get("supplier_name") or "").lower()))
     return out
 
 

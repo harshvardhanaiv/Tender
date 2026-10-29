@@ -14,7 +14,7 @@ def test_weights_add_to_one_and_factors_cover_every_component():
     assert [x["key"] for x in f] == ["sector", "proximity", "renewal", "openness"]
     assert [x["weight"] for x in f] == [35, 25, 25, 15]
     assert all(x["band"] == "strong" and x["note"] for x in f)
-    assert "12 km" in f[1]["note"] and "90 days" in f[2]["note"] and "20.0%" in f[3]["note"]
+    assert "7 miles" in f[1]["note"] and "90 days" in f[2]["note"] and "20.0%" in f[3]["note"]
 
 
 def test_weak_and_unknown_inputs_say_so_plainly():
@@ -51,3 +51,29 @@ if __name__ == "__main__":
                 failures += 1; print("FAIL", name, "->", repr(exc))
     print("failures:", failures)
     sys.exit(1 if failures else 0)
+
+
+def test_a_company_is_matched_to_cpv_divisions_from_what_it_says_it_sells():
+    """QA B1: the sector score came from buyer names ("services", "community"); it now comes from what the buyer buys."""
+    bi = bf.infer_divisions("AIVHUB is a UK company specialising in Business Intelligence, data analytics, Artificial Intelligence and Machine Learning")
+    assert bi[:2] == ["72", "48"], bi
+    assert bf.infer_divisions("TVD Driveways: driveway installation, surfacing, groundworks and drainage") == ["45"]
+    assert bf.infer_divisions("We run a bus and coach hire firm") == ["60"], "'bus' is a word, not the start of 'business'"
+    assert bf.infer_divisions("") == []
+
+
+def test_a_buyer_is_scored_by_its_spend_in_those_divisions():
+    share, mine, total = bf.sector_share({"72": 38, "45": 100, "85": 152}, ["72", "48"])
+    assert (mine, total) == (38, 290) and abs(share - 0.131) < 0.01
+    assert bf.sector_score(0) == 0 and 60 < bf.sector_score(share) < 70 and bf.sector_score(0.5) == 100
+    assert bf.sector_share(None, ["72"]) == (0.0, 0, 0)
+
+
+def test_a_renewal_days_away_is_worth_nothing_and_one_in_four_to_nine_months_is_worth_most():
+    assert bf.renewal_score(3) == 30 and bf.renewal_score(59) == 30 and bf.renewal_score(400) == 30 and bf.renewal_score(None) == 30
+    assert bf.renewal_score(90) == 70 and bf.renewal_score(200) == 100
+    f = bf.factors(cpv_score=60, prox_score=60, renew_score=30, openness_score=60, tier=2, cpv_match=True, dist_km=20.0, days_until_renewal=3,
+                   next_renewal="2026-11-01", repeat_display="10%", total_contracts=9, sector_note="38 of 290 contracts are in IT services.")
+    by = {x["key"]: x["note"] for x in f}
+    assert "too close to act on" in by["renewal"] and "tomorrow" not in by["renewal"] and by["sector"].startswith("38 of 290")
+    assert bf.day_phrase(0) == "today" and bf.day_phrase(1) == "tomorrow" and bf.day_phrase(3) == "in 3 days"

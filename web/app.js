@@ -2,6 +2,24 @@
 let _csrfToken = sessionStorage.getItem("tf_csrf") || "";
 
 const originalFetch = window.fetch;
+// Opening a section used to ask for the same user, preferences and profiles 4 to 7 times. Identical GETs of these three, made within a
+// few seconds of each other, share one request; any write clears them so the next read is fresh.
+const _SHARED_GET_PATHS = ["/api/user-prefs", "/api/me", "/api/company-profiles"];
+const _SHARED_GET_TTL_MS = 3000;
+const _sharedGets = new Map();
+function _fetchShared(url, opts) {
+  if (typeof url !== "string" || !url.startsWith("/api/")) return originalFetch(url, opts);
+  const method = String((opts && opts.method) || "GET").toUpperCase();
+  if (method !== "GET") { _sharedGets.clear(); return originalFetch(url, opts); }
+  if (!_SHARED_GET_PATHS.includes(url.split("?")[0]) || (opts && opts.signal)) return originalFetch(url, opts);
+  const hit = _sharedGets.get(url);
+  if (hit && Date.now() - hit.at < _SHARED_GET_TTL_MS) return hit.promise.then((r) => r.clone());
+  const promise = originalFetch(url, opts);
+  _sharedGets.set(url, { at: Date.now(), promise });
+  promise.catch(() => _sharedGets.delete(url));
+  return promise.then((r) => r.clone());
+}
+
 window.fetch = async function (...args) {
   let [url, opts = {}] = args;
   if (typeof url === "string" && url.startsWith("/api/")) {
@@ -25,7 +43,7 @@ window.fetch = async function (...args) {
 
     opts = { ...opts, headers };
   }
-  let response = await originalFetch(url, opts);
+  let response = await _fetchShared(url, opts);
   if (response.status === 401) {
     // The server answers an idle session with {"reason": "session_expired"}; either way the reader is sent to the
     // sign-in page with a line saying why, instead of landing there unexplained with the search gone (D06).
@@ -130,10 +148,12 @@ async function seedOriginFromProfile() {
       [window._supplierFilterState || null, "lblSupplierLocationStatus", "selSupplierLocationCity"],
     ];
     targets.forEach(([st, lblId, selId]) => {
-      if (!st || st.locationLabel !== "London") return; // the reader already picked a place
+      // the reader already picked a place, unless the place on screen is still the one an earlier profile put there
+      if (!st || (st.locationLabel !== "London" && st.locationLabel !== st._seededLabel)) return;
       st.userLat = found.lat;
       st.userLon = found.lon;
       st.locationLabel = pc;
+      st._seededLabel = pc;
       const lbl = $(lblId);
       if (lbl) lbl.textContent = `Measuring distance from ${pc} (your company profile)`;
       // the dropdown said "London (Default)" while the distance was measured from the profile postcode (N5)
@@ -11538,6 +11558,13 @@ function handleCompanyProfileSelectionChange(val, { makeDefault = true } = {}) {
   const idStr = String(val || "");
   state.activeProfileId = idStr;
   state.profileChosenThisVisit = true; // from now on the page keeps this pick rather than the saved default
+  // distances and the buyer feed follow the chosen profile's postcode and sector
+  setTimeout(async () => {
+    try {
+      await seedOriginFromProfile();
+      if ($("buyerIntelligenceModal") && !$("buyerIntelligenceModal").classList.contains("hidden")) refreshBuyerIntelligenceView();
+    } catch (_) { /* the old place stays */ }
+  }, 0);
   if (makeDefault) {
     lsSet(LS_PROFILE, idStr);
     savePrefsToServer({ active_profile: idStr });
@@ -19254,8 +19281,39 @@ window.addEventListener("popstate", (e) => {
 });
 
 function closeSupplierIntelligenceModal() {
-  $("supplierIntelligenceModal")?.classList.add("hidden");
+  const modal = $("supplierIntelligenceModal");
+  const wasOpen = modal && !modal.classList.contains("hidden");
+  modal?.classList.add("hidden");
+  if (wasOpen) setSupplierAddress(null);
 }
+
+// The page's state lives in the address (/suppliers?q=serco, /suppliers/<id>) so a reload, a bookmark or a shared link returns to it.
+const SUPPLIERS_TITLE = "Suppliers · TenderFlow";
+let _supplierPrevTitle = "";
+function setSupplierAddress(query, supplierId) {
+  try {
+    if (query === null) {  // leaving the page: back to the address and title it was opened from
+      if (/^\/suppliers(\/|$)/.test(location.pathname)) history.replaceState(null, "", "/");
+      if (document.title === SUPPLIERS_TITLE) document.title = _supplierPrevTitle || "Tender search";
+      return;
+    }
+    if (document.title !== SUPPLIERS_TITLE) _supplierPrevTitle = document.title;
+    document.title = SUPPLIERS_TITLE;
+    const qs = query ? "?q=" + encodeURIComponent(query) : "";
+    history.replaceState(null, "", "/suppliers" + (supplierId ? "/" + supplierId : "") + qs);
+  } catch (_) { /* no history */ }
+}
+
+// A link such as /suppliers?q=serco or /suppliers/123 opens the page where it was left.
+document.addEventListener("DOMContentLoaded", () => {
+  const m = /^\/suppliers(?:\/(\d+))?\/?$/.exec(location.pathname || "");
+  if (!m) return;
+  const q = new URLSearchParams(location.search || "").get("q") || "";
+  window.addEventListener("load", () => setTimeout(() => {
+    openSupplierIntelligenceModal(q, { reset: true });
+    if (m[1]) setTimeout(() => { try { loadSupplierDetail(Number(m[1])); } catch (_) {} }, 600);
+  }, 400));
+});
 
 async function updateSupplierScraperStatus() {
   try {
@@ -19424,6 +19482,7 @@ async function fetchAndRenderSuppliersList(query = "", options = {}) {
   const container = $("supplierListContainer");
   if (!container) return;
   const token = ++_supplierListToken;
+  setSupplierAddress(query || "", _selectedSupplierId || 0);
   if (_supplierListAbort) _supplierListAbort.abort();
   _supplierListAbort = new AbortController();
   const signal = _supplierListAbort.signal;
@@ -19524,6 +19583,7 @@ function renderSupplierListData(data, query) {
   if (_activeSupplierTab === "map") renderSupplierMap(suppliers);
 
   if (suppliers.length === 0) {
+    updateSupplierResultsCount(0, 0, 0);  // the "1-25 of N" line of the previous search must not stay over an empty list
     const qEsc = esc(query);
     
     // CRITICAL FIX: Clear the detail panel to prevent showing stale/wrong company
@@ -20137,8 +20197,9 @@ async function loadSupplierDetail(supplierId) {
             </div>
           </td>
           <td style="padding:12px; font-weight:800; color:#059669; font-size:13px; white-space:nowrap; vertical-align:top;">
-            ${a.ceiling_copy ? `<span style="color:var(--muted, #64748b); font-weight:700;">Not published</span><div title="${esc(a.value_note || "")}" style="font-size:10px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; padding:1px 5px; border-radius:4px; font-weight:700; margin-top:3px; display:inline-block;">Framework value, not counted</div>` : formatCurrencyVal(a.contract_value, a.currency)}
-            ${a.is_framework ? `<div style="font-size:10px; color:#1e40af; background:#eff6ff; border:1px solid #bfdbfe; padding:1px 5px; border-radius:4px; font-weight:700; margin-top:3px; display:inline-block;">🏛️ Framework Ceiling (Shared)</div>` : ''}
+            ${a.ceiling_copy ? `<span style="color:var(--muted, #64748b); font-weight:700;">Not published</span><div title="${esc(a.value_note || "")}" style="font-size:10px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; padding:1px 5px; border-radius:4px; font-weight:700; margin-top:3px; display:inline-block;">Shared value, not counted</div>` : formatCurrencyVal(a.contract_value, a.currency)}
+            ${a.over_ceiling ? `<div title="${esc(a.value_note || "")}" style="font-size:10px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; padding:1px 5px; border-radius:4px; font-weight:700; margin-top:3px; display:inline-block;">Not counted: too large to trust</div>` : ''}
+            ${a.is_framework ? `<div title="${esc(a.value_note || "")}" style="font-size:10px; color:#1e40af; background:#eff6ff; border:1px solid #bfdbfe; padding:1px 5px; border-radius:4px; font-weight:700; margin-top:3px; display:inline-block;">🏛️ Framework Ceiling (Shared)</div>` : ''}
           </td>
           <td style="padding:12px; white-space:nowrap; color:var(--muted, #64748b); vertical-align:top; font-weight:600;">
             ${esc(a.date_signed || '—')}
@@ -20200,7 +20261,7 @@ async function loadSupplierDetail(supplierId) {
                     onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 14px rgba(147,51,234,0.5)';"
                     onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(147,51,234,0.35)';"
                     onclick="window.showBDPlaybookModal &amp;&amp; window.showBDPlaybookModal(${s.id})">
-              ✨ Generate BD Playbook
+              ✨ Generate BD Playbook <small style="opacity:.75;font-weight:500">· no credits</small>
             </button>
             <button type="button"
                     id="btnSupplierSummary"
@@ -20209,7 +20270,7 @@ async function loadSupplierDetail(supplierId) {
                     onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 14px rgba(99,102,241,0.5)';"
                     onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(99,102,241,0.35)';"
                     onclick="window.showSupplierSummaryModal &amp;&amp; window.showSupplierSummaryModal(${s.id})">
-              ⚡ AI Summary
+              ⚡ AI Summary <small style="opacity:.75;font-weight:500">· no credits</small>
             </button>
             <button type="button"
                     id="btnDownloadSupplierDocx"
@@ -20221,7 +20282,7 @@ async function loadSupplierDetail(supplierId) {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
-              Download Report (.docx)
+              Download Report (.docx) <small style="opacity:.75;font-weight:500">· no credits</small>
             </button>
             <button type="button"
                     id="btnInviteSubcontractors"
@@ -22197,6 +22258,19 @@ let _buyerRadarController = null;
 let _buyerFeedPending = false; // true while a feed request is in flight — lets the Map tab
                                 // know to show its own spinner instead of a premature "0 buyers"
 
+// "today", "tomorrow", "in 5 days": the same words in the feed, the radar and the profile, never "-1d" or "0d left".
+function dayWords(n) {
+  if (n === null || n === undefined || isNaN(n)) return "date not stated";
+  if (n < 0) return Math.abs(n) === 1 ? "ended yesterday" : `ended ${Math.abs(n)} days ago`;
+  return n === 0 ? "today" : n === 1 ? "tomorrow" : `in ${n} days`;
+}
+
+// A value of 0 or none is "not published", never £0.
+function moneyOrNotPublished(val, fmt) {
+  const v = Number(val);
+  return v > 0 ? fmt(v) : "value not published";
+}
+
 // One money format for buyer figures: £820, £45k, £3.8M, £3.77bn (a bare "£3767.8M" is hard to read next to "£11k").
 function fmtBuyerMoney(val) {
   val = Number(val) || 0;
@@ -22226,8 +22300,35 @@ function openBuyerIntelligenceModal() {
 
 function closeBuyerIntelligenceModal() {
   const modal = $("buyerIntelligenceModal");
+  const wasOpen = modal && !modal.classList.contains("hidden");
   if (modal) modal.classList.add("hidden");
+  if (wasOpen) setBuyerAddress(null);
 }
+
+// The page's state lives in the address (/buyers?q=leeds) so a reload, a bookmark or a shared link returns to it.
+const BUYERS_TITLE = "Buyer intelligence · TenderFlow";
+let _buyerPrevTitle = "";
+function setBuyerAddress(query) {
+  try {
+    if (query === null) {
+      if (/^\/buyers\/?$/.test(location.pathname)) history.replaceState(null, "", "/");
+      if (document.title === BUYERS_TITLE) document.title = _buyerPrevTitle || "Tender search";
+      return;
+    }
+    if (document.title !== BUYERS_TITLE) _buyerPrevTitle = document.title;
+    document.title = BUYERS_TITLE;
+    history.replaceState(null, "", "/buyers" + (query ? "?q=" + encodeURIComponent(query) : ""));
+  } catch (_) { /* no history */ }
+}
+document.addEventListener("DOMContentLoaded", () => {
+  if (!/^\/buyers\/?$/.test(location.pathname || "")) return;
+  const q = new URLSearchParams(location.search || "").get("q") || "";
+  window.addEventListener("load", () => setTimeout(() => {
+    const box = $("txtBuyerSearchSidebar");
+    if (box && q) box.value = q;
+    openBuyerIntelligenceModal();
+  }, 400));
+});
 
 function openBuyerProfileDrawer(authorityName) {
   if (!authorityName) return;
@@ -22395,7 +22496,7 @@ function populateBuyerProfileDrawer(data) {
           <div style="display:flex; flex-direction:column; gap:2px; font-size:11px;">
             <div style="display:flex; justify-content:space-between; font-weight:600;">
               <span>${escapeHtml(c.cpv_description || c.cpv_code)}</span>
-              <span style="color:var(--muted);">${c.count} awards (${fmtMoney(floatVal(c.total_value))})</span>
+              <span style="color:var(--muted);">${c.count} award${c.count === 1 ? "" : "s"} (${moneyOrNotPublished(floatVal(c.total_value), fmtMoney)})</span>
             </div>
             <div style="background:var(--surface-2,#f1f5f9); height:5px; border-radius:3px; overflow:hidden;">
               <div style="background:var(--primary,#2563eb); width:${pct}%; height:100%; border-radius:3px;"></div>
@@ -22424,13 +22525,32 @@ function populateBuyerProfileDrawer(data) {
             <div style="font-size:10px; color:var(--muted);">Incumbent: <strong>${escapeHtml(r.supplier_name || "Not listed")}</strong></div>
           </div>
           <div style="text-align:right;">
-            <div style="font-weight:700; color:var(--primary);">${fmtMoney(floatVal(r.contract_value))}</div>
-            <div style="font-size:10px; color:#d97706; font-weight:700;">Expires ${r.contract_end_date} (${r.days_left !== null ? r.days_left + 'd left' : 'Due'})</div>
+            <div style="font-weight:700; color:var(--primary);">${moneyOrNotPublished(floatVal(r.contract_value), fmtMoney)}</div>
+            <div style="font-size:10px; color:#d97706; font-weight:700;">Ends ${r.contract_end_date} (${dayWords(r.days_left)})</div>
           </div>
         </div>
       `;
       }).join("");
     }
+  }
+
+  // Contract history: what the buyer awarded most recently, newest first, with the notice behind each
+  const historyList = $("drawerContractHistoryList");
+  if (historyList) {
+    const hist = data.contract_history || [];
+    const histCount = $("drawerHistoryCount");
+    if (histCount) histCount.textContent = hist.length ? `(latest ${hist.length})` : "";
+    historyList.innerHTML = hist.length ? hist.slice(0, 15).map(h => {
+      const noticeUrl = safeHttpUrl(h.notice_url);
+      const title = escapeHtml(h.tender_title || "Public Sector Contract");
+      const titleHtml = noticeUrl ? `<a href="${escapeHtml(noticeUrl)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary,#2563eb); text-decoration:none;">${title} ↗</a>` : title;
+      const signed = h.date_signed ? new Date(`${String(h.date_signed).slice(0, 10)}T12:00:00`) : null;
+      const when = signed && !isNaN(signed) ? signed.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "date not recorded";
+      return `<div style="background:var(--surface-2,#f8fafc); border:1px solid var(--border,#e2e8f0); border-radius:6px; padding:8px 10px; font-size:11px; display:flex; justify-content:space-between; gap:10px;">
+        <div><div style="font-weight:700; color:var(--text);">${titleHtml}</div>
+        <div style="font-size:10px; color:var(--muted);">${escapeHtml(h.supplier_name || "Supplier not listed")} · ${escapeHtml(when)}${h.is_framework ? " · framework" : ""}</div></div>
+        <div style="font-weight:700; color:var(--primary); white-space:nowrap;">${moneyOrNotPublished(floatVal(h.contract_value), fmtMoney)}</div></div>`;
+    }).join("") : `<div style="font-size:11px; color:var(--muted);">No past contracts recorded for this buyer yet.</div>`;
   }
 
   // Contact info
@@ -22443,6 +22563,7 @@ function populateBuyerProfileDrawer(data) {
 
 function refreshBuyerIntelligenceView() {
   _buyerFilterState.search = ($("txtBuyerSearchSidebar")?.value || "").trim();
+  setBuyerAddress(_buyerFilterState.search);
   _buyerFilterState.buyerType = $("selBuyerTypeFilter")?.value || "all";
   _buyerFilterState.minSpend = parseFloat($("rngMinSpendFilter")?.value || "0");
   _buyerFilterState.radius = milesToKm(parseFloat($("rngRadiusFilter")?.value || "0")); // slider is in miles; API's radius stays in km
@@ -22478,6 +22599,7 @@ function refreshBuyerIntelligenceView() {
     min_match: _buyerFilterState.minMatch || "0",
     profile_id: state.activeProfileId || ""
   });
+  if (_buyerFilterState.showAll) queryParams.set("show_all", "1");
 
   // Cancel whatever's still in flight before firing the next request — otherwise a slow
   // response to an earlier filter state can arrive after a newer one and silently overwrite
@@ -22615,6 +22737,27 @@ function renderOpportunityFeed(data) {
 
   const matchBadge = $("feedMatchBadge");
   if (matchBadge) matchBadge.textContent = `${data.total_matches || 0} matching buyers`;
+  // Buyers that buy nothing in the company's sector are left out of a personalised list; say so and let the reader see them.
+  const hiddenNote = $("buyerHiddenNote") || (matchBadge && matchBadge.parentElement ? (() => {
+    const el = document.createElement("div");
+    el.id = "buyerHiddenNote";
+    el.style.cssText = "font-size:11px;color:var(--muted);margin:2px 0 6px;";
+    matchBadge.parentElement.appendChild(el);
+    return el;
+  })() : null);
+  if (hiddenNote) {
+    const n = Number(data.hidden_no_sector || 0);
+    hiddenNote.innerHTML = n && !_buyerFilterState.showAll
+      ? `${n.toLocaleString()} buyers with no spend in your sector are hidden. <a href="#" id="buyerShowAll">Show them</a>`
+      : (_buyerFilterState.showAll ? `Showing every buyer. <a href="#" id="buyerHideNoSector">Hide buyers with no spend in your sector</a>` : "");
+    const noLoc = Number(data.hidden_no_location || 0);
+    if (noLoc) hiddenNote.innerHTML += `${hiddenNote.innerHTML ? "<br>" : ""}${noLoc.toLocaleString()} buyers are not shown because their location is not known, so the distance filter cannot place them. Set the distance to "Any" to see them.`;
+    hiddenNote.querySelectorAll("a").forEach((a) => a.addEventListener("click", (e) => {
+      e.preventDefault();
+      _buyerFilterState.showAll = a.id === "buyerShowAll";
+      refreshBuyerIntelligenceView();
+    }));
+  }
 
   const cardsList = $("feedCardsList");
   cardsList?.removeAttribute("aria-busy");
@@ -22780,19 +22923,51 @@ function renderOpportunityRadar(data) {
           <span style="font-size:10px; color:var(--muted);">${escapeHtml(r.cpv_description || r.cpv_code)}</span>
         </td>
         <td style="padding:8px 10px; font-weight:600; color:var(--muted);">${escapeHtml(r.current_supplier)}</td>
-        <td style="padding:8px 10px; font-weight:700; color:var(--primary);">${fmtMoney(r.contract_value)}</td>
+        <td style="padding:8px 10px; font-weight:700; color:var(--primary);">${r.value_published === false ? '<span style="color:var(--muted);font-weight:600" title="The notice states no value of its own for this contract">not published</span>' : fmtMoney(r.contract_value)}</td>
         <td style="padding:8px 10px; font-weight:700; color:${daysColor};">
           <div>${r.contract_end_date}</div>
-          <span style="font-size:10px; font-weight:600;">(${r.days_left}d left)</span>
+          <span style="font-size:10px; font-weight:600;">(${dayWords(r.days_left)})</span>
         </td>
         <td style="padding:8px 10px; text-align:center;">
           <button type="button" class="btn btn--secondary" style="font-size:10px; padding:3px 7px;" onclick="openBuyerProfileDrawer('${escapeHtml(r.authority_name)}')">
             Profile
           </button>
+          <button type="button" class="btn btn--secondary" style="font-size:10px; padding:3px 7px; margin-top:3px;" data-radar-track="${escapeHtml(String(r.id ?? ""))}" title="Add this renewal to your Pipeline as a watched opportunity">
+            Add to Pipeline
+          </button>
         </td>
       </tr>
     `;
   }).join("");
+  tbody.querySelectorAll("[data-radar-track]").forEach((btn) => {
+    const r = renewals.find((x) => String(x.id ?? "") === btn.dataset.radarTrack);
+    if (!r) return;
+    if (state.pipeline[`renewal:${r.id}`]) { btn.textContent = "In Pipeline"; btn.disabled = true; return; }
+    btn.addEventListener("click", () => trackRadarRenewal(r, btn));
+  });
+}
+
+// A contract that ends soon is an opportunity to watch: it goes to the Pipeline as "watching", with the end date as its deadline.
+async function trackRadarRenewal(r, btn) {
+  const key = `renewal:${r.id}`;
+  const body = {
+    tender_key: key, title: r.tender_title, source: "contract_renewal", contracting_authority: r.authority_name,
+    submission_deadline: r.contract_end_date || "", estimated_value: r.value_published === false ? "" : String(r.contract_value || ""),
+    stage: "watching", notes: `Current supplier: ${r.current_supplier || "not disclosed"}. Contract ends ${r.contract_end_date || "unknown"}.`,
+    fit_score: null, fit_band: "", added_from: "market_radar",
+  };
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/pipeline", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error("save failed");
+    state.pipeline[key] = { ...body };
+    btn.textContent = "In Pipeline";
+    if (typeof renderPipelineBoard === "function") renderPipelineBoard();
+    if (window.showToast) window.showToast("Added to your Pipeline as a watched opportunity.");
+  } catch {
+    btn.disabled = false;
+    if (window.showToast) window.showToast("Could not add to the Pipeline. Try again.");
+  }
 }
 
 // Renders buyers as price-bubble style pins on a Leaflet map, similar to a property
