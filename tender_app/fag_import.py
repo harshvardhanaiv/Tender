@@ -18,7 +18,7 @@ import json
 import re
 import threading
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Any, Iterator
 
 import requests
@@ -110,6 +110,24 @@ def _day(raw: Any) -> str | None:
     return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else None
 
 
+def close_moment(raw: Any) -> datetime | None:
+    """The closing moment as UK local time. The service writes the end of a closing day as 00:00 the next morning
+    (Find a Grant shows "31 March, 11:59pm" for 2028-04-01T00:00), so a midnight is moved back to 23:59 the day before."""
+    text = str(raw or "").strip()
+    if not re.match(r"\d{4}-\d{2}-\d{2}", text):
+        return None
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo:
+        from tender_app.uk_time import to_london
+        moment = to_london(moment)
+    if moment.hour == 0 and moment.minute == 0:
+        moment = moment - timedelta(minutes=1)
+    return moment.replace(second=0, microsecond=0)
+
+
 def _num(raw: Any) -> float | None:
     return float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else None
 
@@ -133,7 +151,8 @@ def build_record(item: dict[str, Any], detail: dict[str, Any] | None = None, tod
         return None
     fields = (detail or {}).get("fields") or {}
     summary = (item.get("grantShortDescription") or fields.get("grantShortDescription") or "").strip()
-    close = _day(item.get("grantApplicationCloseDate") or fields.get("grantApplicationCloseDate"))
+    moment = close_moment(item.get("grantApplicationCloseDate") or fields.get("grantApplicationCloseDate"))
+    close = moment.date().isoformat() if moment else None
     apply_url = fields.get("grantWebpageUrl") or None
     return {
         "label": label,
@@ -147,6 +166,7 @@ def build_record(item: dict[str, Any], detail: dict[str, Any] | None = None, tod
         "applicants": _strings(item.get("grantApplicantType")),
         "open_date": _day(item.get("grantApplicationOpenDate")),
         "close_date": close,
+        "close_at": moment.strftime("%Y-%m-%dT%H:%M") if moment else None,
         "ongoing": is_ongoing(summary, close, today),
         "apply_url": apply_url if isinstance(apply_url, str) and apply_url.startswith("http") else None,
         "eligibility": rich_text(fields.get("grantEligibilityTab"))[:_ELIGIBILITY_MAX] or None,
@@ -156,7 +176,7 @@ def build_record(item: dict[str, Any], detail: dict[str, Any] | None = None, tod
 
 COLUMNS = (
     "label", "name", "funder", "summary", "min_award", "max_award", "total_award", "locations", "applicants",
-    "open_date", "close_date", "ongoing", "apply_url", "eligibility", "url",
+    "open_date", "close_date", "close_at", "ongoing", "apply_url", "eligibility", "url",
 )
 
 
@@ -180,15 +200,20 @@ def import_grants(conn: Any, detail: bool = True, log=print) -> dict[str, int]:
     cursor = conn.cursor()
     cursor.execute("SELECT NOW()")
     started = cursor.fetchone()[0]
-    stats = {"seen": 0, "new": 0, "updated": 0, "skipped": 0, "removed": 0}
+    stats = {"seen": 0, "new": 0, "updated": 0, "skipped": 0, "removed": 0, "withdrawn": 0}
     for item in iter_list(session):
         stats["seen"] += 1
         fetched = None
         if detail:
             try:
-                fetched = _get(session, f"/grants/{item['label']}").get("grantDetail")
+                page = _get(session, f"/grants/{item['label']}")
             except RuntimeError as exc:
                 log(f"[funding] no detail for {item['label']}: {exc}")
+                page = None
+            if page == {}:  # the grant's own page is gone (404) though it is still listed: withdrawn, so it is not stored
+                stats["withdrawn"] += 1
+                continue
+            fetched = (page or {}).get("grantDetail")
         rec = build_record(item, fetched)
         if not rec:
             stats["skipped"] += 1
@@ -203,8 +228,8 @@ def import_grants(conn: Any, detail: bool = True, log=print) -> dict[str, int]:
     return stats
 
 
-REFRESH_AFTER_HOURS = 22   # a restart or a code reload must not re-read the service; only a stale table is refreshed
-CHECK_EVERY_SECONDS = 6 * 3600
+REFRESH_AFTER_HOURS = 4    # a restart or a code reload must not re-read the service; only a stale table is refreshed
+CHECK_EVERY_SECONDS = 3600
 
 
 def is_stale(conn: Any, hours: float = REFRESH_AFTER_HOURS) -> bool:
@@ -217,7 +242,10 @@ def is_stale(conn: Any, hours: float = REFRESH_AFTER_HOURS) -> bool:
         conn.commit()
         cur.execute("SELECT MAX(seen_at) < (NOW() AT TIME ZONE 'utc') - make_interval(hours => %s) FROM funding_opportunities", (hours,))
         stale = cur.fetchone()[0]
-        return stale is None or bool(stale)
+        if stale is None or bool(stale):
+            return True
+        cur.execute("SELECT EXISTS (SELECT 1 FROM funding_opportunities WHERE close_date IS NOT NULL AND close_at IS NULL)")
+        return bool(cur.fetchone()[0])  # rows kept before closing times were stored are read again
     finally:
         cur.close()
 
@@ -231,7 +259,7 @@ def refresh_if_stale(get_db_connection) -> dict[str, int] | None:
 
 
 def start_funding_scheduler(get_db_connection) -> None:
-    """Keep funding_opportunities fresh: a background thread that refreshes the table about once a day."""
+    """Keep funding_opportunities fresh: a background thread that refreshes the table about every four hours."""
     def _loop() -> None:
         while True:
             try:
@@ -241,7 +269,7 @@ def start_funding_scheduler(get_db_connection) -> None:
             threading.Event().wait(CHECK_EVERY_SECONDS)
 
     threading.Thread(target=_loop, daemon=True, name="FundingRefresh").start()
-    print("[funding] Daily refresh started.")
+    print("[funding] Refresh (every 4 hours) started.")
 
 
 def main() -> None:

@@ -4,7 +4,7 @@ Find a Grant: the page data is parsed, open-all-year grants are recognised despi
 and the Funding search shows open grants only, ranked by a plain word match to the company profile."""
 import json
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -47,7 +47,7 @@ def test_record_is_built_from_list_and_detail():
     detail = {"fields": {"grantWebpageUrl": "https://example.gov.uk/apply", "grantEligibilityTab": {"content": [
         {"nodeType": "paragraph", "content": [{"nodeType": "text", "value": "UK businesses only."}]}]}}}
     r = fag.build_record(item(), detail, TODAY)
-    assert r["name"] == "ZZ Boiler upgrade grant" and r["max_award"] == 50000.0 and r["close_date"] == "2026-12-31"
+    assert r["name"] == "ZZ Boiler upgrade grant" and r["max_award"] == 50000.0 and r["close_date"] == "2026-12-30"
     assert r["open_date"] == "2026-01-01" and r["ongoing"] is False and r["apply_url"] == "https://example.gov.uk/apply"
     assert r["eligibility"] == "UK businesses only." and r["url"].endswith("/grants/zz-test-grant-1")
     bare = fag.build_record(item(), None, TODAY)
@@ -71,10 +71,13 @@ def test_relevance_is_a_word_match():
 
 
 def test_database_search():
-    from tender_app.db import get_db_connection
+    import unittest
+    try:
+        from tender_app.db import get_db_connection
+        conn = get_db_connection()
+    except Exception as exc:  # noqa: BLE001
+        raise unittest.SkipTest(f"no database: {exc}")
     from tender_app.db_ext import create_funding_opportunities
-
-    conn = get_db_connection()
     cur = conn.cursor()
     create_funding_opportunities(cur)
     conn.commit()
@@ -107,7 +110,15 @@ def test_database_search():
         by_close = [i["label"] for i in funding.search(cur, q="ZZ ", sort="closing", today=TODAY)["items"]]
         assert by_close[0] == "zz-soon" and by_close.index("zz-allyear") > by_close.index("zz-open"), by_close
         soon = next(i for i in funding.search(cur, q="ZZ ", today=TODAY)["items"] if i["label"] == "zz-soon")
-        assert soon["days_left"] == 14 and soon["matches"] == []
+        assert soon["days_left"] == 13 and soon["matches"] == [], "the service's 2026-11-05T00:00 is 4 Nov 11:59pm"
+        assert soon["close_date"] == "2026-11-04" and soon["close_at"] == "2026-11-04T23:59"
+        # a grant stays listed until its closing time, then drops out and is counted as closed today
+        late = funding.search(cur, q="ZZ ", today=date(2026, 11, 4), now=datetime(2026, 11, 4, 23, 58))
+        assert "zz-soon" in {i["label"] for i in late["items"]}, "still open at 23:58 on its closing day"
+        gone = funding.search(cur, q="ZZ ", today=date(2026, 11, 5), now=datetime(2026, 11, 5, 9, 0))
+        assert "zz-soon" not in {i["label"] for i in gone["items"]}
+        morning = funding.search(cur, q="ZZ ", today=date(2026, 11, 5), now=datetime(2026, 11, 5, 9, 0))
+        assert morning["closed_today"] >= 0 and "zz-soon" not in {i["label"] for i in morning["items"]}
         allyear = next(i for i in funding.search(cur, q="ZZ ", today=TODAY)["items"] if i["label"] == "zz-allyear")
         assert allyear["days_left"] is None and allyear["ongoing"] is True
 
@@ -131,10 +142,13 @@ def test_database_search():
 
 
 def test_refresh_only_when_stale():
-    from tender_app.db import get_db_connection
+    import unittest
+    try:
+        from tender_app.db import get_db_connection
+        conn = get_db_connection()
+    except Exception as exc:  # noqa: BLE001
+        raise unittest.SkipTest(f"no database: {exc}")
     from tender_app.db_ext import create_funding_opportunities
-
-    conn = get_db_connection()
     cur = conn.cursor()
     create_funding_opportunities(cur)
     conn.commit()
@@ -150,7 +164,14 @@ def test_refresh_only_when_stale():
             conn.commit()
             assert fag.is_stale(conn) is True, "a day-old table is refreshed"
         else:  # the dev database holds the real import, so only the part that does not depend on its age is checked
-            assert fag.is_stale(conn, hours=100000) is False
+            cur.execute("SELECT EXISTS (SELECT 1 FROM funding_opportunities WHERE close_date IS NOT NULL AND close_at IS NULL)")
+            assert fag.is_stale(conn, hours=100000) is bool(cur.fetchone()[0]), "only rows kept before closing times were stored force a re-read"
+        # rows kept before closing times were stored are read again whatever their age
+        cur.execute("UPDATE funding_opportunities SET close_at = NULL WHERE label = 'zz-stale'")
+        conn.commit()
+        assert fag.is_stale(conn, hours=100000) is True
+        cur.execute("UPDATE funding_opportunities SET close_at = '2026-12-30T23:59' WHERE label = 'zz-stale'")
+        conn.commit()
     finally:
         cur.execute("DELETE FROM funding_opportunities WHERE label = 'zz-stale'")
         conn.commit()

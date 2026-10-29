@@ -147,6 +147,56 @@
     return `<div class="fai-bar"><span class="fai-hint" id="faiEvProgress">${ready} of ${items.length} ready</span></div>` + (rows ? `<ul class="fai-evs">${rows}</ul>` : `<p class="fai-hint">No documents are named in the call.</p>`);
   }
 
+  // The plain text of a result ("## " headings, "- " bullets): what Copy puts on the clipboard and Download turns into a Word file.
+  function toText(kind, r, grant) {
+    r = r || {};
+    const out = [];
+    const sec = (title, body) => {
+      const items = Array.isArray(body) ? body.filter(Boolean) : body ? [body] : [];
+      if (!items.length) return;
+      out.push("## " + title);
+      items.forEach((t) => out.push(Array.isArray(body) ? "- " + t : t));
+    };
+    if (kind === "eligibility") {
+      out.push((VERDICT[r.verdict] || VERDICT.unclear)[0] + ": " + (r.headline || ""));
+      sec("Each condition", (r.criteria || []).map((c) => (STATUS[c.status] || STATUS.unclear)[0] + ": " + c.criterion + (c.evidence ? " (" + c.evidence + ")" : "")));
+      sec("Still needed to be sure", r.missing); sec("Next steps", r.next_steps);
+    } else if (kind === "summary") {
+      sec("In short", r.overview); sec("What it funds", r.funds); sec("Who can apply", r.who_can_apply); sec("Award", r.award);
+      sec("Key dates", r.key_dates); sec("Most likely to rule you out", r.deal_breakers); sec("How to apply", r.how_to_apply);
+    } else if (kind === "draft") {
+      (r.sections || []).forEach((x) => {
+        out.push("## " + x.heading);
+        String(x.text || "").split("\n").forEach((line) => { if (line.trim()) out.push(line.trim()); });
+        if (x.gaps && x.gaps.length) { out.push("You need to add:"); x.gaps.forEach((g) => out.push("- " + g)); }
+      });
+      sec("Everything still missing", r.gaps);
+    } else if (kind === "analysis") {
+      out.push((RECOMMENDATION[r.recommendation] || RECOMMENDATION.maybe)[0] + ": " + (r.reason || ""));
+      sec("What the funder wants", r.funder_priorities); sec("Where you fit", r.strengths); sec("Where you do not fit yet", r.weaknesses);
+      sec("Competition", r.competition); sec("What an assessor will look for", r.assessment_hints); sec("Risks", r.risks); sec("Next steps", r.next_steps);
+    } else if (kind === "questions") {
+      sec("Questions for the funder", (r.questions || []).map((q) => q.question));
+    } else if (kind === "budget") {
+      sec("Funding rate", r.funding_rate_percent ? "The grant pays " + r.funding_rate_percent + "% of project cost. " + (r.rate_note || "") : r.rate_note);
+      sec("Match funding", r.match_required); sec("Costs it pays for", r.eligible_costs); sec("Costs it does not pay for", r.ineligible_costs);
+      sec("State aid and subsidy control", r.state_aid); sec("Other conditions", r.other_conditions);
+    } else if (kind === "evidence") {
+      sec("Documents to have ready", (r.items || []).map((i) => i.item + (i.why ? " (" + i.why + ")" : "")));
+    }
+    return out.join("\n");
+  }
+
+  const EDITABLE = ["eligibility", "summary", "draft", "analysis"];
+
+  // The user's own edited text (kept with the result) replaces the AI's wording until they show the AI version again.
+  const editedOf = (st) => (st && st.state && typeof st.state.edited === "string" && st.state.edited.trim() && !st.showAi ? st.state.edited : "");
+
+  function editedHtml(text) {
+    return String(text).split("\n").map((l) => l.trim()).filter(Boolean).map((l) =>
+      l.startsWith("## ") ? `<h4 class="fai-edited__h">${esc(l.slice(3))}</h4>` : l.startsWith("- ") ? `<p class="fai-edited__li">• ${esc(l.slice(2))}</p>` : `<p>${esc(l)}</p>`).join("");
+  }
+
   const RENDER = { eligibility: eligibilityHtml, summary: summaryHtml, draft: draftHtml, analysis: analysisHtml, questions: questionsHtml, budget: budgetHtml, evidence: evidenceHtml };
 
   function resultHtml(kind, result, state, grant) {
@@ -158,6 +208,22 @@
       `<button type="button" role="tab" class="fai-tab${key === active ? " is-active" : ""}" data-fai-tab="${key}" aria-selected="${key === active}">${esc(label)}</button>`).join("");
   }
 
+  function bodyHtml(kind, st, grant) {
+    if (st.editing) {
+      const text = typeof (st.state || {}).edited === "string" && (st.state || {}).edited.trim() ? st.state.edited : toText(kind, st.result, grant);
+      return `<div class="fai-editor"><label class="fai-hint" for="faiEditArea">Edit the text. A line starting with "## " is a heading and "- " is a bullet.</label>` +
+        `<textarea id="faiEditArea" class="fai-input fai-editor__area" rows="18" maxlength="19000">${esc(text)}</textarea>` +
+        `<div class="fai-actions"><button type="button" class="btn btn--primary" data-fai-act="save-edit">Save my version</button><button type="button" class="btn" data-fai-act="cancel-edit">Cancel</button>` +
+        (editedOf({ ...st, editing: false, showAi: false }) ? `<button type="button" class="btn" data-fai-act="reset-edit">Go back to the AI version</button>` : "") + `</div></div>`;
+    }
+    const mine = editedOf(st);
+    if (mine) {
+      return `<p class="fai-hint">Your edited version. <button type="button" class="fai-link" data-fai-act="show-ai">Show the AI version</button></p><div class="fai-edited">${editedHtml(mine)}</div>`;
+    }
+    const ai = (st.state || {}).edited && st.showAi ? `<p class="fai-hint">The AI version. <button type="button" class="fai-link" data-fai-act="show-mine">Back to my edited version</button></p>` : "";
+    return ai + resultHtml(kind, st.result, st.state, grant);
+  }
+
   function paneHtml(kind, st, costs, grant) {
     const tool = TOOLS.find((t) => t[0] === kind);
     const cost = (costs || DEFAULT_COSTS)[kind];
@@ -166,11 +232,20 @@
     if (st.status === "error") return `<p class="fai-error" role="alert">${esc(st.error)}</p><button type="button" class="btn btn--primary" data-fai-run="${kind}">Try again (${esc(price)})</button>`;
     if (st.status === "done") {
       return (
-        `<div class="fai-bar"><span class="fai-hint">${st.cached ? "Saved result" + (st.savedAt ? " from " + esc(String(st.savedAt).slice(0, 10)) : "") + ". " : ""}AI can be wrong: check anything important with the funder.</span>` +
-        `<button type="button" class="btn" data-fai-run="${kind}" data-fai-refresh="1">Run again (${esc(price)})</button></div>` + resultHtml(kind, st.result, st.state, grant)
+        `<div class="fai-bar"><span class="fai-hint">${st.profile && st.profile.name ? "Based on your profile <strong>" + esc(st.profile.name) + "</strong>. " : ""}${st.cached ? "Saved result" + (st.savedAt ? " from " + esc(String(st.savedAt).slice(0, 10)) : "") + ". " : ""}AI can be wrong: check anything important with the funder.</span>` +
+        `<button type="button" class="btn" data-fai-run="${kind}" data-fai-refresh="1">Run again (${esc(price)})</button></div>` +
+        `<div class="fai-actions" role="group" aria-label="Use this result">` +
+        `<button type="button" class="btn" data-fai-act="copy">Copy</button><button type="button" class="btn" data-fai-act="docx">Download .docx</button>` +
+        (kind === "draft" ? `<button type="button" class="btn" data-fai-act="bank" title="Keep each section in your Answer Bank so you can reuse it in other applications">Save to Answer Bank</button>` : "") +
+        (EDITABLE.includes(kind) && !st.editing ? `<button type="button" class="btn" data-fai-act="edit">Edit</button>` : "") +
+        `<button type="button" class="btn" data-fai-act="attach" title="Keep this as a Word file in your Documents">Attach to Documents</button>` +
+        `<span class="fai-hint" id="faiActNote" role="status"></span></div>` + bodyHtml(kind, st, grant)
       );
     }
-    return `<p>${esc(tool[2])}</p><button type="button" class="btn btn--primary" data-fai-run="${kind}">Run: ${esc(price)}</button>`;
+    // The free rule-based check comes first: when it says this grant is unlikely to suit the company, say why before credits are spent.
+    const blocked = grant && grant.fit && grant.fit.verdict === "unlikely" && kind !== "eligibility" && cost > 0;
+    const warn = blocked ? `<p class="fai-warn" role="alert"><strong>Unlikely to qualify.</strong> ${esc(grant.fit.blocker || "A condition of this grant does not match your company profile.")} The AI will work from the same facts, so check the full criteria with the funder before spending credits.</p>` : "";
+    return `<p>${esc(tool[2])}</p>${warn}<button type="button" class="btn btn--primary" data-fai-run="${kind}">${blocked ? "Run anyway" : "Run"}: ${esc(price)}</button>`;
   }
 
   function modalHtml(grant, active, states, costs) {
@@ -184,7 +259,7 @@
     );
   }
 
-  const api = { TOOLS, budgetCalc, calcHtml, resultHtml, paneHtml, modalHtml, tabsHtml, eligibilityHtml, summaryHtml, draftHtml, analysisHtml };
+  const api = { editedOf, toText, TOOLS, budgetCalc, calcHtml, resultHtml, paneHtml, modalHtml, tabsHtml, eligibilityHtml, summaryHtml, draftHtml, analysisHtml };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof document === "undefined") return;
 
@@ -215,7 +290,7 @@
     try {
       const data = await post(kind, { saved_only: true });
       if (ctl.grant !== grant) return;
-      ctl.states[kind] = data.none ? { status: "idle" } : { status: "done", result: data.result, cached: true, savedAt: data.saved_at, state: data.state || {} };
+      ctl.states[kind] = data.none ? { status: "idle" } : { status: "done", result: data.result, cached: true, savedAt: data.saved_at, state: data.state || {}, profile: data.profile || null };
     } catch (e) {
       if (ctl.grant !== grant) return;
       ctl.states[kind] = { status: "idle" };
@@ -230,7 +305,8 @@
     try {
       const data = await post(kind, { refresh: !!refresh });
       if (ctl.grant !== grant) return;
-      ctl.states[kind] = { status: "done", result: data.result, cached: !!data.cached, savedAt: data.saved_at, state: data.state || {} };
+      ctl.states[kind] = { status: "done", result: data.result, cached: !!data.cached, savedAt: data.saved_at, state: data.state || {}, profile: data.profile || null };
+      if (window.TFFunding && window.TFFunding.track && !data.cached) window.TFFunding.track("funding_ai_run", { tool: kind, credits: data.cost, fit: (grant.fit && grant.fit.verdict) || "" });
       if (typeof window.refreshCredits === "function") window.refreshCredits();
     } catch (e) {
       if (ctl.grant !== grant) return;
@@ -291,6 +367,105 @@
     if (navigator.clipboard && text) navigator.clipboard.writeText(text).catch(() => {});
   }
 
+  function note(text) {
+    const el = ctl.el && ctl.el.querySelector("#faiActNote");
+    if (el) el.textContent = text;
+  }
+
+  function fileTitle(kind) {
+    const tool = TOOLS.find((t) => t[0] === kind);
+    return (ctl.grant.name || "Grant") + " - " + (tool ? tool[1] : kind);
+  }
+
+  const textInUse = (kind, st) => editedOf(st) || toText(kind, st.result, ctl.grant);
+
+  async function copyResult(kind, st) {
+    const text = fileTitle(kind) + "\n\n" + textInUse(kind, st);
+    try { await navigator.clipboard.writeText(text); note("Copied."); } catch (e) { note("Could not copy. Select the text and copy it instead."); }
+  }
+
+  async function downloadResult(kind, st) {
+    note("Preparing the file…");
+    try {
+      const title = fileTitle(kind);
+      const res = await fetch("/api/funding/export/docx", {
+        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, text: textInUse(kind, st) }),
+      });
+      if (!res.ok) throw new Error("status " + res.status);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = title.replace(/[^A-Za-z0-9 _.-]+/g, "").trim().replace(/ +/g, "_").slice(0, 80) + ".docx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      note("Downloaded.");
+    } catch (e) { note("Could not make the file. Try again."); }
+  }
+
+  async function docxBlob(kind, st) {
+    const res = await fetch("/api/funding/export/docx", {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: fileTitle(kind), text: textInUse(kind, st) }),
+    });
+    if (!res.ok) throw new Error("status " + res.status);
+    return res.blob();
+  }
+
+  // The result as a Word file in the user's Documents, next to their certificates and policies.
+  async function attachResult(kind, st) {
+    note("Adding to your Documents…");
+    try {
+      const blob = await docxBlob(kind, st);
+      const name = fileTitle(kind).replace(/[^A-Za-z0-9 _.-]+/g, "").trim().replace(/ +/g, "_").slice(0, 80) + ".docx";
+      const form = new FormData();
+      form.append("file", new File([blob], name, { type: blob.type || "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }));
+      const res = await fetch("/api/user-documents", { method: "POST", credentials: "same-origin", body: form });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || (data && data.ok === false)) throw new Error((data && data.error) || "status " + res.status);
+      note("Added to your Documents as " + name + ".");
+    } catch (e) { note("Could not add it to your Documents. Try again."); }
+  }
+
+  function setEdited(kind, st, text) {
+    st.state = st.state || {};
+    if (text) st.state.edited = text; else delete st.state.edited;
+    st.editing = false;
+    st.showAi = false;
+    keep(kind);
+    render();
+  }
+
+  // Each section of the draft becomes an Answer Bank entry ("<grant>: <section>") so it can be reused in later applications.
+  async function saveToBank(kind, st) {
+    let sections = ((st.result && st.result.sections) || []).filter((x) => x.heading && String(x.text || "").trim());
+    const mine = editedOf(st);
+    if (mine) {  // the user's own wording: split their text back into "## heading" sections
+      sections = [];
+      mine.split("\n").forEach((line) => {
+        if (line.startsWith("## ")) sections.push({ heading: line.slice(3).trim(), text: "" });
+        else if (sections.length && line.trim() && !line.startsWith("You need to add:") && !line.startsWith("- ")) sections[sections.length - 1].text += (sections[sections.length - 1].text ? "\n" : "") + line.trim();
+      });
+      sections = sections.filter((x) => x.heading && x.text.trim());
+    }
+    if (!sections.length) { note("Nothing to save."); return; }
+    note("Saving…");
+    let saved = 0;
+    for (const x of sections) {
+      try {
+        const res = await fetch("/api/answer-bank", {
+          method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ category: "Grants", question: ctl.grant.name + ": " + x.heading, answer: String(x.text).trim(), profile_id: st.profile && st.profile.id ? st.profile.id : null }),
+        });
+        if (res.ok) saved += 1;
+      } catch (e) { /* counted below */ }
+    }
+    note(saved === sections.length ? "Saved " + saved + (saved === 1 ? " answer" : " answers") + " to your Answer Bank (category Grants)." : "Saved " + saved + " of " + sections.length + ". Try again for the rest.");
+  }
+
   function select(kind) {
     ctl.active = kind;
     if (!ctl.states[kind]) load(kind);
@@ -300,6 +475,9 @@
   function close() {
     if (ctl.el) ctl.el.classList.add("hidden");
     ctl.grant = null;
+    const back = ctl.opener;
+    ctl.opener = null;
+    if (back && back.isConnected && typeof back.focus === "function") back.focus();  // focus returns to what opened the dialog
   }
 
   function open(grant) {
@@ -310,28 +488,53 @@
       ctl.el.className = "modal-overlay hidden";
       ctl.el.setAttribute("role", "dialog");
       ctl.el.setAttribute("aria-modal", "true");
+      ctl.el.setAttribute("tabindex", "-1");
       ctl.el.setAttribute("aria-labelledby", "fundingAiTitle");
       ctl.el.addEventListener("click", (e) => {
         if (e.target === ctl.el || e.target.closest("[data-fai-close]")) return close();
         const tab = e.target.closest("[data-fai-tab]");
         if (tab) return select(tab.getAttribute("data-fai-tab"));
         if (e.target.closest("[data-fai-copy]")) return copyQuestions();
+        const act = e.target.closest("[data-fai-act]");
+        if (act) {
+          const st = ctl.states[ctl.active];
+          if (!st || st.status !== "done") return;
+          const what = act.getAttribute("data-fai-act");
+          if (what === "edit") { st.editing = true; return render(); }
+          if (what === "cancel-edit") { st.editing = false; return render(); }
+          if (what === "save-edit") { const t = (ctl.el.querySelector("#faiEditArea") || {}).value || ""; return setEdited(ctl.active, st, t.trim() === toText(ctl.active, st.result, ctl.grant).trim() ? "" : t.trim()); }
+          if (what === "reset-edit") return setEdited(ctl.active, st, "");
+          if (what === "show-ai") { st.showAi = true; return render(); }
+          if (what === "show-mine") { st.showAi = false; return render(); }
+          if (what === "attach") return attachResult(ctl.active, st);
+          return what === "copy" ? copyResult(ctl.active, st) : what === "docx" ? downloadResult(ctl.active, st) : saveToBank(ctl.active, st);
+        }
         const go = e.target.closest("[data-fai-run]");
         if (go) run(go.getAttribute("data-fai-run"), go.hasAttribute("data-fai-refresh"));
       });
       ctl.el.addEventListener("input", onEdit);
       ctl.el.addEventListener("change", onEdit);
-      document.addEventListener("keydown", (e) => { if (e.key === "Escape" && ctl.grant) close(); });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && ctl.grant) return close();
+        if (e.key !== "Tab" || !ctl.grant) return;  // keep Tab inside the dialog
+        const items = Array.from(ctl.el.querySelectorAll("button, a[href], input, select, textarea, [tabindex='0']")).filter((n) => !n.disabled && n.offsetParent !== null);
+        if (!items.length) return;
+        const first = items[0], last = items[items.length - 1];
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === ctl.el)) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      });
       document.body.appendChild(ctl.el);
       fetch("/api/funding/ai/costs", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : null))
         .then((d) => { if (d && d.costs) { ctl.costs = d.costs; if (ctl.grant) render(); } }).catch(() => {});
     }
+    ctl.opener = document.activeElement;
     ctl.grant = grant;
     ctl.active = "eligibility";
     ctl.states = {};
     ctl.el.classList.remove("hidden");
     select("eligibility");
-    ctl.el.querySelector("#fundingAiTitle")?.focus();
+    // The dialog itself takes focus: the title is redrawn as results arrive, which would drop the focus back to the page.
+    ctl.el.focus();
   }
 
   window.FundingAI = Object.assign({ open, close }, api);

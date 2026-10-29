@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import json
 
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, Response, jsonify, request, session
 
 from tender_app import funding
+from tender_app import funding_export as fx
+from tender_app import funding_fit as ff
+from tender_app import funding_track as ft
 from tender_app import funding_ai as fai
 from tender_app import growth_studio as gs
 from tender_app.config import (
@@ -62,30 +65,254 @@ def _number(raw):
         return None
 
 
+def _profile_context(cursor, username: str, raw_id) -> dict:
+    """The chosen company profile (else the user's default) as {id, name, keywords, applicant}; applicant is the
+    funding_fit view of it. Everything is empty when the user has no profile."""
+    empty = {"id": None, "name": "", "keywords": frozenset(), "applicant": ff.applicant_from_profile({}), "meta": {}}
+    try:
+        profile_id = int(raw_id) if raw_id not in (None, "", "0") else None
+    except ValueError:
+        profile_id = None
+    if not username:
+        return empty
+    cols = "SELECT id, name, profile_text, meta_json FROM company_profiles WHERE "
+    if profile_id:
+        cursor.execute(cols + "id = %s AND username = %s", (profile_id, username))
+    else:
+        cursor.execute(cols + "username = %s ORDER BY COALESCE(is_default, FALSE) DESC, id ASC LIMIT 1", (username,))
+    row = cursor.fetchone()
+    if not row:
+        return empty
+    try:
+        meta = json.loads(row[3] or "{}")
+    except ValueError:
+        meta = {}
+    meta = meta if isinstance(meta, dict) else {}
+    text = row[2] or ""
+    return {"id": row[0], "name": row[1] or meta.get("org_name") or "", "keywords": gs.profile_keywords(text, meta), "meta": meta,
+            "applicant": ff.applicant_from_profile(meta, text, str(meta.get("org_name") or ""))}
+
+
+def _ensure_saved_table(cur) -> None:
+    ft.ensure_schema(cur)
+
+
+def _saved_labels(cur, username: str) -> frozenset[str]:
+    if not username:
+        return frozenset()
+    _ensure_saved_table(cur)
+    cur.execute("SELECT label FROM funding_saved WHERE username = %s", (username,))
+    return frozenset(r[0] for r in cur.fetchall())
+
+
+def _bad_params(args):
+    """The first query parameter that is not valid, as a message; None when all are fine."""
+    for key in ("page", "min_award", "need_min", "need_max"):
+        raw = args.get(key)
+        if raw not in (None, "") and _number(raw) is None:
+            return f"{key} must be a number."
+    if args.get("sort") not in (None, "") and args.get("sort") not in funding.SORTS:
+        return "sort must be one of: " + ", ".join(funding.SORTS) + "."
+    if args.get("applicant") not in (None, "") and args.get("applicant") not in funding.APPLICANT_TYPES:
+        return "applicant is not a known applicant type."
+    return None
+
+
 @funding_bp.route("/api/funding", methods=["GET"])
 def list_funding():
     args = request.args
-    try:
-        page = int(args.get("page") or 1)
-    except ValueError:
-        page = 1
+    problem = _bad_params(args)
+    if problem:
+        return jsonify({"error": problem}), 422
+    page = int(_number(args.get("page")) or 1)
+    username = (session.get("username") or "").strip()
     conn = _get_db()
     try:
         cur = conn.cursor()
-        keywords = _profile_keywords(cur, (session.get("username") or "").strip(), args.get("profile_id"))
+        ctx = _profile_context(cur, username, args.get("profile_id"))
+        applicant = args.get("applicant") if "applicant" in args else ctx["applicant"]["kind"]  # absent: the profile's own type
+        include_uk_wide = args.get("include_uk_wide", "1") in ("1", "true")
         result = funding.search(
             cur,
             q=(args.get("q") or "")[:100],
-            applicant=args.get("applicant") or "",
+            applicant=applicant or "",
             location=args.get("location") or "",
             min_award=_number(args.get("min_award")),
+            need_min=_number(args.get("need_min")),
+            need_max=_number(args.get("need_max")),
             closing_soon=args.get("closing_soon") in ("1", "true"),
             sort=args.get("sort") or "relevance",
             page=page,
-            keywords=keywords,
+            keywords=ctx["keywords"],
+            where=args.get("where") or "",
+            include_uk_wide=include_uk_wide,
+            fit_applicant=ctx["applicant"],
+            hide_unlikely=args.get("hide_unlikely") in ("1", "true"),
+            saved=_saved_labels(cur, username),
+            saved_only=args.get("saved_only") in ("1", "true"),
         )
+        conn.commit()
+        result["applied"] = {"applicant": applicant or ""}
+        result["profile"] = {"id": ctx["id"], "name": ctx["name"], "region": ctx["applicant"]["region"], "size": ctx["applicant"]["size"]}
         cur.close()
         return jsonify(result)
+    finally:
+        conn.close()
+
+
+@funding_bp.post("/api/funding/event")
+def funding_event():
+    """One usage event from the Funding page (filter used, search made, grant opened, apply clicked, saved, AI run)."""
+    username = (session.get("username") or "").strip()
+    if not username:
+        return _error("Unauthorized", 401)
+    body = request.get_json(silent=True) or {}
+    conn = _get_db()
+    try:
+        cur = conn.cursor()
+        problem = ft.record_event(cur, username, str(body.get("event") or ""), body.get("detail"))
+        if problem:
+            conn.rollback()
+            return _error(problem, 422)
+        conn.commit()
+        cur.close()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+@funding_bp.get("/api/funding/tracked")
+def funding_tracked():
+    """The user's saved grants with stage, notes and reminder switch, for the Pipeline page."""
+    username = (session.get("username") or "").strip()
+    if not username:
+        return _error("Unauthorized", 401)
+    conn = _get_db()
+    try:
+        cur = conn.cursor()
+        items = ft.tracked(cur, username)
+        conn.commit()
+        cur.close()
+        return jsonify({"items": items, "stages": [[s, ft.STAGE_LABEL[s]] for s in ft.STAGES]})
+    finally:
+        conn.close()
+
+
+@funding_bp.patch("/api/funding/tracked/<label>")
+def funding_tracked_update(label: str):
+    username = (session.get("username") or "").strip()
+    if not username:
+        return _error("Unauthorized", 401)
+    if not fai.valid_label(label):
+        return _error("Say which grant.", 400)
+    body = request.get_json(silent=True) or {}
+    conn = _get_db()
+    try:
+        cur = conn.cursor()
+        problem = ft.update(cur, username, label, stage=body.get("stage"), notes=body.get("notes"), remind=body.get("remind"))
+        if problem:
+            conn.rollback()
+            return _error(problem, 404 if "not in your list" in problem else 422)
+        conn.commit()
+        cur.close()
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
+@funding_bp.route("/api/funding/alerts", methods=["GET", "POST"])
+def funding_alerts():
+    """The weekly email of new grants that fit the user's profile. Off until the user switches it on."""
+    username = (session.get("username") or "").strip()
+    if not username:
+        return _error("Unauthorized", 401)
+    conn = _get_db()
+    try:
+        cur = conn.cursor()
+        if request.method == "POST":
+            enabled = (request.get_json(silent=True) or {}).get("enabled")
+            if not isinstance(enabled, bool):
+                return _error("enabled must be true or false.", 422)
+            ft.set_digest_pref(cur, username, enabled)
+            conn.commit()
+        pref = ft.get_digest_pref(cur, username)
+        conn.commit()
+        cur.close()
+        return jsonify({"ok": True, **pref})
+    finally:
+        conn.close()
+
+
+@funding_bp.get("/api/funding/alerts/unsubscribe")
+def funding_alerts_unsubscribe():
+    """Linked from the weekly email and opened without a session: needs the signed token for that user."""
+    import hmac
+
+    from tender_app.email_svc import alert_pref_token
+
+    user = (request.args.get("user") or "").strip()
+    expected = alert_pref_token(user) if user else ""
+    if not expected or not hmac.compare_digest(expected, request.args.get("token") or ""):
+        return ("This link is not valid.", 400)
+    conn = _get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT username FROM users WHERE LOWER(username) = LOWER(%s) OR LOWER(email) = LOWER(%s) LIMIT 1", (user, user))
+        found = cur.fetchone()
+        ft.set_digest_pref(cur, found[0] if found else user, False)
+        conn.commit()
+        cur.close()
+    finally:
+        conn.close()
+    return ("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Unsubscribed</title></head><body style=\"font-family:sans-serif;text-align:center;padding:48px\">"
+            "<h2>You will not get the weekly grants email any more.</h2><p>You can switch it back on any time on the Funding page.</p></body></html>")
+
+
+@funding_bp.get("/api/funding/item/<label>")
+def funding_item(label: str):
+    """One grant with its eligibility guide, for a shared link to a grant that is not on the visible page."""
+    if not fai.valid_label(label):
+        return _error("Say which grant.", 400)
+    username = (session.get("username") or "").strip()
+    conn = _get_db()
+    try:
+        cur = conn.cursor()
+        grant = funding.get_one(cur, label)
+        if not grant:
+            return _error("That grant is not listed any more.", 404)
+        ctx = _profile_context(cur, username, request.args.get("profile_id"))
+        grant["matches"] = funding.relevance(ctx["keywords"], grant)
+        grant["band"] = "high" if len(grant["matches"]) >= 4 else "mid" if len(grant["matches"]) >= 2 else "low" if grant["matches"] else None
+        grant["saved"] = label in _saved_labels(cur, username)
+        grant["fit"] = ff.assess(grant, ctx["applicant"], has_profile=bool(ctx["keywords"]))
+        conn.commit()
+        cur.close()
+        return jsonify({"item": grant})
+    finally:
+        conn.close()
+
+
+@funding_bp.post("/api/funding/save")
+def funding_save():
+    """Save or unsave a grant for the signed-in user. Free."""
+    username = (session.get("username") or "").strip()
+    if not username:
+        return _error("Unauthorized", 401)
+    body = request.get_json(silent=True) or {}
+    label = body.get("label")
+    if not fai.valid_label(label):
+        return _error("Say which grant.", 400)
+    conn = _get_db()
+    try:
+        cur = conn.cursor()
+        _ensure_saved_table(cur)
+        if body.get("saved", True):
+            cur.execute("INSERT INTO funding_saved (username, label) VALUES (%s, %s) ON CONFLICT DO NOTHING", (username, label))
+        else:
+            cur.execute("DELETE FROM funding_saved WHERE username = %s AND label = %s", (username, label))
+        conn.commit()
+        cur.close()
+        return jsonify({"ok": True, "saved": bool(body.get("saved", True))})
     finally:
         conn.close()
 
@@ -270,21 +497,26 @@ def funding_ai(kind: str):
         if fai.NEEDS_PROFILE[kind] and not profile:
             return _error("Add a company profile first: this tool compares the grant with your business.", 400)
         profile_id = profile[0] if profile and fai.NEEDS_PROFILE[kind] else 0
+        used = {"id": profile[0], "name": profile[1]} if profile and fai.NEEDS_PROFILE[kind] else None  # shown with the result
         _ensure_results_table(cur)
         conn.commit()
         if not body.get("refresh"):
             saved = _saved(cur, username, label, kind, profile_id)
             if saved:
-                return jsonify({"ok": True, "kind": kind, "cached": True, "cost": 0, "saved_at": saved["saved_at"], **_decorate(cur, username, label, kind, saved["result"])})
+                return jsonify({"ok": True, "kind": kind, "cached": True, "cost": 0, "saved_at": saved["saved_at"], "profile": used, **_decorate(cur, username, label, kind, saved["result"])})
         if body.get("saved_only"):  # opening a tab: show what is kept, never run (and charge for) the AI
             return jsonify({"ok": True, "kind": kind, "none": True, "cost": COSTS[kind]})
         answers = _answers(cur, username, profile[0]) if kind == "draft" and profile else ""
+        fit = None
+        if profile and kind in ("eligibility", "draft", "analysis"):  # the free check goes into the prompt, so the AI states what is already known
+            ctx = _profile_context(cur, username, profile[0])
+            fit = ff.assess(grant, ctx["applicant"], has_profile=bool(ctx["keywords"]))
         cur.close()
     finally:
         conn.close()
 
     page_text, page_read = fai.full_text(label)
-    system, user = fai.build_prompt(kind, fai.grant_block(grant, page_text), profile[1] if profile else "", profile[2] if profile else "", answers)
+    system, user = fai.build_prompt(kind, fai.grant_block(grant, page_text), profile[1] if profile else "", profile[2] if profile else "", answers, fit)
     try:
         result = _CHARGED[kind](system, user)
     except _Failed as exc:
@@ -310,7 +542,24 @@ def funding_ai(kind: str):
         print("funding ai result not saved:", exc)
     finally:
         conn.close()
-    return jsonify({"ok": True, "kind": kind, "cached": False, "cost": COSTS[kind], "page_read": page_read, **decorated})
+    return jsonify({"ok": True, "kind": kind, "cached": False, "cost": COSTS[kind], "page_read": page_read, "profile": used, **decorated})
+
+
+@funding_bp.post("/api/funding/export/docx")
+def funding_export_docx():
+    """A Word file of the text on screen (the user may have edited it). Free."""
+    if not (session.get("username") or "").strip():
+        return _error("Unauthorized", 401)
+    body = request.get_json(silent=True) or {}
+    title, text = body.get("title"), body.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return _error("There is nothing to export.", 400)
+    if len(text) > fx.MAX_CHARS:
+        return _error("That is too long to export.", 400)
+    data = fx.build_docx(title if isinstance(title, str) else "", text)
+    name = fx.file_name(title if isinstance(title, str) else "")
+    return Response(data, mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @funding_bp.post("/api/funding/ai/<kind>/state")

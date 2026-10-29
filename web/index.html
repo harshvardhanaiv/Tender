@@ -33,7 +33,7 @@
   <link rel="stylesheet" href="/mobile.css?v=4" />
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=19" />
-  <link rel="stylesheet" href="/funding.css?v=6" />
+  <link rel="stylesheet" href="/funding.css?v=18" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
   <script src="/translations.js?v=6"></script>
@@ -1667,6 +1667,7 @@
           <button type="button" class="pill" data-kind="tender" aria-pressed="false" title="Show only tracked tenders">Tenders</button>
           <button type="button" class="pill" data-kind="buyer" aria-pressed="false" title="Show only watched buyers">Buyers</button>
           <button type="button" class="pill" data-kind="supplier" aria-pressed="false" title="Show only watched suppliers">Suppliers</button>
+          <button type="button" class="pill" data-kind="grant" aria-pressed="false" title="Show the grants you saved on the Funding page">Grants</button>
         </div>
         <select id="pipelinePortalFilter" class="tf-chip tf-chip--select" aria-label="Portal">
           <option value="">All portals</option>
@@ -2671,7 +2672,7 @@
     </div>
   </div>
 
-  <!-- ══ FUNDING ══ (open government grants from Find a Grant; logic in funding.js) -->
+  <!-- ══ FUNDING ══ (open government grants from Find a Grant; logic in funding.js, eligibility guide in funding_fit.py) -->
   <div id="fundingModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="fundingTitle">
     <div class="profile-modal funding-page">
       <div class="profile-header">
@@ -2680,43 +2681,81 @@
             <h2 class="profile-header__title" id="fundingTitle">Funding</h2>
             <span class="profile-header__scope">UK government grants open now</span>
           </div>
-          <span class="profile-header__sub" id="fundingSub">Grants you can apply for. They are not tenders and never count towards contract totals.</span>
+          <span class="profile-header__sub" id="fundingSub">UK government grants open now. Grants are not tenders and never count towards contract totals.</span>
         </div>
+        <label class="funding-matching" for="selFundingProfile">
+          <span class="funding-matching__label">Matching against</span>
+          <select id="selFundingProfile" class="tf-chip tf-chip--select" aria-label="Company profile to match grants against"></select>
+        </label>
         <button type="button" id="fundingClose" class="profile-header__close" aria-label="Close">×</button>
       </div>
-      <form id="fundingFilterBar" class="tf-filterbar tf-filterbar--page" role="search" aria-label="Filter grants">
-        <label class="tf-search">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
-          <input type="search" id="txtFundingSearch" name="q" placeholder="Keywords, e.g. net zero, farming, skills, innovation" aria-label="Search grants" autocomplete="off" />
-        </label>
-        <select id="selFundingApplicant" name="applicant" class="tf-chip tf-chip--select" aria-label="Who can apply">
-          <option value="Private Sector">Private sector</option>
-          <option value="Non-profit">Non-profit</option>
-          <option value="Public Sector">Public sector</option>
-          <option value="Personal / Individual">Individuals</option>
-          <option value="">Anyone</option>
-        </select>
-        <select id="selFundingLocation" name="location" class="tf-chip tf-chip--select" aria-label="Where the money is available"><option value="">Anywhere in the UK</option></select>
-        <select id="selFundingAward" name="min_award" class="tf-chip tf-chip--select" aria-label="Award size">
-          <option value="">Any award size</option>
-          <option value="10000">Up to £10k or more</option>
-          <option value="100000">Up to £100k or more</option>
-          <option value="1000000">Up to £1m or more</option>
-        </select>
-        <select id="selFundingSort" name="sort" class="tf-chip tf-chip--select" aria-label="Sort by">
-          <option value="relevance">Best match to my profile</option>
-          <option value="closing">Closing soonest</option>
-          <option value="award">Largest award</option>
-        </select>
-        <label class="tf-chip funding-soon"><input type="checkbox" id="chkFundingSoon" name="closing_soon" /> Closing within 30 days</label>
-      </form>
-      <div class="funding-body">
-        <p class="funding-meta" id="fundingMeta" aria-live="polite"></p>
-        <div id="fundingBest" class="funding-best"></div>
-        <div id="fundingList" class="funding-list" aria-live="polite"></div>
-        <div id="fundingPager" class="funding-pager"></div>
-        <p class="funding-attribution">Source: <a href="https://find-government-grants.service.gov.uk/" target="_blank" rel="noopener noreferrer">Find a grant</a> on GOV.UK, published under the <a href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/" target="_blank" rel="noopener noreferrer">Open Government Licence v3.0</a>. Matching to your profile is by shared words, not a prediction of success. Check eligibility with the funder before applying.</p>
+      <div class="funding-layout">
+        <button type="button" id="btnFundingFilters" class="funding-btn funding-filters-toggle" aria-expanded="false" aria-controls="fundingFilterBar">Filters</button>
+        <form id="fundingFilterBar" class="funding-side" aria-label="Filter grants">
+          <h3 class="funding-side__h">Who's applying</h3>
+          <select id="selFundingApplicant" name="applicant" class="funding-select" aria-label="Who is applying">
+            <option value="Private Sector">Private company</option>
+            <option value="Non-profit">Charity or non-profit</option>
+            <option value="Public Sector">Public sector body</option>
+            <option value="Personal / Individual">Individual</option>
+            <option value="">Anyone</option>
+          </select>
+          <h3 class="funding-side__h">Where you'll do the work</h3>
+          <select id="selFundingLocation" name="where" class="funding-select" aria-label="Where the work is done">
+            <option value="">Anywhere</option>
+            <option value="England">England</option>
+            <option value="North East England">&nbsp;&nbsp;North East England</option>
+            <option value="North West England">&nbsp;&nbsp;North West England</option>
+            <option value="Yorkshire and the Humber">&nbsp;&nbsp;Yorkshire and the Humber</option>
+            <option value="Midlands">&nbsp;&nbsp;Midlands</option>
+            <option value="East of England">&nbsp;&nbsp;East of England</option>
+            <option value="London">&nbsp;&nbsp;London</option>
+            <option value="South East England">&nbsp;&nbsp;South East England</option>
+            <option value="South West England">&nbsp;&nbsp;South West England</option>
+            <option value="Scotland">Scotland</option>
+            <option value="Wales">Wales</option>
+            <option value="Northern Ireland">Northern Ireland</option>
+          </select>
+          <label class="funding-check"><input type="checkbox" id="chkFundingUkWide" checked /> Include UK-wide grants</label>
+          <h3 class="funding-side__h">How much do you need?</h3>
+          <select id="selFundingAward" name="min_award" class="funding-select" aria-label="Award size">
+            <option value="">Any amount</option>
+            <option value="0-10000">Under £10k</option>
+            <option value="10000-100000">£10k to £100k</option>
+            <option value="100000-1000000">£100k to £1m</option>
+            <option value="1000000-">£1m or more</option>
+          </select>
+          <h3 class="funding-side__h funding-side__h--plain">Fit</h3>
+          <label class="funding-check"><input type="checkbox" id="chkFundingHideUnlikely" /> Hide grants I'm unlikely to win</label>
+          <label class="funding-check"><input type="checkbox" id="chkFundingSoon" name="closing_soon" /> Closing within 30 days</label>
+          <label class="funding-check"><input type="checkbox" id="chkFundingSaved" /> Saved only</label>
+          <button type="button" id="btnFundingClear" class="funding-clear">Clear all filters</button>
+          <label class="funding-check funding-weekly"><input type="checkbox" id="chkFundingWeekly" /> Email me new grants that fit, weekly</label>
+          <p class="funding-weekly__note" id="fundingWeeklyNote">Only grants that appear after you switch it on are sent, and only ones likely to suit your profile.</p>
+        </form>
+        <div class="funding-body">
+          <div class="funding-toolbar">
+            <label class="funding-search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+              <input type="search" id="txtFundingSearch" name="q" placeholder="Search grants, e.g. AI, net zero, DSIT" aria-label="Search grants" autocomplete="off" />
+            </label>
+            <select id="selFundingSort" name="sort" class="funding-select funding-sort" aria-label="Sort by">
+              <option value="relevance">Best fit</option>
+              <option value="closing">Closing soonest</option>
+              <option value="award">Largest award</option>
+            </select>
+          </div>
+          <div class="funding-meta-row">
+            <span class="funding-meta" id="fundingMeta" aria-live="polite"></span>
+            <span id="fundingChips" class="funding-chips"></span>
+          </div>
+          <div id="fundingList" class="funding-list" aria-live="polite"></div>
+          <div id="fundingEmpty" class="funding-empty hidden"></div>
+          <div id="fundingPager" class="funding-pager"></div>
+          <p class="funding-attribution">Source: <a href="https://find-government-grants.service.gov.uk/" target="_blank" rel="noopener noreferrer">Find a grant</a> on GOV.UK, published under the <a href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/" target="_blank" rel="noopener noreferrer">Open Government Licence v3.0</a>. Fit is a guide based on your company profile and the grant's stated eligibility. Check with the funder before applying. <span id="fundingRefreshed"></span></p>
+        </div>
       </div>
+      <aside id="fundingDrawer" class="funding-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="fundingDrawerTitle" tabindex="-1"></aside>
     </div>
   </div>
 
@@ -3345,10 +3384,11 @@
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=1"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=243"></script>
+  <script src="/app.js?v=244"></script>
   <script src="/planning.js?v=18"></script>
-  <script src="/funding.js?v=3"></script>
-  <script src="/funding-ai.js?v=2"></script>
+  <script src="/funding.js?v=8"></script>
+  <script src="/grants-board.js?v=1"></script>
+  <script src="/funding-ai.js?v=7"></script>
   <script src="/policy-lib.js?v=2"></script>
   <script src="/responsive-fixes.js?v=1" defer></script>
   <script src="/tooltips.js?v=4"></script>

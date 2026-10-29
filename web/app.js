@@ -7568,7 +7568,7 @@ function pipelineItemDeep(item) {
 
 let _pipelineShowAllHighFit = false;
 
-let _pipelineKind = "all";            // all | tender | buyer | supplier
+let _pipelineKind = "all";            // all | tender | buyer | supplier | grant
 const _pipelineAccOpen = { all: true };   // open until the user closes it
 
 // Buyers and suppliers on the global watchlist (web/watchlist.js) that the board's search and kind filter let through.
@@ -7613,6 +7613,7 @@ function updatePipelineKindCounts() {
     supplier: watched.filter((w) => w.kind === "supplier").length,
   };
   n.all = n.tender + n.buyer + n.supplier;
+  if (window.TFGrantsBoard) { window.TFGrantsBoard.ensure(); n.grant = window.TFGrantsBoard.count(); }  // saved grants are counted apart from tenders
   $("pipelineKindPills")?.querySelectorAll("button[data-kind]").forEach((b) => {
     if (!b.dataset.label) b.dataset.label = b.textContent.trim();
     b.innerHTML = `${esc(b.dataset.label)} <span class="pill__count">${n[b.dataset.kind] ?? 0}</span>`;
@@ -7622,6 +7623,11 @@ function updatePipelineKindCounts() {
 function renderPipelineBoard() {
   const body = $("dashboardBody");
   if (!body) return;
+  if (_pipelineKind === "grant" && window.TFGrantsBoard) {  // saved grants: their own board (web/grants-board.js)
+    updatePipelineKindCounts();
+    window.TFGrantsBoard.render(body);
+    return;
+  }
 
   populatePipelinePortalFilter();
   updatePipelineKindCounts();

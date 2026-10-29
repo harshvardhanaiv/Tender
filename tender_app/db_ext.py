@@ -798,6 +798,8 @@ def create_funding_opportunities(cursor) -> None:
         )
         """
     )
+    cursor.execute("ALTER TABLE funding_opportunities ADD COLUMN IF NOT EXISTS close_at VARCHAR(16)")  # UK local "YYYY-MM-DDTHH:MM"
+    cursor.execute("ALTER TABLE funding_opportunities ADD COLUMN IF NOT EXISTS first_seen TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')")  # the weekly email only names grants new since the last one
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_funding_close ON funding_opportunities(close_date)")
 
 

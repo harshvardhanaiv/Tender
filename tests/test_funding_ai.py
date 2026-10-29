@@ -244,6 +244,18 @@ def test_api_saves_charges_and_refunds():
         conn.close()
 
 
+def test_rule_based_check_goes_into_the_prompt():
+    block = "NAME: G / FUNDER: F"
+    unlikely = {"verdict": "unlikely", "blocker": "Needs a project costing £100m or more: your turnover is £1.8m"}
+    for kind in ("eligibility", "draft", "analysis"):
+        user = fai.build_prompt(kind, block, "Acme", "c", "", unlikely)[1]
+        assert "unlikely to qualify" in user and "£100m or more" in user and "Never invent facts" in user
+    assert "RULE-BASED" not in fai.build_prompt("summary", block, "Acme", "c", "", unlikely)[1], "only the tools that judge fit are told"
+    assert "to confirm. Read the criteria" in fai.build_prompt("draft", block, "Acme", "c", "", {"verdict": "check", "check": "Read the criteria"})[1]
+    assert "RULE-BASED" not in fai.build_prompt("draft", block, "Acme", "c", "", {"verdict": "likely", "why": "UK wide"})[1]
+    assert "RULE-BASED" not in fai.build_prompt("draft", block, "Acme", "c")[1]
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     ran = 0

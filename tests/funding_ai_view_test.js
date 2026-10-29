@@ -55,9 +55,39 @@ const ev = f.resultHtml("evidence", { items: [
 assert(!ev.includes("<i>") && ev.includes("2 of 3 ready") && ev.includes("is-expired") && ev.includes("(expired 2025-01-01)") && ev.includes("If awarded") && ev.includes("likely"));
 assert(ev.includes('data-fai-have="Bank details" checked') || ev.includes('data-fai-have="Bank details"') && ev.includes("checked"));
 
-// best matches strip
-const fund = require("../web/funding.js");
-const bh = fund.bestHtml([{ label: "a", name: "A", closing_soon: true, matches: ["x", "y"], band: "mid", applicants: [], locations: [] }, { label: "b", name: "B", closing_soon: false, matches: ["x", "y"], band: "mid", applicants: [], locations: [] }]);
-assert(bh.includes("Best matches for your profile") && bh.split("Closing soon").length === 2 && bh.includes('data-ai-label="a"') && bh.includes("All open grants"));
-assert.strictEqual(fund.bestHtml([]), "");
+const risky = { name: "G", fit: { verdict: "unlikely", blocker: "Needs a project costing <£100m> or more" } };
+const warned = f.paneHtml("draft", { status: "idle" }, { draft: 6 }, risky);
+assert(warned.includes("Unlikely to qualify") && warned.includes("&lt;£100m&gt;") && warned.includes("Run anyway: 6 credits"));
+assert(!f.paneHtml("eligibility", { status: "idle" }, { eligibility: 1 }, risky).includes("Unlikely to qualify"), "the free-ish eligibility check is never blocked");
+assert(!f.paneHtml("draft", { status: "idle" }, { draft: 6 }, { name: "G", fit: { verdict: "likely" } }).includes("Run anyway"));
+
+// Using a result: plain text for Copy and Download, the profile it was based on, and Save to Answer Bank for drafts
+const text = f.toText("draft", { sections: [{ heading: "Need", text: "We build software.\nIt helps councils.", gaps: ["Add turnover"] }], gaps: ["Bank details"] });
+assert.strictEqual(text, "## Need\nWe build software.\nIt helps councils.\nYou need to add:\n- Add turnover\n## Everything still missing\n- Bank details");
+const sum = f.toText("summary", { overview: "Short", funds: ["Kit", "Staff"], key_dates: [] });
+assert.strictEqual(sum, "## In short\nShort\n## What it funds\n- Kit\n- Staff", "empty sections are left out");
+assert(f.toText("eligibility", { verdict: "unlikely", headline: "Not for you", criteria: [{ criterion: "UK based", status: "met", evidence: "Reading" }] }).startsWith("Unlikely: Not for you\n## Each condition\n- Met: UK based (Reading)"));
+assert(f.toText("questions", { questions: [{ question: "Is match funding needed?" }] }).includes("- Is match funding needed?"));
+const doneSt = { status: "done", result: { sections: [] }, cached: true, savedAt: "2026-10-28T10:00", profile: { id: 3, name: "AIVHUB LTD" } };
+const shown = f.paneHtml("draft", doneSt, { draft: 6 }, { name: "G" });
+assert(shown.includes("Based on your profile <strong>AIVHUB LTD</strong>") && shown.includes('data-fai-act="copy"') && shown.includes('data-fai-act="docx"') && shown.includes('data-fai-act="bank"'));
+assert(!f.paneHtml("summary", { ...doneSt, profile: null }, { summary: 2 }, { name: "G" }).includes('data-fai-act="bank"'), "only a draft can be saved to the Answer Bank");
+assert(!f.paneHtml("summary", { ...doneSt, profile: null }, { summary: 2 }, { name: "G" }).includes("Based on your profile"));
+
+// Editing: the user's own text replaces the AI's until they go back; only prose tools can be edited; Attach is always offered
+const base = { status: "done", result: { sections: [{ heading: "Need", text: "We build.", gaps: [] }], gaps: [] }, cached: true, profile: { id: 1, name: "P" }, state: {} };
+const gg = { name: "G" };
+let pane = f.paneHtml("draft", base, { draft: 6 }, gg);
+assert(pane.includes('data-fai-act="edit"') && pane.includes('data-fai-act="attach"') && pane.includes("We build."));
+pane = f.paneHtml("draft", { ...base, editing: true }, { draft: 6 }, gg);
+assert(pane.includes('id="faiEditArea"') && pane.includes("## Need") && pane.includes("save-edit") && !pane.includes("reset-edit") && !pane.includes('data-fai-act="edit"'));
+const edited = { ...base, state: { edited: "## Need\nMy words <b>" } };
+pane = f.paneHtml("draft", edited, { draft: 6 }, gg);
+assert(pane.includes("Your edited version") && pane.includes("My words &lt;b&gt;") && pane.includes("show-ai") && !pane.includes("We build."));
+assert.strictEqual(f.editedOf(edited), "## Need\nMy words <b>");
+assert.strictEqual(f.editedOf({ ...edited, showAi: true }), "", "showing the AI version sets the edit aside");
+pane = f.paneHtml("draft", { ...edited, showAi: true }, { draft: 6 }, gg);
+assert(pane.includes("We build.") && pane.includes("show-mine"));
+assert(f.paneHtml("draft", { ...edited, editing: true }, { draft: 6 }, gg).includes("reset-edit"), "an edited text can be reset");
+assert(!f.paneHtml("questions", base, { questions: 2 }, gg).includes('data-fai-act="edit"'), "interactive tools are not edited as text");
 console.log("funding ai view ok");

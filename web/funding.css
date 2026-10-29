@@ -1,32 +1,63 @@
 /* Funding page: open government grants (funding.js) */
 #fundingModal .funding-page { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
-.funding-body { flex: 1 1 0; min-height: 0; overflow: auto; padding: 16px 24px 32px; }
-.funding-soon { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.funding-meta { margin: 0 0 12px; color: var(--muted, #5b6472); font-size: 14px; }
-.funding-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); }
+.funding-matching { display: flex; flex-direction: column; gap: 4px; margin-left: auto; margin-right: 12px; }
+.funding-matching__label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted, #5b6472); }
+.funding-matching select { min-width: 260px; max-width: 340px; }
+.funding-layout { flex: 1 1 0; min-height: 0; display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 24px; padding: 20px 24px 0; overflow: hidden; align-items: start; }
+.funding-side { background: var(--card, #fff); border: 1px solid var(--line, #dfe3ea); border-radius: 10px; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 8px; max-height: 100%; overflow: auto; }
+.funding-side__h { margin: 10px 0 0; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted, #5b6472); }
+.funding-side__h:first-child { margin-top: 0; }
+.funding-side__h--plain { text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 500; color: var(--ink, #1c2430); margin-top: 14px; }
+.funding-select { width: 100%; padding: 8px 10px; border: 1px solid var(--line, #cfd5de); border-radius: 8px; background: var(--card, #fff); color: inherit; font: inherit; font-size: 14px; }
+.funding-check { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
+.funding-clear { align-self: flex-start; border: 0; background: none; padding: 6px 0 0; font: inherit; font-size: 14px; color: var(--teal, #0f766e); cursor: pointer; }
+.funding-clear:hover { text-decoration: underline; }
+.funding-body { min-height: 0; max-height: 100%; overflow: auto; padding: 0 4px 32px 0; }
+.funding-toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+.funding-search { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--card, #fff); border: 1px solid var(--line, #cfd5de); border-radius: 8px; }
+#fundingModal .funding-search svg { position: static; width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; color: var(--muted, #5b6472); }
+#fundingModal .funding-search input { flex: 1 1 auto; min-width: 0; width: 100%; border: 0 !important; outline: 0; box-shadow: none !important; background: none !important; color: inherit; font: inherit; font-size: 14px; height: auto; padding: 9px 0 !important; border-radius: 0 !important; }
+.funding-sort { width: auto; flex: none; min-width: 200px; }
+.funding-meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+.funding-meta { color: var(--muted, #5b6472); font-size: 13.5px; }
+.funding-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.funding-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 3px 6px 3px 10px; border-radius: 999px; background: var(--teal-soft, #e4f0ef); color: var(--ink, #1c2430); border: 1px solid var(--line, #dfe3ea); }
+.funding-chip button { border: 0; background: none; cursor: pointer; font-size: 15px; line-height: 1; color: var(--muted, #5b6472); padding: 0 2px; }
+.funding-list { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
 .funding-list[aria-busy="true"] { opacity: 0.55; }
-.funding-card { background: var(--panel, #fff); border: 1px solid var(--line, #dfe3ea); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.funding-card { background: var(--card, #fff); border: 1px solid var(--line, #dfe3ea); border-radius: 10px; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 8px; min-height: 250px; }
 .funding-card__top { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
-.funding-card__name { margin: 0; font-size: 16px; line-height: 1.3; }
-.funding-card__award { white-space: nowrap; font-weight: 600; font-size: 14px; }
-.funding-card__funder { color: var(--muted, #5b6472); font-size: 13px; }
+.funding-card__name { margin: 0; font-size: 15.5px; line-height: 1.25; font-weight: 700; }
+.funding-card__award { white-space: nowrap; font-weight: 500; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.funding-card__funder { color: var(--muted, #5b6472); font-size: 12.5px; }
 .funding-card__tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.funding-tag, .funding-fit { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--paper, #f3f5f8); border: 1px solid var(--line, #dfe3ea); }
-.funding-tag--open { background: #e6f4ea; border-color: #b7dcc2; color: #1e6b3a; }
+.funding-tag, .funding-fit { font-size: 11.5px; padding: 2px 9px; border-radius: 999px; background: var(--card, #fff); border: 1px solid var(--line, #dfe3ea); color: var(--ink, #1c2430); }
 .funding-tag--soon { background: #fdecea; border-color: #f2b8b5; color: #a12622; }
-.funding-fit--high { background: #e6f4ea; border-color: #b7dcc2; color: #1e6b3a; }
-.funding-fit--mid { background: #fff4d6; border-color: #ecd27f; color: #7a5a00; }
-.funding-card__summary { margin: 0; font-size: 14px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-.funding-card__facts { margin: 0; display: grid; gap: 4px; font-size: 13px; }
-.funding-card__facts div { display: flex; gap: 8px; }
-.funding-card__facts dt { color: var(--muted, #5b6472); min-width: 96px; }
-.funding-card__facts dd { margin: 0; }
-.funding-card__actions { display: flex; align-items: center; gap: 14px; margin-top: auto; padding-top: 4px; }
+.funding-fit { font-weight: 600; }
+.funding-fit--likely { background: #e6f4ea; border-color: #b7dcc2; color: #1e6b3a; }
+.funding-fit--check { background: #fff4d6; border-color: #ecd27f; color: #7a5a00; }
+.funding-fit--unlikely { background: #fdecea; border-color: #f2b8b5; color: #a12622; }
+.funding-card__line { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--muted, #5b6472); }
+.funding-card__line strong { color: var(--ink, #1c2430); font-weight: 700; }
+.funding-card__actions { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 10px; }
+.funding-btn { border: 1px solid var(--line, #cfd5de); background: var(--card, #fff); color: inherit; font: inherit; font-size: 13.5px; font-weight: 600; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
+.funding-btn:hover { border-color: var(--teal, #0f766e); }
+.funding-btn:disabled { opacity: .5; cursor: default; }
+.funding-btn--primary { background: var(--teal, #0f766e); border-color: var(--teal, #0f766e); color: #fff; }
+.funding-btn--primary:hover { filter: brightness(1.08); }
+.funding-btn.is-saved { background: var(--teal-soft, #e4f0ef); border-color: var(--teal, #0f766e); color: var(--teal, #0f766e); }
 .funding-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; }
-.funding-attribution { margin: 20px 0 0; font-size: 12px; color: var(--muted, #5b6472); max-width: 760px; }
+.funding-attribution { margin: 20px 0 0; font-size: 12px; color: var(--muted, #5b6472); max-width: 760px; line-height: 1.55; }
+@media (max-width: 900px) {
+  .funding-layout { grid-template-columns: 1fr; grid-auto-rows: max-content; align-content: start; overflow: auto; padding: 12px 16px 0; gap: 16px; }
+  .funding-side { max-height: none; overflow: visible; }
+  .funding-body { overflow: visible; max-height: none; }
+  .funding-matching { margin: 8px 0 0; width: 100%; }
+  .funding-matching select { min-width: 0; max-width: none; width: 100%; }
+}
 @media (max-width: 640px) {
-  .funding-body { padding: 12px 16px 28px; }
-  .funding-card__top { flex-direction: column; gap: 4px; }
+  .funding-toolbar { flex-wrap: wrap; }
+  .funding-sort { width: 100%; }
 }
 
 /* AI tools for one grant (funding-ai.js) */
@@ -59,12 +90,6 @@
 .fai-draft { white-space: normal; line-height: 1.55; padding: 10px 12px; background: var(--paper, #f6f7f9); border-radius: 8px; }
 .fai-gaps { margin-top: 6px; font-size: 13px; color: #93370d; }
 @media (max-width: 600px) { .fai-body { padding: 12px 16px 24px; } .fai-tabs { padding: 8px 12px 0; } }
-
-/* Best matches strip (funding.js) */
-.funding-best__title { margin: 4px 0 10px; font-size: 15px; }
-.funding-best__title--all { margin-top: 22px; }
-.funding-card--best { border-color: var(--teal, #0f766e); position: relative; }
-.funding-flag { position: absolute; top: -9px; right: 12px; background: #fef0c7; color: #93370d; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
 
 /* Questions, budget and evidence tabs (funding-ai.js) */
 .fai-qs, .fai-evs { list-style: none; margin: 0; padding: 0; }
@@ -106,3 +131,60 @@
 .pl-facts { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin: 10px 0; }
 .pl-facts > div { background: var(--paper, #f6f7f9); border-radius: 8px; padding: 8px 12px; }
 .pl-steps { padding-left: 20px; } .pl-steps li { margin: 8px 0; }
+
+/* Warning before a paid AI run on a grant the free check rates unlikely (funding-ai.js) */
+.fai-warn { margin: 0 0 14px; padding: 10px 12px; border-radius: 8px; background: #fdecea; border: 1px solid #f2b8b5; color: #7a1b17; font-size: 13.5px; line-height: 1.45; max-width: 60ch; }
+
+/* Empty state, detail drawer (funding.js) */
+.funding-empty { background: var(--card, #fff); border: 1px dashed var(--line, #cfd5de); border-radius: 10px; padding: 24px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.funding-empty__t { margin: 0; font-weight: 600; }
+.funding-empty__s { margin: 0; font-size: 13px; color: var(--muted, #5b6472); }
+.funding-empty__b { display: flex; flex-wrap: wrap; gap: 8px; }
+.funding-drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(520px, 100%); z-index: 20; background: var(--card, #fff); border-left: 1px solid var(--line, #dfe3ea); box-shadow: -8px 0 24px rgba(12, 29, 48, .12); display: flex; flex-direction: column; outline: none; }
+.funding-drawer.hidden { display: none; }
+#fundingModal .funding-page { position: relative; }
+.funding-drawer__head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; padding: 18px 20px 12px; border-bottom: 1px solid var(--line, #dfe3ea); }
+.funding-drawer__head h2 { margin: 0 0 4px; font-size: 18px; line-height: 1.25; outline: none; }
+.funding-drawer__body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 20px 20px; font-size: 14px; line-height: 1.55; display: flex; flex-direction: column; gap: 10px; }
+.funding-drawer__body h3 { margin: 10px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted, #5b6472); }
+.funding-drawer__body p { margin: 0 0 6px; }
+.funding-drawer__foot { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line, #dfe3ea); }
+.funding-drawer__foot a { text-decoration: none; display: inline-flex; align-items: center; }
+.funding-facts { margin: 4px 0; display: grid; gap: 6px; font-size: 13.5px; }
+.funding-facts div { display: grid; grid-template-columns: 110px 1fr; gap: 8px; }
+.funding-facts dt { color: var(--muted, #5b6472); }
+.funding-facts dd { margin: 0; }
+@media (max-width: 640px) { .funding-drawer { width: 100%; } }
+
+/* Copy / download / save actions under an AI result (funding-ai.js) */
+.fai-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; }
+
+/* Editing an AI result (funding-ai.js) */
+.fai-editor { display: flex; flex-direction: column; gap: 8px; }
+.fai-editor__area { width: 100%; min-height: 260px; font-family: inherit; line-height: 1.5; resize: vertical; box-sizing: border-box; }
+.fai-edited { padding: 10px 14px; border-radius: 8px; background: var(--paper, #f6f7f9); }
+.fai-edited p { margin: 0 0 8px; }
+.fai-edited__h { margin: 12px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted, #5b6472); }
+.fai-edited__li { padding-left: 4px; }
+.fai-link { border: 0; background: none; padding: 0; font: inherit; color: var(--teal, #0f766e); cursor: pointer; text-decoration: underline; }
+
+/* Weekly email switch (Funding sidebar) and the Pipeline Grants board (grants-board.js) */
+.funding-weekly { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line, #dfe3ea); }
+.funding-weekly__note { margin: 0; font-size: 12px; line-height: 1.45; color: var(--muted, #5b6472); }
+.gb-chip { font-size: 11.5px; padding: 2px 9px; border-radius: 999px; background: var(--card, #fff); border: 1px solid var(--line, #dfe3ea); }
+.gb-chip--soon { background: #fdecea; border-color: #f2b8b5; color: #a12622; }
+.gb-chip--off { background: #eef0f3; color: #4a5c70; }
+.gb-notes { width: 100%; box-sizing: border-box; margin: 6px 0; padding: 6px 8px; border: 1px solid var(--line, #cfd5de); border-radius: 6px; font: inherit; font-size: 12.5px; background: var(--card, #fff); color: inherit; resize: vertical; }
+.gb-remind { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 6px; color: var(--muted, #5b6472); }
+
+/* Filters sheet on small screens (funding.js) */
+.funding-filters-toggle { display: none; }
+@media (max-width: 640px) {
+  .funding-filters-toggle { display: inline-flex; justify-content: center; width: 100%; }
+  .funding-side { display: none; }
+  .funding-side.is-open { display: flex; }
+  .funding-layout { gap: 10px; }
+}
+
+/* The Run buttons in the AI dialog: white text on the app's yellow accent was unreadable (contrast 1.5); dark ink on it reads at about 12 */
+body.tf-shell #fundingAiModal .btn--primary, body.tf-shell #policyLibModal .btn--primary { color: var(--ink, #0c1d30) !important; font-weight: 700; }

@@ -3159,6 +3159,12 @@ def start_email_scheduler():
                 send_empty_pipeline_recommendation_emails()
             except Exception as e:
                 print(f"[Email Scheduler] Unhandled error: {e}")
+            try:  # saved-grant deadline reminders, and the weekly grants email for users who switched it on
+                from tender_app import funding_track
+                funding_track.send_reminders(get_db_connection, _send_smtp_email)
+                funding_track.run_digest(get_db_connection, _send_smtp_email)
+            except Exception as e:
+                print(f"[Funding] reminder/digest error: {e}")
             if os.getenv("DEEP_WATCH_ENABLED", "1") == "1":
                 try:
                     deep_watch_scan()
@@ -3992,7 +3998,7 @@ def create_app() -> Flask:
             "/api/auth/forgot-password",
             # Linked from emails and opened (or POSTed by mail clients' one-click unsubscribe)
             # without a session; the handlers do their own checks.
-            "/api/alerts/preference", "/api/alerts/feedback",
+            "/api/alerts/preference", "/api/alerts/feedback", "/api/funding/alerts/unsubscribe",
             "/api/health", "/api/config/public", "/api/stripe/webhook",
             "/api/billing/catalog", "/translations.js", "/api/auth/bypass",
             "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png",
@@ -4061,6 +4067,12 @@ def create_app() -> Flask:
         return app.send_static_file("index.html")
 
 
+
+    @app.get("/funding")
+    @app.get("/funding/<path:grant>")
+    def funding_page(grant=""):
+        # The Funding section has its own address (/funding?where=Scotland, /funding/<grant>); the page reads it when it loads.
+        return app.send_static_file("index.html")
 
     @app.get("/pricing.html")
     def pricing_page():

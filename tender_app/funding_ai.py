@@ -75,9 +75,23 @@ _SYSTEM = (
 )
 
 
-def build_prompt(kind: str, grant: str, company_name: str, company: str, answers: str = "") -> tuple[str, str]:
-    """(system, user) for one tool."""
+def fit_note(fit: dict | None) -> str:
+    """The free rule-based eligibility check as a line for the prompt, so the AI says what is already known instead of
+    writing around it. Empty when the check found nothing against the company."""
+    fit = fit or {}
+    if fit.get("verdict") == "unlikely" and fit.get("blocker"):
+        return ("RULE-BASED CHECK OF THE COMPANY'S PROFILE FIELDS: unlikely to qualify. Blocker: " + str(fit["blocker"]) +
+                ". Say this plainly and early (for example 'you may not qualify because...'). Never invent facts to get past it.\n")
+    if fit.get("verdict") == "check" and fit.get("check"):
+        return "RULE-BASED CHECK OF THE COMPANY'S PROFILE FIELDS: to confirm. " + str(fit["check"]) + ".\n"
+    return ""
+
+
+def build_prompt(kind: str, grant: str, company_name: str, company: str, answers: str = "", fit: dict | None = None) -> tuple[str, str]:
+    """(system, user) for one tool. `fit` is the rule-based check (funding_fit.assess) for this company, when known."""
     head = f"GRANT:\n{grant}\n\nCOMPANY ({company_name or 'none chosen'}):\n{company or 'No company profile given.'}\n"
+    if kind in ("eligibility", "draft", "analysis"):
+        head += "\n" + fit_note(fit)
     if kind == "eligibility":
         task = (
             "Check whether this company can apply. Compare each eligibility condition of the grant with what the company text shows.\n"
