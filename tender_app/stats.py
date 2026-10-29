@@ -16,6 +16,7 @@ tables empty falls back to the original slow path; the next one is fast.
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 from datetime import datetime
@@ -42,6 +43,7 @@ _LISTABLE_SQL = r"""(
     AND s.name !~* '(please see|please refer)'
     AND s.name !~* '^(as per|information withheld|awarded supplier details|confidential information|confidential / sensitive)'
     AND s.name !~* 'commercially confidential'
+    AND s.name !~* '^(failed tender|tender (abandoned|withdrawn|cancelled|failed)|no award|not awarded|cancelled|abandoned|no (suitable )?bids?)'
     AND TRIM(s.name) !~* '^various$'
     AND s.name !~* '\ynhs\b.*?\b(foundation\s+trust|trust|ft|icb|board)\y'
     AND s.name !~* '\ynhs\s+[a-z &'',]{0,40}(foundation\s+trust|trust|ft|icb)\y'
@@ -65,6 +67,15 @@ _LISTABLE_SQL = r"""(
         )
     )
 )"""
+# A public body that is published as a supplier ("NHS England", "University Of Exeter"): its name has no company suffix, it is a
+# buyer with plenty of contracts and suppliers of its own, and it is that far more often than it is a winner. It belongs in Buyer
+# intelligence, so it is left out of the supplier list (a legal entity such as "JISC Services Limited" stays).
+_BUYER_LIKE_SQL = rf"""(
+    s.name !~* '\y(ltd|limited|plc|llp|llc|inc|cic|corp|co|gmbh)\.?$'
+    AND EXISTS (SELECT 1 FROM buyer_stats b WHERE b.authority_key = {_norm_auth_sql('s.name')}
+                AND b.total_contracts >= 20 AND b.unique_suppliers >= 10 AND b.total_contracts > 3 * COALESCE(g.total_awards, 0))
+)"""
+
 _VALID_COMPANY_NUMBER_SQL = """(
     s.company_number IS NOT NULL AND s.company_number != ''
     AND s.company_number NOT IN ('Not available', 'Procurem', '—', '-', 'None')
@@ -76,6 +87,59 @@ _REAL_COORD_SQL = (
 )
 
 TABLES = ("supplier_stats", "buyer_stats")
+
+# The de-duplicated, value-corrected awards (etenders_scraper.awards.deduped_awards_cte_sql) kept as a table. Computing that
+# CTE costs ~15 s because it sorts and windows every award, and it used to run for every supplier search and profile; as a
+# table (rebuilt with the stats below) a search reads a few thousand rows in about a second, and the list, the profile and
+# the stats all read the same rows, so their numbers cannot differ.
+AWARD_VALUES_TABLE = "award_values"
+_AWARD_VALUES_INDEXES = (("supplier_id", "supplier_id"), ("company_number", "company_number"), ("date_signed", "date_signed"), ("auth_key", "auth_key"))
+_MATERIALISED_CTE = f"deduped_awards AS (SELECT * FROM {AWARD_VALUES_TABLE})"
+
+
+def award_values_ready(cursor) -> bool:
+    try:
+        cursor.execute(f"SELECT to_regclass('public.{AWARD_VALUES_TABLE}') IS NOT NULL")
+        return bool(cursor.fetchone()[0])
+    except Exception:
+        cursor.connection.rollback()
+        return False
+
+
+def deduped_cte(cursor, live_sql: str = DEDUPED_AWARDS_CTE_SQL) -> str:
+    """The `deduped_awards` CTE: the table when it has been built, else the live (slow) computation."""
+    return _MATERIALISED_CTE if award_values_ready(cursor) else live_sql
+
+
+def refresh_award_values(conn) -> int:
+    """Rebuild the award_values table from the live CTE and swap it in. Readers keep the old table until the swap."""
+    cur = conn.cursor()
+    cur.execute(f"DROP TABLE IF EXISTS {AWARD_VALUES_TABLE}_new")
+    cur.execute(f"CREATE TABLE {AWARD_VALUES_TABLE}_new AS WITH {DEDUPED_AWARDS_CTE_SQL} SELECT d.*, CURRENT_TIMESTAMP AS refreshed_at FROM deduped_awards d")
+    for name, column in _AWARD_VALUES_INDEXES:
+        cur.execute(f"CREATE INDEX idx_{AWARD_VALUES_TABLE}_{name}_new ON {AWARD_VALUES_TABLE}_new ({column})")
+    cur.execute(f"ANALYZE {AWARD_VALUES_TABLE}_new")
+    cur.execute(f"SELECT COUNT(*) FROM {AWARD_VALUES_TABLE}_new")
+    rows = cur.fetchone()[0]
+    cur.execute(f"DROP TABLE IF EXISTS {AWARD_VALUES_TABLE}")
+    cur.execute(f"ALTER TABLE {AWARD_VALUES_TABLE}_new RENAME TO {AWARD_VALUES_TABLE}")
+    for name, _ in _AWARD_VALUES_INDEXES:
+        cur.execute(f"ALTER INDEX idx_{AWARD_VALUES_TABLE}_{name}_new RENAME TO idx_{AWARD_VALUES_TABLE}_{name}")
+    conn.commit()
+    return rows
+
+
+# The name key tender_app.entity_merge.entity_name_key computes in Python, as SQL: case, punctuation, "&"/"and" and legal-form
+# words ignored. Stored on supplier_stats so every record of one company can be found whatever the search was, which is what
+# keeps a merged card's totals the same for "Capita" and "Capita plc". (\y is Postgres's word boundary.)
+ENTITY_KEY_SQL = (
+    r"""REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE("""
+    r"""REPLACE(UPPER(REPLACE(TRIM({col}), '&', ' AND ')), 'UNITED KINGDOM', 'UK'), '^LOT\s*[0-9]+\s*\([^)]*\)\s*:\s*', '', 'g'), """
+    r"""'\(\s*(APPOINTED TO )?LOTS?\s*[0-9A-Z ,&/-]*\)', '', 'g'), """
+    r"""'\(\s*(T/A|TRADING AS)[^)]*\)| (T/A|TRADING AS) .*$', '', 'g'), """
+    r"""'[^A-Z0-9]+', ' ', 'g'), """
+    r"""'\y(LTD|LIMITED|PLC|LLP|LLC|INC|CORP|CO)\y', ' ', 'g'), '\yAND\y|\s+', '', 'g')"""
+)
 
 
 def ensure_stats_tables(cursor) -> None:
@@ -92,6 +156,23 @@ def ensure_stats_tables(cursor) -> None:
             refreshed_at                 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    cursor.execute("ALTER TABLE supplier_stats ADD COLUMN IF NOT EXISTS entity_key TEXT")
+    cursor.execute("ALTER TABLE supplier_stats ADD COLUMN IF NOT EXISTS region_norm TEXT")        # one of tender_app.regions.REGIONS, or "UK"
+    cursor.execute("ALTER TABLE supplier_stats ADD COLUMN IF NOT EXISTS brand_key TEXT")          # leading name shared by related records
+    cursor.execute("ALTER TABLE supplier_stats ADD COLUMN IF NOT EXISTS group_large BOOLEAN NOT NULL DEFAULT FALSE")  # part of a plc: not an SME
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_supplier_stats_region ON supplier_stats (region_norm)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_supplier_stats_brand ON supplier_stats (brand_key) WHERE brand_key <> ''")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_supplier_stats_entity ON supplier_stats (entity_key) WHERE entity_key <> ''")
+    # Typo-tolerant search ("sercco" finds Serco) needs trigram matching. A database that does not allow the extension just
+    # goes without "did you mean"; the savepoint keeps that failure from undoing the DDL above.
+    cursor.execute("SAVEPOINT trgm")
+    try:
+        cursor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_awards_supname_trgm ON contract_awards USING gin (LOWER(supplier_name) gin_trgm_ops)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_supplier_stats_entity_trgm ON supplier_stats USING gin (entity_key gin_trgm_ops)")
+        cursor.execute("RELEASE SAVEPOINT trgm")
+    except Exception:
+        cursor.execute("ROLLBACK TO SAVEPOINT trgm")
     # The default list: real suppliers ranked by value, then awards.
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_supplier_stats_rank
@@ -120,7 +201,7 @@ def ensure_stats_tables(cursor) -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_buyer_stats_spend ON buyer_stats (total_spend DESC)")
 
 
-def refresh_supplier_stats(conn) -> int:
+def refresh_supplier_stats(conn, from_table: bool = False) -> int:
     """Recompute supplier_stats. Awards reach a supplier by supplier_id or by company number.
 
     The old query expressed that as `s.id = a.supplier_id OR s.company_number = a.company_number`,
@@ -128,7 +209,7 @@ def refresh_supplier_stats(conn) -> int:
     """
     cur = conn.cursor()
     cur.execute(f"""
-        WITH {DEDUPED_AWARDS_CTE_SQL},
+        WITH {deduped_cte(cur) if from_table else DEDUPED_AWARDS_CTE_SQL},
         links AS (
             SELECT a.supplier_id AS sid, a.id AS aid, a.contract_value, a.is_framework, a.date_signed
             FROM deduped_awards a
@@ -153,12 +234,13 @@ def refresh_supplier_stats(conn) -> int:
         )
         INSERT INTO supplier_stats
             (supplier_id, listable, total_awards, total_value, avg_value,
-             framework_total_ceiling, framework_appointments_count, latest_award_date, refreshed_at)
-        SELECT s.id, {_LISTABLE_SQL},
+             framework_total_ceiling, framework_appointments_count, latest_award_date, refreshed_at, entity_key)
+        SELECT s.id, ({_LISTABLE_SQL} AND NOT {_BUYER_LIKE_SQL}),
                COALESCE(g.total_awards, 0), COALESCE(g.total_value, 0), COALESCE(g.avg_value, 0),
-               COALESCE(g.fw_ceiling, 0), COALESCE(g.fw_count, 0), g.latest, CURRENT_TIMESTAMP
+               COALESCE(g.fw_ceiling, 0), COALESCE(g.fw_count, 0), g.latest, CURRENT_TIMESTAMP,
+               {ENTITY_KEY_SQL.format(col='s.name')}
         FROM suppliers s LEFT JOIN agg g ON g.sid = s.id
-        ON CONFLICT (supplier_id) DO UPDATE SET
+        ON CONFLICT (supplier_id) DO UPDATE SET entity_key = EXCLUDED.entity_key,
             listable = EXCLUDED.listable, total_awards = EXCLUDED.total_awards, total_value = EXCLUDED.total_value,
             avg_value = EXCLUDED.avg_value, framework_total_ceiling = EXCLUDED.framework_total_ceiling,
             framework_appointments_count = EXCLUDED.framework_appointments_count,
@@ -171,12 +253,46 @@ def refresh_supplier_stats(conn) -> int:
     return n
 
 
-def refresh_buyer_stats(conn) -> int:
+def _large_name_regex():
+    """Whole-word match on the known large enterprises. is_known_large_enterprise matches substrings, so "ey" and "sap" would
+    flag "Honey Ltd" and "Sapphire Ltd"; a flag that spreads to every record of a name must not do that."""
+    from tender_app.supplier_classifier import KNOWN_LARGE_ENTERPRISES
+
+    words = sorted({w for w in KNOWN_LARGE_ENTERPRISES if len(w) >= 4 or w == "ibm"}, key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(re.escape(w) for w in words) + r")\b|\bplc\b", re.I)
+
+
+def refresh_supplier_attributes(conn) -> int:
+    """Region (one ITL1 name), the leading-name key that relates records, and whether a record belongs to a plc group.
+
+    Done in Python because the region and name rules live there (tender_app.regions), then written back in batches."""
+    from psycopg2.extras import execute_values
+
+    from tender_app.regions import brand_key, itl1_region
+
+    cur = conn.cursor()
+    cur.execute("SELECT s.id, s.name, s.region, s.address FROM suppliers s JOIN supplier_stats st ON st.supplier_id = s.id")
+    large = _large_name_regex()
+    rows = cur.fetchall()
+    data = [(sid, itl1_region(region, address), brand_key(name)) for sid, name, region, address in rows]
+    large_brands = sorted({b for (_sid, _region, b), (_i, name, _r, _a) in zip(data, rows) if b and large.search(name or "")})
+    execute_values(
+        cur,
+        "UPDATE supplier_stats st SET region_norm = v.region, brand_key = v.brand FROM (VALUES %s) AS v(id, region, brand) WHERE st.supplier_id = v.id",
+        data, page_size=5000)
+    # A record that shares its leading name with a plc or a known large enterprise ("Bunzl T/A Greenham Ltd" next to "Bunzl UK Ltd")
+    # is part of a large group, not an SME.
+    cur.execute("UPDATE supplier_stats SET group_large = (brand_key = ANY(%s))", (large_brands,))
+    conn.commit()
+    return len(data)
+
+
+def refresh_buyer_stats(conn, from_table: bool = False) -> int:
     """Recompute buyer_stats, grouped by the same normalised name the buyer pages group by."""
     today = datetime.now().strftime("%Y-%m-%d")
     cur = conn.cursor()
     cur.execute(f"""
-        WITH {DEDUPED_AWARDS_CTE_SQL}
+        WITH {deduped_cte(cur) if from_table else DEDUPED_AWARDS_CTE_SQL}
         INSERT INTO buyer_stats
             (authority_key, authority_name, buyer_type, total_contracts, total_spend, total_spend_all,
              unique_suppliers, next_renewal_date, latest_award_date, max_renewal_date,
@@ -236,10 +352,14 @@ def refresh_all(get_connection: Callable[[], Any]) -> dict[str, float | int]:
         ensure_stats_tables(cur)
         conn.commit()
         t0 = time.time()
-        out["suppliers"] = refresh_supplier_stats(conn)
+        out["award_values"] = refresh_award_values(conn)
+        out["award_values_seconds"] = round(time.time() - t0, 1)
+        t0 = time.time()
+        out["suppliers"] = refresh_supplier_stats(conn, from_table=True)
+        out["attributes"] = refresh_supplier_attributes(conn)
         out["supplier_seconds"] = round(time.time() - t0, 1)
         t0 = time.time()
-        out["buyers"] = refresh_buyer_stats(conn)
+        out["buyers"] = refresh_buyer_stats(conn, from_table=True)
         out["buyer_seconds"] = round(time.time() - t0, 1)
     finally:
         conn.close()
@@ -286,7 +406,11 @@ def ensure_fresh_async(get_connection: Callable[[], Any], cursor=None) -> None:
                 age = age_seconds(cur, t)
                 if age is None or age > STATS_TTL_S:
                     return True
-            return False
+            if not award_values_ready(cur):  # first start after this table was introduced: build it now, not in up to 6 hours
+                return True
+            # rows written before entity_key existed, or with the first version of it (lot suffixes not yet removed)
+            cur.execute("SELECT EXISTS (SELECT 1 FROM supplier_stats WHERE entity_key IS NULL OR region_norm IS NULL OR entity_key LIKE '%APPOINTEDTOLOT%' LIMIT 1)")
+            return bool(cur.fetchone()[0])
         finally:
             conn.close()
 

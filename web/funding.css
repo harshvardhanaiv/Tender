@@ -188,3 +188,9 @@
 
 /* The Run buttons in the AI dialog: white text on the app's yellow accent was unreadable (contrast 1.5); dark ink on it reads at about 12 */
 body.tf-shell #fundingAiModal .btn--primary, body.tf-shell #policyLibModal .btn--primary { color: var(--ink, #0c1d30) !important; font-weight: 700; }
+
+/* Supplier Intelligence: hints under the list, text filters (app.js) */
+.supplier-hints { padding: 8px 12px; border-bottom: 1px solid var(--border, #e2e8f0); background: var(--surface-2, #f8fafc); font-size: 12px; line-height: 1.5; }
+.supplier-hint + .supplier-hint { margin-top: 4px; }
+.supplier-hint__n { color: var(--muted, #64748b); font-size: 11px; }
+.tf-chip--input { min-width: 130px; max-width: 170px; cursor: text; }

@@ -1280,6 +1280,19 @@ def fetch_award_rows(
     cat_sql, cat_params = category_where(cat)
     auth_sql, auth_params = authority_where(authority)
     scope_sql = "AND COALESCE(a.is_framework, 0) = 0" if scope == "direct" else ""
+    # Call-offs published with their framework's value (etenders_scraper.awards.CEILING_COPY_SQL) have no value of their own.
+    # The flag is worked out over all awards and kept in award_values, so a category filter cannot split a group of copies.
+    try:  # a second cursor, so the main one still runs exactly the one statement
+        probe = cursor.connection.cursor()
+        probe.execute("SELECT to_regclass('public.award_values') IS NOT NULL")
+        has_award_values = bool(probe.fetchone()[0])
+        probe.close()
+    except Exception:  # noqa: BLE001 - no table, or not a real connection: leave the values as they are
+        has_award_values = False
+    if has_award_values:
+        ceiling_join, ceiling_flag = "LEFT JOIN award_values av ON av.id = x.id", "COALESCE(av.ceiling_copy, FALSE)"
+    else:
+        ceiling_join, ceiling_flag = "", "FALSE"
     sql = f"""
         WITH cat AS (
             SELECT {_AWARD_COLUMNS}
@@ -1301,9 +1314,10 @@ def fetch_award_rows(
             -- a notice that names several suppliers carries one value on every row: count it once between them
             -- (the same rule as DEDUPED_AWARDS_CTE_SQL, so Market Radar agrees with Buyer and Supplier Intelligence)
             SELECT {_RADAR_COLUMNS_NO_VALUE},
-                   CASE WHEN x.shared_n > 1 THEN x.contract_value / x.shared_n ELSE x.contract_value END AS contract_value,
-                   x.contract_value AS contract_value_notice, x.shared_n
+                   CASE WHEN {ceiling_flag} THEN NULL WHEN x.shared_n > 1 THEN x.contract_value / x.shared_n ELSE x.contract_value END AS contract_value,
+                   x.contract_value AS contract_value_notice, x.shared_n, {ceiling_flag} AS ceiling_copy
             FROM (SELECT d.*, {SHARED_VALUE_N_SQL} AS shared_n FROM d0 d) x
+            {ceiling_join}
         )
         SELECT d.*, s.name AS supplier_display, s.company_number AS supplier_cnum,
                COALESCE(ss.listable, TRUE) AS listable

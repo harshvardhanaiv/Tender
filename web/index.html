@@ -33,7 +33,7 @@
   <link rel="stylesheet" href="/mobile.css?v=4" />
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=19" />
-  <link rel="stylesheet" href="/funding.css?v=18" />
+  <link rel="stylesheet" href="/funding.css?v=20" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
   <script src="/translations.js?v=6"></script>
@@ -2322,9 +2322,9 @@
         <div class="profile-header__left">
           <div class="profile-header__title-row">
             <h2 class="profile-header__title" id="supplierIntelTitle">Supplier Intelligence</h2>
-            <span class="profile-header__scope">UK &amp; IE public sector</span>
+            <span class="profile-header__scope" id="lblSupplierScope" title="Where the awards come from: England and UK-wide notices in full; Scotland and Wales in part; Northern Ireland and Ireland name no winners on their portals">England and UK-wide public sector</span>
           </div>
-          <span class="profile-header__sub">Past winners and award histories for <strong id="lblSupplierCount">250</strong> suppliers from Contracts Finder and Find a Tender <span id="lblSupplierLastSync">(last sync: loading...)</span></span>
+          <span class="profile-header__sub">Past winners and award histories for <strong id="lblSupplierCount">—</strong> suppliers. <span id="lblSupplierCoverage">Awards from Contracts Finder and Find a Tender.</span> <span id="lblSupplierLastSync">(last sync: loading...)</span></span>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
           <button type="button" id="btnSyncContractsFinder" class="btn btn--secondary btn--small" onclick="window.syncContractsFinderAwards &amp;&amp; window.syncContractsFinderAwards()" title="Fetch the latest contract awards from Contracts Finder and Find a Tender"><span id="syncContractsFinderIcon" aria-hidden="true">↻</span> Sync more awards</button>
@@ -2368,6 +2368,27 @@
         </select>
         <button type="button" id="btnFilterSmeOnly" class="tf-chip" title="Small and medium enterprise (SME): fewer than 250 employees and turnover up to €50M or balance sheet up to €43M">SME only</button>
         <button type="button" id="btnFilterVcseOnly" class="tf-chip" title="Voluntary, community and social enterprise (VCSE): charities, social enterprises and community interest groups">VCSE only</button>
+        <select id="selSupplierSort" class="tf-chip tf-chip--select" aria-label="Sort suppliers">
+          <option value="value">Sort: value won</option>
+          <option value="wins">Sort: contracts won</option>
+          <option value="recent">Sort: latest award</option>
+          <option value="name">Sort: name A-Z</option>
+        </select>
+        <select id="selSupplierRegion" class="tf-chip tf-chip--select" aria-label="Supplier region">
+          <option value="">Any region</option>
+          <option>North East</option><option>North West</option><option>Yorkshire and The Humber</option><option>East Midlands</option>
+          <option>West Midlands</option><option>East of England</option><option>London</option><option>South East</option>
+          <option>South West</option><option>Scotland</option><option>Wales</option><option>Northern Ireland</option><option>Ireland</option>
+        </select>
+        <select id="selSupplierValue" class="tf-chip tf-chip--select" aria-label="Value won">
+          <option value="">Any value won</option>
+          <option value="0-1000000">Under £1m</option>
+          <option value="1000000-10000000">£1m to £10m</option>
+          <option value="10000000-100000000">£10m to £100m</option>
+          <option value="100000000-">£100m or more</option>
+        </select>
+        <input type="text" id="txtSupplierBuyer" class="tf-chip tf-chip--input" placeholder="Won from (buyer)" aria-label="Won from this buyer" autocomplete="off" />
+        <input type="text" id="txtSupplierCpv" class="tf-chip tf-chip--input" placeholder="CPV code" aria-label="CPV code starts with" autocomplete="off" inputmode="numeric" />
 
         <div class="tf-chip-wrap">
           <button type="button" id="chipSupplierDistance" class="tf-chip" aria-haspopup="dialog" aria-expanded="false" aria-controls="popSupplierDistance"><span class="tf-chip__text">Any distance</span><span class="tf-chip__car" aria-hidden="true">▾</span></button>
@@ -2448,6 +2469,7 @@
                 <div class="supplier-list-head">
                   <span id="lblSupplierResultsCount"></span>
                 </div>
+                <div id="supplierSearchHints" class="supplier-hints hidden"></div>
                 <div id="supplierListContainer" class="supplier-list-body">
                   <!-- Rendered dynamically by JS -->
                 </div>
@@ -3384,7 +3406,7 @@
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=1"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=244"></script>
+  <script src="/app.js?v=248"></script>
   <script src="/planning.js?v=18"></script>
   <script src="/funding.js?v=8"></script>
   <script src="/grants-board.js?v=1"></script>

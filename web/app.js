@@ -18925,8 +18925,14 @@ function initProfile() {
   initSupplierIntelligenceEvents();
   initBuyerIntelligenceEvents();
 
-  // Handle escape key
+  // Handle escape key. Escape closes an open filter box (distance, dates) and nothing else: whether one was open is read before
+  // the filter code closes it, otherwise the same keypress would also close the whole page.
+  let _escapeHadPopover = false;
   document.addEventListener("keydown", e => {
+    if (e.key === "Escape") _escapeHadPopover = !!document.querySelector(".tf-popover:not(.hidden)");
+  }, true);
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && _escapeHadPopover) { _escapeHadPopover = false; return; }
     if (e.key === "Escape") {
       if (!$("supplierIntelligenceModal")?.classList.contains("hidden")) {
         closeSupplierIntelligenceModal();
@@ -19216,11 +19222,12 @@ function openSupplierIntelligenceModal(initialQuery = "", options = {}) {
   } catch (_) {}
   const txtSearch = $("txtSupplierSearch");
   const queryStr = (typeof initialQuery === "string") ? initialQuery.trim() : "";
-  if (txtSearch) {
+  // Coming back to the page without a new search keeps the text that was typed, as it keeps the filters.
+  if (txtSearch && (queryStr || options.reset)) {
     txtSearch.value = queryStr;
   }
   updateSupplierScraperStatus();
-  fetchAndRenderSuppliersList(queryStr, options);
+  fetchAndRenderSuppliersList(queryStr || (txtSearch ? txtSearch.value.trim() : ""), options);
 }
 
 function openSupplierIntelligenceForTender(supplierOrAuthName, tenderTitle, isAuthoritySearch = false) {
@@ -19261,6 +19268,16 @@ async function updateSupplierScraperStatus() {
     if (countEl) {
       const totalSuppliers = Number(data.total_suppliers);
       countEl.textContent = Number.isFinite(totalSuppliers) ? totalSuppliers.toLocaleString() : "—";
+    }
+
+    // Coverage, from what is stored: Scotland, Wales and Ireland hold far fewer awards than England, and the page says so.
+    const covEl = $("lblSupplierCoverage");
+    const by = data.awards_by_portal || {};
+    if (covEl && Object.keys(by).length) {
+      const order = ["Contracts Finder", "Find a Tender", "Public Contracts Scotland", "Sell2Wales", "eTenders NI", "eTenders Ireland"];
+      const shown = order.filter((p) => by[p] != null).map((p) => `${p} ${Number(by[p]).toLocaleString()}`);
+      const thin = order.slice(2).filter((p) => by[p] != null && by[p] < 1000);
+      covEl.textContent = `Awards held: ${shown.join(" · ")}.` + (thin.length ? " Scotland and Wales are only partly covered. The Northern Ireland and Ireland portals do not publish who won, so those awards are not included." : "");
     }
 
     // Update last sync timestamp
@@ -19366,11 +19383,49 @@ function buildSupplierNoticeHtml(awardObj, isSummary) {
 
 // Newest request wins: a slow response to an earlier query must never overwrite a later one.
 let _supplierListToken = 0;
+// ...and it is also cancelled: a superseded search used to keep running on the server (the slow pass takes seconds), so a
+// few quick filter changes stacked up several heavy requests.
+let _supplierListAbort = null;
+
+// Sort and the extra filters (region, value won, buyer, CPV code): sent with every search and kept in the controls.
+const _supplierRefine = { sort: "value", region: "", band: "", buyer: "", cpv: "" };
+function supplierRefineParams() {
+  let q = "";
+  if (_supplierRefine.sort && _supplierRefine.sort !== "value") q += `&sort=${encodeURIComponent(_supplierRefine.sort)}`;
+  if (_supplierRefine.region) q += `&region=${encodeURIComponent(_supplierRefine.region)}`;
+  if (_supplierRefine.band) {
+    const [lo, hi] = _supplierRefine.band.split("-");
+    if (lo) q += `&min_value=${lo}`;
+    if (hi) q += `&max_value=${hi}`;
+  }
+  if (_supplierRefine.buyer) q += `&buyer=${encodeURIComponent(_supplierRefine.buyer)}`;
+  if (_supplierRefine.cpv) q += `&cpv=${encodeURIComponent(_supplierRefine.cpv)}`;
+  return q;
+}
+
+// Under the list: "Did you mean ...?" when nothing matched, and buyers that match the text (a buyer is not a supplier).
+function renderSupplierSearchHints(data, query) {
+  const box = $("supplierSearchHints");
+  if (!box) return;
+  const parts = [];
+  if (data.did_you_mean && data.did_you_mean.name) {
+    parts.push(`<div class="supplier-hint">No supplier is called "${esc(query)}". Did you mean <button type="button" class="fai-link" data-supplier-suggest="${esc(data.did_you_mean.name)}">${esc(data.did_you_mean.name)}</button>?</div>`);
+  }
+  const buyers = data.buyers || [];
+  if (buyers.length) {
+    parts.push(`<div class="supplier-hint">Also a buyer: ${buyers.map((b) => `<button type="button" class="fai-link" data-supplier-buyer="${esc(b.name)}">${esc(b.name)}</button> <span class="supplier-hint__n">${b.contracts.toLocaleString()} contracts</span> <button type="button" class="fai-link" data-supplier-wonfrom="${esc(b.name)}">suppliers that won from it</button>`).join(" · ")}. Open it in Buyer intelligence to see what it buys.</div>`);
+  }
+  box.innerHTML = parts.join("");
+  box.classList.toggle("hidden", parts.length === 0);
+}
 
 async function fetchAndRenderSuppliersList(query = "", options = {}) {
   const container = $("supplierListContainer");
   if (!container) return;
   const token = ++_supplierListToken;
+  if (_supplierListAbort) _supplierListAbort.abort();
+  _supplierListAbort = new AbortController();
+  const signal = _supplierListAbort.signal;
 
   let url = `/api/suppliers/search?q=${encodeURIComponent(query)}&page=${_supplierPage}&per_page=${_supplierPerPage}`;
   // Only the "Find suppliers who win with X" authority-driven entry points ask to widen the
@@ -19385,6 +19440,7 @@ async function fetchAndRenderSuppliersList(query = "", options = {}) {
   if (_supplierFilterState.radius > 0) {
     url += `&lat=${_supplierFilterState.userLat}&lng=${_supplierFilterState.userLon}&radius_km=${_supplierFilterState.radius}`;
   }
+  url += supplierRefineParams();
 
   // 1. Something on screen straight away: the last result for this exact query, else a spinner.
   const cached = swrRead(`suppliers:${url}`);
@@ -19403,7 +19459,7 @@ async function fetchAndRenderSuppliersList(query = "", options = {}) {
   setRefreshing(container, true);
 
   const getJson = async (u) => {
-    const res = await fetch(u);
+    const res = await fetch(u, { signal });
     if (!res.ok) throw new Error("Failed to fetch suppliers");
     return res.json();
   };
@@ -19415,7 +19471,8 @@ async function fetchAndRenderSuppliersList(query = "", options = {}) {
     // a couple of coincidental name matches that then get replaced by the real, much larger
     // "suppliers who've won from this authority" result -- looking exactly like a revert to a
     // different search. Going straight to the exact pass avoids that misleading flash.
-    if (!options.skipFastPreview) {
+    const dated = !!(_currentSupplierDateRange && _currentSupplierDateRange !== "all");
+    if (!options.skipFastPreview && !dated) {
       const fast = await getJson(`${url}&fast=1`);
       if (token !== _supplierListToken) return;
       renderSupplierListData(fast, query);
@@ -19430,7 +19487,7 @@ async function fetchAndRenderSuppliersList(query = "", options = {}) {
     renderSupplierListData(exact, query);
     swrWrite(`suppliers:${url}`, exact);
   } catch (err) {
-    if (token !== _supplierListToken) return;
+    if (token !== _supplierListToken || (err && err.name === "AbortError")) return;
     if (!cached) {  // with something already showing, keep it rather than replacing it with an error
       container.innerHTML = `<div style="padding:16px; color:var(--critical-text, #ef4444); font-size:12px;">Error: ${esc(err.message)}</div>`;
       updateSupplierResultsCount(0, 0, 0);
@@ -19457,6 +19514,7 @@ function renderSupplierListData(data, query) {
   // at that position, not the one the user actually saw. Dim + disable clicks until the exact
   // pass lands, and say so, rather than let it happen with no visible cue.
   container.classList.toggle("supplier-list--refining", !!data.approximate);
+  renderSupplierSearchHints(data, query);
   const suppliers = data.suppliers || [];
   _currentLoadedSuppliers = suppliers;
   _supplierTotalResults = data.total_count || 0;
@@ -19497,7 +19555,7 @@ function renderSupplierListData(data, query) {
       <div style="padding: 24px 16px; text-align: center; color: var(--muted, #64748b); font-size: 12px; line-height: 1.5;">
         <div style="font-size: 28px; margin-bottom: 8px;">🔍</div>
         <div style="font-weight: 700; font-size: 13px; color: var(--text, #0f172a); margin-bottom: 4px;">No matching suppliers found</div>
-        <div>"${qEsc || 'Your filter'}" returned no results in the tracked database.</div>
+        <div>${qEsc ? `Nothing matches "${qEsc}"` : "No suppliers match the filters you set"} in the tracked database.</div>
         <div style="font-size: 11px; margin-top: 10px; color: var(--muted, #64748b); background: var(--surface-2, #f1f5f9); padding: 10px; border-radius: 6px; border: 1px solid var(--border, #cbd5e1); text-align: left;">
           💡 <strong>Growing Database:</strong> This is a <strong>tracked subset</strong> of suppliers with public awards. Try broader search terms or click <strong>Sync More Awards</strong> to expand coverage.
         </div>
@@ -19559,7 +19617,8 @@ function renderSupplierListData(data, query) {
   // alongside a real list total that could legitimately differ from it by design (the header's
   // count comes from the database-wide /api/suppliers/status call, not from this request).
   const startIdx = (_supplierPage - 1) * _supplierPerPage + 1;
-  const endIdx = Math.min(_supplierPage * _supplierPerPage, _supplierTotalResults);
+  // Records of one company are shown as one card, so a page can hold fewer cards than the page size: say what is shown.
+  const endIdx = Math.min(startIdx + suppliers.length - 1, _supplierTotalResults);
   updateSupplierResultsCount(startIdx, endIdx, _supplierTotalResults, !!data.approximate);
 
   if (suppliers.length > 0) {
@@ -19621,6 +19680,8 @@ async function fetchAndRenderSupplierMap() {
     if (token !== _supplierMapToken) return;
     if (!data.ok) throw new Error(data.error || "Failed to load the map");
     renderSupplierMap(data.suppliers);
+    const badge = $("supplierMapCountBadge");
+    if (badge && data.capped) badge.textContent = `Top ${data.shown.toLocaleString()} of ${data.total_with_location.toLocaleString()} matches by value won. Filter or zoom to see others`;
   } catch (err) {
     if (token !== _supplierMapToken) return;
     showSupplierMapLoading(false);
@@ -19727,6 +19788,8 @@ function renderSupplierMap(cards) {
     _supplierLeafletMap.setView(bounds[0], 11);
   } else {
     _supplierLeafletMap.fitBounds(fitBounds, { padding: [40, 40], maxZoom: 12 });
+    // One far-away supplier (an overseas address) would zoom out to Europe: open on the UK and Ireland instead.
+    if (_supplierLeafletMap.getZoom() < 5) _supplierLeafletMap.fitBounds([[49.8, -8.6], [60.9, 1.8]]);
   }
 }
 
@@ -19856,6 +19919,27 @@ function changeSupplierPerPage(perPage) {
   fetchAndRenderSuppliersList(query);
 }
 
+// Records that share the supplier's leading name ("Serco Limited", "Serco Leisure Operating Limited", "Serco Group plc"), with
+// their totals. Related by name only, and labelled that way.
+async function loadSupplierGroup(supplierId) {
+  try {
+    const res = await fetch(`/api/suppliers/${supplierId}/group`);
+    const data = res.ok ? await res.json() : null;
+    const box = $("supplierGroupBox");
+    if (!data || !box || String(box.dataset.supplierId) !== String(supplierId) || !data.members || data.members.length < 2) return;
+    const t = data.totals;
+    const fmt = typeof formatCurrencyVal === "function" ? formatCurrencyVal : (v) => "£" + Math.round(v).toLocaleString();
+    box.innerHTML = `<details style="margin-top:12px; border:1px solid var(--border,#e2e8f0); border-radius:8px; padding:8px 12px; font-size:12px;">
+      <summary style="cursor:pointer; font-weight:700;">Records sharing the name "${esc(data.brand)}": ${t.records} · ${t.awards.toLocaleString()} awards · ${fmt(t.value)}</summary>
+      <div style="color:var(--muted,#64748b); margin:6px 0;">${esc(data.note || "")}</div>
+      ${data.members.map((m) => `<div style="display:flex; justify-content:space-between; gap:8px; padding:4px 0; border-top:1px solid var(--border,#e2e8f0);">
+        <a href="#" data-group-open="${m.id}" style="font-weight:600;">${esc(m.name)}</a>
+        <span style="color:var(--muted,#64748b); white-space:nowrap;">${m.awards} award${m.awards === 1 ? "" : "s"} · ${fmt(m.value)}</span></div>`).join("")}
+    </details>`;
+    box.querySelectorAll("[data-group-open]").forEach((a) => a.addEventListener("click", (ev) => { ev.preventDefault(); loadSupplierDetail(parseInt(a.dataset.groupOpen, 10)); }));
+  } catch (err) { /* the group view is optional */ }
+}
+
 // Looks up a supplier's Companies House record in the background. If one is found, and the user is still
 // looking at that supplier, the panel is reloaded to show it (the server now has it cached).
 const _chLookupsAsked = new Set();
@@ -19894,7 +19978,7 @@ function supplierContactDisplays(s, opts = {}) {
   const link = `color:var(--primary, #2563eb); font-weight:700;${underline}`;
   const muted = (text, title) => `<span style="color:var(--muted,#94a3b8); font-weight:normal;" title="${esc(title)}">${text}</span>`;
   const fromSite = ' <span style="color:var(--muted,#94a3b8); font-size:10px; font-weight:600;" title="Found on the company\'s own website">· from website</span>';
-  const pending = muted("Looking up…", "Checking the company's own website");
+  const pending = s.id ? `<button type="button" class="fai-link" data-find-contacts="${esc(s.id)}" title="Looks the company up on Companies House and its own website. Runs only when you ask.">Find contact details</button>` : muted("Not found", "Not on the tender notice");
   const missing = muted("Not found", "Not on the tender notice or on the company's website");
 
   const list = (values, render) => {
@@ -19959,14 +20043,17 @@ async function loadSupplierDetail(supplierId) {
     // enrich=0: answer from the database at once. The Companies House lookup (seconds, and only for
     // suppliers without a verified number) is requested separately below and never holds the panel back.
     let url = `/api/suppliers/${supplierId}?enrich=0`;
+    // A card that stands for several records of one company opens a profile of all of them, so its numbers match the card.
+    const card = (_currentLoadedSuppliers || []).find((s) => String(s.id) === String(supplierId));
+    if (card && Array.isArray(card.merged_ids) && card.merged_ids.length > 1) url += `&merged=${card.merged_ids.filter((i) => i != null).join(",")}`;
     if (_currentSupplierDateRange && _currentSupplierDateRange !== "all") {
       url += `&date_range=${encodeURIComponent(_currentSupplierDateRange)}`;
     }
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to load supplier details");
     const data = await res.json();
-    if (data.supplier && !data.supplier.company_number) queueCompaniesHouseLookup(supplierId);
-    if (data.supplier && !data.supplier.found_contacts && !(data.supplier.email && data.supplier.phone && data.supplier.website)) queueContactLookup(supplierId);
+    // The Companies House and website contact lookups cost seconds of outside calls, so they run when the user asks (the
+    // "Find contact details" button), not on every profile that is opened. The server remembers what it found.
 
     const s = data.supplier;
     const m = data.metrics;
@@ -19991,7 +20078,7 @@ async function loadSupplierDetail(supplierId) {
     const nonCompWarning = m.non_competitive_awards > 0
       ? `<div style="margin-top:12px; padding:10px 14px; background:#fffbe8; border:1px solid #fde68a; border-radius:8px; font-size:12px; color:#92400e; display:flex; align-items:center; gap:8px;">
           <span style="font-size:16px;">⚠️</span>
-          <div><strong>Non-Competitive Win Intelligence:</strong> This supplier has won <strong>${m.non_competitive_awards}</strong> contract(s) via direct award / without open competition (${m.non_competitive_ratio}% of total awards).</div>
+          <div><strong>Non-Competitive Win Intelligence:</strong> This supplier has won <strong>${m.non_competitive_awards}</strong> of <strong>${m.known_route_awards ?? 0}</strong> contracts with a stated route without open competition (${m.non_competitive_ratio}%).${m.unknown_route_awards ? ` ${m.unknown_route_awards} more do not state a route.` : ""}</div>
          </div>`
       : '';
 
@@ -20016,7 +20103,7 @@ async function loadSupplierDetail(supplierId) {
           <span style="font-weight:700; color:var(--text, #0f172a); font-family:monospace;">[${esc(c.cpv_code)}]</span>
           <span style="color:var(--muted, #64748b); margin-left:4px;">${esc(c.cpv_description)}</span>
         </div>
-        <span style="font-weight:700; color:var(--text, #0f172a);">${c.count} awards</span>
+        <span style="font-weight:700; color:var(--text, #0f172a);">${c.count} award${c.count === 1 ? "" : "s"}</span>
       </div>
     `).join("") || '<div style="font-size:12px; color:var(--muted, #64748b);">No CPV stats available</div>';
 
@@ -20049,7 +20136,7 @@ async function loadSupplierDetail(supplierId) {
             </div>
           </td>
           <td style="padding:12px; font-weight:800; color:#059669; font-size:13px; white-space:nowrap; vertical-align:top;">
-            ${formatCurrencyVal(a.contract_value, a.currency)}
+            ${a.ceiling_copy ? `<span style="color:var(--muted, #64748b); font-weight:700;">Not published</span><div title="${esc(a.value_note || "")}" style="font-size:10px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; padding:1px 5px; border-radius:4px; font-weight:700; margin-top:3px; display:inline-block;">Framework value, not counted</div>` : formatCurrencyVal(a.contract_value, a.currency)}
             ${a.is_framework ? `<div style="font-size:10px; color:#1e40af; background:#eff6ff; border:1px solid #bfdbfe; padding:1px 5px; border-radius:4px; font-weight:700; margin-top:3px; display:inline-block;">🏛️ Framework Ceiling (Shared)</div>` : ''}
           </td>
           <td style="padding:12px; white-space:nowrap; color:var(--muted, #64748b); vertical-align:top; font-weight:600;">
@@ -20107,7 +20194,7 @@ async function loadSupplierDetail(supplierId) {
           <div class="supplier-detail-actions" style="display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap; min-width:0; max-width:100%;">
             <button type="button"
                     id="btnGenerateBDPlaybook"
-                    title="Generate strategic Business Development Playbook"
+                    title="Generate strategic Business Development Playbook (uses no credits)"
                     style="display:inline-flex; align-items:center; gap:7px; padding:9px 18px; background:linear-gradient(135deg,#7c3aed,#9333ea); color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; transition:all 0.18s ease; white-space:nowrap; box-shadow:0 2px 8px rgba(147,51,234,0.35);"
                     onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 14px rgba(147,51,234,0.5)';"
                     onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(147,51,234,0.35)';"
@@ -20116,7 +20203,7 @@ async function loadSupplierDetail(supplierId) {
             </button>
             <button type="button"
                     id="btnSupplierSummary"
-                    title="Extract structured executive summary and key contract insights"
+                    title="Extract structured executive summary and key contract insights (uses no credits)"
                     style="display:inline-flex; align-items:center; gap:7px; padding:9px 18px; background:linear-gradient(135deg,#4f46e5,#6366f1); color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:700; text-decoration:none; cursor:pointer; transition:all 0.18s ease; white-space:nowrap; box-shadow:0 2px 8px rgba(99,102,241,0.35);"
                     onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 14px rgba(99,102,241,0.5)';"
                     onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(99,102,241,0.35)';"
@@ -20145,40 +20232,41 @@ async function loadSupplierDetail(supplierId) {
           </div>
         </div>
         ${nonCompWarning}
+        <div id="supplierGroupBox" data-supplier-id="${s.id}"></div>
       </div>
 
       <!-- KPI Summary Cards Grid -->
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:14px; margin-bottom:24px;">
         <div class="supplier-kpi-card">
-          <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--muted, #64748b); letter-spacing:0.05em;">Direct Contracts Won</div>
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--muted, #64748b); letter-spacing:0.05em;">Contracts won</div>
           <div style="font-size:24px; font-weight:800; color:var(--text, #0f172a); margin-top:4px;">${m.direct_awards !== undefined ? m.direct_awards : m.total_awards}</div>
-          <div style="font-size:11px; color:var(--muted, #64748b); margin-top:2px;">Standalone contract wins</div>
+          <div style="font-size:11px; color:var(--muted, #64748b); margin-top:2px;">Not counting framework places · ${m.valued_direct_awards ?? 0} have a value of their own</div>
         </div>
 
         <div class="supplier-kpi-card supplier-kpi-card--accent">
-          <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--muted, #64748b); letter-spacing:0.05em;">Direct Contract Value</div>
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--muted, #64748b); letter-spacing:0.05em;">Value won</div>
           <div style="font-size:24px; font-weight:800; color:#059669; margin-top:4px;">${formatCurrencyVal(m.total_value)}</div>
-          <div style="font-size:11px; color:var(--muted, #64748b); margin-top:2px;">Cumulative direct awards</div>
+          <div style="font-size:11px; color:var(--muted, #64748b); margin-top:2px;">Sum of those ${m.valued_direct_awards ?? 0} contracts. A call-off that carries its framework's value is left out</div>
         </div>
 
         <div class="supplier-kpi-card">
-          <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--muted, #64748b); letter-spacing:0.05em;">Avg Direct Contract</div>
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--muted, #64748b); letter-spacing:0.05em;">Average contract value</div>
           <div style="font-size:24px; font-weight:800; color:var(--text, #0f172a); margin-top:4px;">${formatCurrencyVal(m.avg_value)}</div>
-          <div style="font-size:11px; color:var(--muted, #64748b); margin-top:2px;">Per awarded contract</div>
+          <div style="font-size:11px; color:var(--muted, #64748b); margin-top:2px;">Average of the ${m.valued_direct_awards ?? 0} contracts with a value</div>
         </div>
 
         ${m.framework_appointments > 0 ? `
         <div class="supplier-kpi-card" style="background:#f8fafc; border:1px solid #bfdbfe;">
-          <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#1e40af; letter-spacing:0.05em;">Shared Framework Ceiling</div>
-          <div style="font-size:24px; font-weight:800; color:#1d4ed8; margin-top:4px;">${formatCurrencyVal(m.framework_total_ceiling)}</div>
-          <div style="font-size:11px; color:#3b82f6; margin-top:2px; font-weight:600;">${m.framework_appointments} framework appointment(s)</div>
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#1e40af; letter-spacing:0.05em;">Framework places</div>
+          <div style="font-size:24px; font-weight:800; color:#1d4ed8; margin-top:4px;">${m.framework_places ?? m.framework_appointments}</div>
+          <div style="font-size:11px; color:#3b82f6; margin-top:2px; font-weight:600;">Largest ceiling ${formatCurrencyVal(m.framework_largest_ceiling || 0)}, shared with the other suppliers on it. Not added to value won</div>
         </div>
         ` : ''}
 
         <div class="supplier-kpi-card ${m.non_competitive_awards > 0 ? 'supplier-kpi-card--warning' : ''}">
-          <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--muted, #64748b); letter-spacing:0.05em;">Non-Competitive Ratio</div>
-          <div style="font-size:24px; font-weight:800; color:${m.non_competitive_awards > 0 ? '#b45309' : 'var(--text, #0f172a)'}; margin-top:4px;">${m.non_competitive_ratio}%</div>
-          <div style="font-size:11px; color:var(--muted, #64748b); margin-top:2px;">${m.non_competitive_awards} direct awards</div>
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--muted, #64748b); letter-spacing:0.05em;">Won without open competition</div>
+          <div style="font-size:24px; font-weight:800; color:${m.non_competitive_awards > 0 ? '#b45309' : 'var(--text, #0f172a)'}; margin-top:4px;">${(m.known_route_awards ?? 0) > 0 ? m.non_competitive_ratio + "%" : "n/a"}</div>
+          <div style="font-size:11px; color:var(--muted, #64748b); margin-top:2px;">${m.non_competitive_awards} of ${m.known_route_awards ?? 0} with a stated route${m.unknown_route_awards ? " · " + m.unknown_route_awards + " not stated" : ""}</div>
         </div>
       </div>
 
@@ -20216,6 +20304,21 @@ async function loadSupplierDetail(supplierId) {
       </div>
       ${grantsPanelHtml(data.grants, "supplier")}
     `;
+    loadSupplierGroup(supplierId);
+    if (!panel.dataset.contactsWired) {  // one listener for "Find contact details", however many profiles are opened
+      panel.dataset.contactsWired = "1";
+      panel.addEventListener("click", (ev) => {
+        const find = ev.target.closest("[data-find-contacts]");
+        if (!find) return;
+        const id = parseInt(find.dataset.findContacts, 10);
+        find.textContent = "Looking up…";
+        find.disabled = true;
+        _contactLookupsAsked.delete(id);
+        _chLookupsAsked.delete(id);
+        queueCompaniesHouseLookup(id);
+        queueContactLookup(id);
+      });
+    }
   } catch (err) {
     panel.innerHTML = `<div style="padding:20px; color:var(--critical-text, #ef4444);">Error loading supplier profile: ${esc(err.message)}</div>`;
   }
@@ -21779,9 +21882,47 @@ function initSupplierIntelligenceEvents() {
     });
   }
 
+  const applyRefine = () => {
+    _supplierRefine.sort = $("selSupplierSort")?.value || "value";
+    _supplierRefine.region = $("selSupplierRegion")?.value || "";
+    _supplierRefine.band = $("selSupplierValue")?.value || "";
+    _supplierRefine.buyer = ($("txtSupplierBuyer")?.value || "").trim();
+    _supplierRefine.cpv = ($("txtSupplierCpv")?.value || "").trim();
+    _supplierPage = 1;
+    fetchAndRenderSuppliersList($("txtSupplierSearch")?.value || "");
+  };
+  ["selSupplierSort", "selSupplierRegion", "selSupplierValue"].forEach((id) => $(id)?.addEventListener("change", applyRefine));
+  let _refineTimer = null;
+  ["txtSupplierBuyer", "txtSupplierCpv"].forEach((id) => $(id)?.addEventListener("input", () => { clearTimeout(_refineTimer); _refineTimer = setTimeout(applyRefine, 400); }));
+  $("supplierSearchHints")?.addEventListener("click", (e) => {
+    const suggest = e.target.closest("[data-supplier-suggest]");
+    if (suggest) {
+      if (txtSearch) txtSearch.value = suggest.getAttribute("data-supplier-suggest");
+      _supplierPage = 1;
+      fetchAndRenderSuppliersList(suggest.getAttribute("data-supplier-suggest"));
+      return;
+    }
+    const wonFrom = e.target.closest("[data-supplier-wonfrom]");
+    if (wonFrom) {  // the buyer's name widens the search to everyone who has won from it
+      const name = wonFrom.getAttribute("data-supplier-wonfrom");
+      if (txtSearch) txtSearch.value = name;
+      _supplierPage = 1;
+      fetchAndRenderSuppliersList(name, { skipFastPreview: true });
+      return;
+    }
+    const buyer = e.target.closest("[data-supplier-buyer]");
+    if (buyer && typeof openBuyerProfileDrawer === "function") {
+      closeSupplierIntelligenceModal();
+      openBuyerIntelligenceModal();
+      openBuyerProfileDrawer(buyer.getAttribute("data-supplier-buyer"));
+    }
+  });
+
   $("btnResetSupplierFilter")?.addEventListener("click", () => {
     _currentSupplierFilterSme = false;
     _currentSupplierFilterVcse = false;
+    Object.assign(_supplierRefine, { sort: "value", region: "", band: "", buyer: "", cpv: "" });
+    ["selSupplierSort", "selSupplierRegion", "selSupplierValue", "txtSupplierBuyer", "txtSupplierCpv"].forEach((id) => { const el = $(id); if (el) el.value = id === "selSupplierSort" ? "value" : ""; });
     _currentSupplierDateRange = "all";
     _supplierPage = 1;
     if (txtSearch) txtSearch.value = "";

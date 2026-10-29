@@ -9,6 +9,9 @@ import requests
 from bs4 import BeautifulSoup, Tag
 
 from ..client import DEFAULT_HEADERS
+from .. import tls
+
+tls.install()  # Public Contracts Scotland does not send its intermediate certificate: see etenders_scraper/tls.py
 
 _LABEL_MAP = {
     "reference no": "resource_id",

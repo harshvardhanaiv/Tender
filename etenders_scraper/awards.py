@@ -155,6 +155,20 @@ SHARED_VALUE_N_SQL = (
 )
 
 
+# A call-off order under a framework is sometimes published with the FRAMEWORK's value instead of its own: eleven small MoD
+# repair orders each stamped GBP 317m made one supplier look like a GBP 3bn winner. The tell is the same buyer publishing
+# several call-offs with an identical large value. Such a value is the framework ceiling, not this order's, so it is not
+# counted as won (it becomes "value not published"); the award itself still counts. Small repeated values are left alone.
+# Identical values are more likely by chance on small sums, so the bar rises as the value falls.
+CEILING_COPY_TIERS = ((1_000_000, 3), (100_000, 5))  # (value at least, rows at least)
+_ceiling_window = "COUNT(*) OVER (PARTITION BY q.auth_key, q.contract_value_notice, q.procurement_type)"
+CEILING_COPY_SQL = (
+    "(COALESCE(q.is_framework, 0) = 0 AND q.procurement_type = 'Framework / Call-off' AND ("
+    + " OR ".join(f"(q.contract_value_notice >= {v} AND {_ceiling_window} >= {n})" for v, n in CEILING_COPY_TIERS)
+    + "))"
+)
+
+
 def deduped_awards_cte_sql(authority_filter: str | None = None) -> str:
     """The de-duplication CTE. `authority_filter` is SQL on the unqualified column authority_name that is
     applied BEFORE de-duplicating, so a single buyer's page de-duplicates that buyer's rows instead of sorting
@@ -162,10 +176,12 @@ def deduped_awards_cte_sql(authority_filter: str | None = None) -> str:
     afterwards because a duplicate group shares one authority name (auth_key is derived from it).
 
     deduped_awards has every contract_awards column, plus auth_key, shared_n (how many rows share the notice
-    value) and contract_value_notice (the published value). contract_value is the row's share of it."""
+    value), contract_value_notice (the published value) and ceiling_copy (the value is the framework's, see
+    CEILING_COPY_SQL). contract_value is the row's share of the published value, or NULL for a ceiling copy."""
     pre = f"\n              WHERE {authority_filter}" if authority_filter else ""
     post = f" AND ({authority_filter})" if authority_filter else ""
     cols = ", ".join(f"b.{c}" for c in AWARD_COLUMNS if c != "contract_value")
+    outer_cols = ", ".join(f"p.{c}" for c in AWARD_COLUMNS if c != "contract_value")
     return f"""deduped_base AS (
     (
         SELECT DISTINCT ON (COALESCE(NULLIF(a.supplier_id, 0)::text, NULLIF(a.company_number, ''), a.supplier_name), a.auth_key, a.date_signed) a.*
@@ -179,11 +195,17 @@ def deduped_awards_cte_sql(authority_filter: str | None = None) -> str:
     FROM contract_awards a
     WHERE a.date_signed IS NULL{post}
 ),
-deduped_awards AS (
+deduped_priced AS (
     SELECT {cols},
            CASE WHEN b.shared_n > 1 THEN b.contract_value / b.shared_n ELSE b.contract_value END AS contract_value,
            b.contract_value AS contract_value_notice, b.shared_n, b.auth_key
     FROM (SELECT d.*, {SHARED_VALUE_N_SQL} AS shared_n FROM deduped_base d) b
+),
+deduped_awards AS (
+    SELECT {outer_cols},
+           CASE WHEN p.ceiling_copy THEN NULL ELSE p.contract_value END AS contract_value,
+           p.contract_value_notice, p.shared_n, p.auth_key, p.ceiling_copy
+    FROM (SELECT q.*, {CEILING_COPY_SQL} AS ceiling_copy FROM deduped_priced q) p
 )"""
 
 
@@ -1369,6 +1391,11 @@ AWARD_SCHEDULER_STATUS: dict[str, Any] = {
 }
 
 
+# Few of the notices these portals list have a published winner (about 1 in 10 here), so a run of 30 stored only a handful; 100
+# per run gives Wales and Scotland a real flow of awards instead of the trickle that left them at under 100 each.
+BRAVO_SCHEDULED_LIMIT = 100
+
+
 def get_award_scheduler_status() -> dict[str, Any]:
     """Returns real-time status of the award scraper background worker."""
     return AWARD_SCHEDULER_STATUS
@@ -1408,8 +1435,8 @@ def start_award_scheduler(get_db_conn_func: Any = None):
         jobs = [
             ("Contracts Finder", lambda conn: scrape_live_contracts_finder_awards(limit=50, days_back=30, conn=conn)),
             ("Find a Tender", lambda conn: scrape_live_find_tender_awards(max_records=50, conn=conn)),
-            ("Sell2Wales", lambda conn: scrape_live_bravo_awards("sell2wales", "https://www.sell2wales.gov.wales", "Sell2Wales", limit=30, conn=conn)),
-            ("Public Contracts Scotland", lambda conn: scrape_live_bravo_awards("pcs", "https://www.publiccontractsscotland.gov.uk", "Public Contracts Scotland", limit=30, conn=conn)),
+            ("Sell2Wales", lambda conn: scrape_live_bravo_awards("sell2wales", "https://www.sell2wales.gov.wales", "Sell2Wales", limit=BRAVO_SCHEDULED_LIMIT, conn=conn)),
+            ("Public Contracts Scotland", lambda conn: scrape_live_bravo_awards("pcs", "https://www.publiccontractsscotland.gov.uk", "Public Contracts Scotland", limit=BRAVO_SCHEDULED_LIMIT, conn=conn)),
         ]
         while True:
             total_count = 0

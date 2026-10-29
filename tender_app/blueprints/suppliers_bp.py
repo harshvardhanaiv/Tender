@@ -19,6 +19,7 @@ from tender_app.security import rate_limit
 from tender_app.grants import grants_for_supplier
 from tender_app.charities import charities_for_suppliers, charity_for_supplier
 from tender_app.geo import geo_radius_clause
+from tender_app.regions import itl1_region
 from tender_app.supplier_classifier import classify_supplier_real_data, is_known_large_enterprise
 from tender_app.ch_matcher import normalize_ch_company_number, is_valid_ch_company_number, calculate_name_similarity, clean_contact_field
 
@@ -144,7 +145,8 @@ def supplier_win_counts(awards: list[dict[str, Any]]) -> dict[str, int]:
     total = len(awards)
     framework = sum(1 for a in awards if a.get("is_framework"))
     valued = sum(1 for a in awards
-                 if not a.get("is_framework") and 0 <= float(a.get("contract_value") or 0) <= SINGLE_AWARD_STATS_CEILING_GBP)
+                 if not a.get("is_framework") and not a.get("ceiling_copy")
+                 and 0 <= float(a.get("contract_value") or 0) <= SINGLE_AWARD_STATS_CEILING_GBP)
     return {"total_awards": total, "direct_awards": total - framework,
             "framework_appointments": framework, "valued_direct_awards": valued}
 
@@ -195,6 +197,7 @@ SUPPLIER_NAME_NOT_PLACEHOLDER_SQL = r"""(
     AND s.name !~* '(please see|please refer)'
     AND s.name !~* '^(as per|information withheld|awarded supplier details|confidential information|confidential / sensitive)'
     AND s.name !~* 'commercially confidential'
+    AND s.name !~* '^(failed tender|tender (abandoned|withdrawn|cancelled|failed)|no award|not awarded|cancelled|abandoned|no (suitable )?bids?)'
     AND TRIM(s.name) !~* '^various$'
     AND s.name !~* '\ynhs\b.*?\b(foundation\s+trust|trust|ft|icb|board)\y'
     AND s.name !~* '\ynhs\s+[a-z &'',]{0,40}(foundation\s+trust|trust|ft|icb)\y'
@@ -458,6 +461,8 @@ _SUPPLIER_LIST_COLS = (
     "s.id, s.company_number, s.name, s.address, s.email, s.phone, s.website, s.region, "
     "s.sme_status, s.vcse_status, s.created_at, s.latitude, s.longitude, s.geo_accuracy"
 )
+_STATS_EXTRA_COLS = "st.region_norm, st.brand_key, st.group_large"
+_NO_STATS_EXTRA_COLS = "NULL AS region_norm, NULL AS brand_key, FALSE AS group_large"
 _VALID_COMPANY_NUMBER_SQL = """(
     s.company_number IS NOT NULL AND s.company_number != ''
     AND s.company_number NOT IN ('Not available', 'Procurem', '—', '-', 'None')
@@ -484,6 +489,10 @@ def _shape_supplier_rows(cursor, raw_rows, sme_only: bool, vcse_only: bool) -> l
         # whatever a scraped flag says: Scott Aerospace showed "SME" beside GBP 2.33bn.
         if sme_st == "SME" and float(r.get("total_value") or 0) > _SME_IMPLAUSIBLE_TOTAL_GBP:
             sme_st = "Non-SME Enterprise"
+        # A subsidiary of a listed group ("Bunzl UK Ltd", with "Bunzl plc" in the data) is not an SME whatever the notice says.
+        sme_note = "From the award notice, not verified against Companies House accounts"
+        if sme_st == "SME" and r.get("group_large"):
+            sme_st, sme_note = "Non-SME Enterprise", "Part of a plc group of the same name"
         # Strict filtering: exclude unclassified & non-SME / non-VCSE when those filters are active
         if sme_only and sme_st != "SME":
             continue
@@ -497,8 +506,10 @@ def _shape_supplier_rows(cursor, raw_rows, sme_only: bool, vcse_only: bool) -> l
             "email": clean_contact_field(r.get("email")),
             "phone": clean_contact_field(r.get("phone")),
             "website": clean_contact_field(r.get("website")),
-            "region": r.get("region", "UK"),
+            "region": r.get("region_norm") or itl1_region(r.get("region"), r.get("address")),
             "sme_status": sme_st,
+            "sme_source": sme_note,
+            "brand_key": r.get("brand_key") or "",
             "vcse_status": vcse_st,
             "total_awards": r.get("total_awards", 0),
             # total_value (below) excludes framework ceilings -- see get_supplier_detail's matching
@@ -518,8 +529,143 @@ def _shape_supplier_rows(cursor, raw_rows, sme_only: bool, vcse_only: bool) -> l
     return suppliers
 
 
+def _awards_from_table(cursor, conn, supplier_ids: list[int], company_numbers: list[str], start_date=None, end_date=None):
+    """A supplier's awards from the award_values table: the rows the list and the profile are built from, so a report or an AI
+    summary quotes the same totals. None when the table has not been built yet (the caller then reads the raw awards)."""
+    from tender_app import stats as _stats
+
+    if not _stats.award_values_ready(cursor):
+        return None
+    ids = [i for i in supplier_ids if i is not None]
+    where = [f"supplier_id IN ({','.join('?' * len(ids))})"]
+    params: list[Any] = list(ids)
+    nums = [n for n in company_numbers if _is_valid_cnum_for_award_join(n)]
+    if nums:
+        where[0] = f"(supplier_id IN ({','.join('?' * len(ids))}) OR company_number IN ({','.join('?' * len(nums))}))"
+        params += nums
+    where.append(f"source_portal IN ({_PORTALS_SQL_LIST})")
+    if start_date:
+        where.append("date_signed >= ?")
+        params.append(start_date)
+    if end_date:
+        where.append("date_signed <= ?")
+        params.append(end_date)
+    _execute(cursor, conn, f"SELECT * FROM award_values WHERE {' AND '.join(where)} ORDER BY date_signed DESC NULLS LAST;", params)
+    return [_row_to_dict(cursor, r) for r in cursor.fetchall()]
+
+
+def _nicer_name(candidate: str, current: str) -> bool:
+    """Of two spellings of one buyer prefer the mixed-case one ("Ministry of Defence" over "MINISTRY OF DEFENCE")."""
+    def shouty(text: str) -> bool:
+        letters = [c for c in text if c.isalpha()]
+        return bool(letters) and all(c.isupper() for c in letters)
+    return shouty(current) and not shouty(candidate)
+
+
+SUPPLIER_SORTS = ("value", "wins", "recent", "name")
+
+
+def _refine_conditions(opts: dict | None, value_expr: str) -> tuple[list[str], list[Any]]:
+    """WHERE parts for the extra supplier filters: region, value won, buyer and CPV code. `s` is the supplier row."""
+    conds: list[str] = []
+    vals: list[Any] = []
+    opts = opts or {}
+    if opts.get("region"):
+        conds.append("LOWER(st.region_norm) = LOWER(?)")
+        vals.append(opts["region"])
+    if opts.get("min_value") is not None:
+        conds.append(f"{value_expr} >= ?")
+        vals.append(opts["min_value"])
+    if opts.get("max_value") is not None:
+        conds.append(f"{value_expr} <= ?")
+        vals.append(opts["max_value"])
+    if opts.get("buyer"):  # a buyer the supplier has won from (any date; the awards table keeps the upper-case buyer key)
+        conds.append("EXISTS (SELECT 1 FROM award_values bv WHERE bv.supplier_id = s.id AND bv.auth_key LIKE ?)")
+        vals.append("%" + str(opts["buyer"]).upper().strip() + "%")
+    if opts.get("cpv"):
+        conds.append("EXISTS (SELECT 1 FROM award_values cv WHERE cv.supplier_id = s.id AND cv.cpv_code LIKE ?)")
+        vals.append(str(opts["cpv"]).strip() + "%")
+    return conds, vals
+
+
+def _order_clause(opts: dict | None, exact_q: str | None, q_key: str, value: str, wins: str, recent: str, entity: str | None) -> tuple[str, list[Any]]:
+    """ORDER BY text and its parameters.
+
+    A typed search ranks the supplier actually named first (same name, or the same name once case, punctuation and Ltd/Limited
+    are ignored), then suppliers that have won something before those that have not, then the chosen sort (value won by
+    default). Starting with the typed word proves nothing about who is a strong supplier: 0-win firms called "Cleaning ..." came
+    before Bulloughs Cleaning Services with 44 wins."""
+    sort = (opts or {}).get("sort") or "value"
+    base = {
+        "value": f"{value} DESC, {wins} DESC",
+        "wins": f"{wins} DESC, {value} DESC",
+        "recent": f"{recent} DESC NULLS LAST, {value} DESC",
+        "name": "LOWER(s.name) ASC",
+    }.get(sort, f"{value} DESC, {wins} DESC")
+    tiers, params = "", []
+    if exact_q:
+        if entity and q_key:
+            tiers = f"CASE WHEN LOWER(s.name) = LOWER(?) OR {entity} = ? THEN 0 ELSE 1 END, ({wins} = 0), "
+            params = [exact_q, q_key]
+        else:
+            tiers = "CASE WHEN LOWER(s.name) = LOWER(?) THEN 0 WHEN LOWER(s.name) LIKE LOWER(?) THEN 1 ELSE 2 END, "
+            params = [exact_q, exact_q + "%"]
+    return f"{tiers}{base}, s.id", params
+
+
+def _did_you_mean(cursor, conn, q_key: str) -> dict | None:
+    """The closest supplier name to a query that matched nothing ("sercco" -> Serco), by trigram similarity of the name keys."""
+    if len(q_key) < 4:
+        return None
+    try:
+        _execute(cursor, conn, """
+            SELECT s.name, similarity(st.entity_key, ?) AS sim
+            FROM supplier_stats st JOIN suppliers s ON s.id = st.supplier_id
+            WHERE st.listable AND st.total_awards > 0 AND similarity(st.entity_key, ?) >= 0.4
+            ORDER BY sim DESC, st.total_awards DESC LIMIT 1""", [q_key, q_key])
+        row = cursor.fetchone()
+    except Exception:  # pg_trgm is not installed: no suggestion
+        conn.rollback()
+        return None
+    return {"name": row[0], "similarity": round(float(row[1]), 2)} if row and float(row[1]) >= 0.4 else None
+
+
+def _matching_buyers(cursor, conn, q: str, limit: int = 4) -> list[dict]:
+    """Public bodies whose name matches the query, so a search such as "Leeds City Council" or "NHS England" can point to Buyer
+    intelligence instead of listing a buyer as if it were a supplier."""
+    if len(q.strip()) < 3:
+        return []
+    try:
+        _execute(cursor, conn, """
+            SELECT authority_name, total_contracts, unique_suppliers FROM buyer_stats
+            WHERE authority_name ILIKE ? ORDER BY total_contracts DESC LIMIT ?""", [f"%{q.strip()}%", limit])
+        return [{"name": r[0], "contracts": int(r[1] or 0), "suppliers": int(r[2] or 0)} for r in cursor.fetchall()]
+    except Exception:
+        conn.rollback()
+        return []
+
+
+SIBLING_LIMIT = 60  # the other records of one company, at most this many for a whole page
+
+
+def _sibling_ids(cursor, conn, ids: list[int]) -> list[int]:
+    """Listable suppliers with the same name key as a supplier in `ids` that are not in `ids` themselves."""
+    if not ids:
+        return []
+    try:
+        _execute(cursor, conn, """
+            SELECT DISTINCT o.supplier_id FROM supplier_stats st
+            JOIN supplier_stats o ON o.entity_key = st.entity_key AND o.listable AND o.supplier_id <> ALL(?::int[])
+            WHERE st.supplier_id = ANY(?::int[]) AND st.entity_key IS NOT NULL AND st.entity_key <> ''
+            LIMIT ?""", [list(ids), list(ids), SIBLING_LIMIT])
+        return [r[0] for r in cursor.fetchall()]
+    except Exception:  # the stats are not ready yet (first run): no siblings, the old behaviour
+        conn.rollback()
+        return []
+
+
 def _supplier_page_from_stats(cursor, conn, q_patterns, sme_only, vcse_only, only_awarded, limit, offset, geo=None,
-                               exact_q: str | None = None):
+                               exact_q: str | None = None, id_filter: list[int] | None = None, opts: dict | None = None):
     """The instant path: rank from the precomputed supplier_stats table (no award aggregation).
 
     Searches supplier fields only (name, company number, region); text that lives on the awards
@@ -528,10 +674,18 @@ def _supplier_page_from_stats(cursor, conn, q_patterns, sme_only, vcse_only, onl
     where = ["st.listable"]
     params: list[Any] = []
     needs_supplier_row = False
-    if q_patterns:
+    if id_filter:
+        where.append("st.supplier_id = ANY(?::int[])")
+        params.append(list(id_filter))
+    elif q_patterns:
         q_pattern, q_clean_pattern = q_patterns
-        where.append("(LOWER(s.name) LIKE LOWER(?) OR s.company_number LIKE ? OR LOWER(s.region) LIKE LOWER(?))")
-        params += [q_clean_pattern, q_pattern, q_clean_pattern]
+        q_key = (opts or {}).get("q_key") or ""
+        if q_key:  # also match the name key: "Sainsbury's", "serco ltd" and "Serco Limited" are one search
+            where.append("(LOWER(s.name) LIKE LOWER(?) OR s.company_number LIKE ? OR LOWER(s.region) LIKE LOWER(?) OR st.entity_key LIKE ?)")
+            params += [q_clean_pattern, q_pattern, q_clean_pattern, f"%{q_key}%"]
+        else:
+            where.append("(LOWER(s.name) LIKE LOWER(?) OR s.company_number LIKE ? OR LOWER(s.region) LIKE LOWER(?))")
+            params += [q_clean_pattern, q_pattern, q_clean_pattern]
         needs_supplier_row = True
     if sme_only:
         where.append("s.sme_status = 'SME'")
@@ -545,6 +699,11 @@ def _supplier_page_from_stats(cursor, conn, q_patterns, sme_only, vcse_only, onl
         where.append(geo["where_sql"])
         params += geo["where_params"]
         needs_supplier_row = True
+    r_conds, r_vals = _refine_conditions(opts, "st.total_value")
+    if r_conds:
+        where += r_conds
+        params += r_vals
+        needs_supplier_row = True
     where_sql = " AND ".join(where)
 
     if needs_supplier_row:
@@ -557,17 +716,12 @@ def _supplier_page_from_stats(cursor, conn, q_patterns, sme_only, vcse_only, onl
     # See _supplier_page_exact's matching comment: an exact or prefix name match must outrank
     # pure value/award-count ranking so deep links (and typed searches) resolve to the supplier
     # actually being looked up, not whichever match happens to have the biggest contracts.
-    order_sql = "st.total_value DESC, st.total_awards DESC, st.supplier_id"
-    if exact_q:
-        order_sql = (
-            "CASE WHEN LOWER(s.name) = LOWER(?) THEN 0 "
-            "WHEN LOWER(s.name) LIKE LOWER(?) THEN 1 ELSE 2 END, " + order_sql
-        )
-        params.append(exact_q)
-        params.append(exact_q + "%")
+    order_sql, order_params = _order_clause(opts, exact_q, (opts or {}).get("q_key") or "", "st.total_value", "st.total_awards",
+                                            "st.latest_award_date", "st.entity_key")
+    params += order_params
 
     sql = f"""
-        SELECT {_SUPPLIER_LIST_COLS},
+        SELECT {_SUPPLIER_LIST_COLS}, {_STATS_EXTRA_COLS},
                st.total_awards, st.total_value, st.avg_value,
                st.framework_total_ceiling, st.framework_appointments_count
         FROM supplier_stats st JOIN suppliers s ON s.id = st.supplier_id
@@ -586,7 +740,8 @@ def _supplier_page_from_stats(cursor, conn, q_patterns, sme_only, vcse_only, onl
 
 def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awarded,
                          start_date, end_date, limit, offset, use_listable: bool = False, geo=None,
-                         exact_q: str | None = None, widen_match: bool = False):
+                         exact_q: str | None = None, widen_match: bool = False, id_filter: list[int] | None = None,
+                         opts: dict | None = None):
     """The exact path: aggregate live, but only over the suppliers that can match.
 
     Awards reach a supplier by supplier_id or company number. The old query joined every supplier
@@ -603,15 +758,25 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
     hundreds with no indication why, which looked exactly like the search reverting to something
     else.
     """
-    params: list[Any] = []
-    ctes: list[str] = [DEDUPED_AWARDS_CTE_SQL]
+    from tender_app import stats as _stats
 
-    if q_patterns:
+    params: list[Any] = []
+    ctes: list[str] = [_stats.deduped_cte(cursor)]  # the award_values table when built (about a second), else the live CTE (about 15 s)
+
+    has_match = bool(q_patterns) or bool(id_filter)
+    if id_filter:  # exactly these suppliers (the other records of a company already on the page)
+        ctes.append("matched AS (SELECT UNNEST(?::int[]) AS id)")
+        params.append(list(id_filter))
+    elif q_patterns:
         q_pattern, q_clean_pattern = q_patterns
+        q_key = (opts or {}).get("q_key") or ""
+        key_clause = "UNION SELECT st.supplier_id FROM supplier_stats st WHERE st.entity_key LIKE ?" if (q_key and use_listable) else ""
+        key_params = [f"%{q_key}%"] if key_clause else []
         if widen_match:
             ctes.append(f"""matched AS (
                 SELECT s.id FROM suppliers s
                 WHERE LOWER(s.name) LIKE LOWER(?) OR s.company_number LIKE ? OR LOWER(s.region) LIKE LOWER(?)
+                {key_clause}
                 UNION
                 SELECT a.supplier_id FROM contract_awards a
                 WHERE a.supplier_id IS NOT NULL AND a.source_portal IN ({_PORTALS_SQL_LIST})
@@ -619,17 +784,18 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
                        OR LOWER(a.tender_title) LIKE LOWER(?) OR LOWER(a.cpv_description) LIKE LOWER(?)
                        OR a.cpv_code LIKE ?)
             )""")
-            params += [q_clean_pattern, q_pattern, q_clean_pattern, q_clean_pattern, q_pattern, q_pattern, q_pattern, q_pattern]
+            params += [q_clean_pattern, q_pattern, q_clean_pattern] + key_params + [q_clean_pattern, q_pattern, q_pattern, q_pattern, q_pattern]
         else:
             ctes.append(f"""matched AS (
                 SELECT s.id FROM suppliers s
                 WHERE LOWER(s.name) LIKE LOWER(?) OR s.company_number LIKE ? OR LOWER(s.region) LIKE LOWER(?)
+                {key_clause}
                 UNION
                 SELECT a.supplier_id FROM contract_awards a
                 WHERE a.supplier_id IS NOT NULL AND a.source_portal IN ({_PORTALS_SQL_LIST})
                   AND LOWER(a.supplier_name) LIKE LOWER(?)
             )""")
-            params += [q_clean_pattern, q_pattern, q_clean_pattern, q_clean_pattern]
+            params += [q_clean_pattern, q_pattern, q_clean_pattern] + key_params + [q_clean_pattern]
 
     def date_sql() -> tuple[str, list[Any]]:
         conds, vals = [], []
@@ -642,14 +808,14 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
         return ("".join(f" AND {c}" for c in conds)), vals
 
     d_sql, d_vals = date_sql()
-    in_matched_a = " AND a.supplier_id IN (SELECT id FROM matched)" if q_patterns else ""
-    in_matched_s = " AND s.id IN (SELECT id FROM matched)" if q_patterns else ""
+    in_matched_a = " AND a.supplier_id IN (SELECT id FROM matched)" if has_match else ""
+    in_matched_s = " AND s.id IN (SELECT id FROM matched)" if has_match else ""
     ctes.append(f"""links AS (
-        SELECT a.supplier_id AS sid, a.id AS aid, a.contract_value, a.is_framework
+        SELECT a.supplier_id AS sid, a.id AS aid, a.contract_value, a.is_framework, a.date_signed
         FROM deduped_awards a
         WHERE a.supplier_id IS NOT NULL AND a.source_portal IN ({_PORTALS_SQL_LIST}){d_sql}{in_matched_a}
         UNION ALL
-        SELECT s.id, a.id, a.contract_value, a.is_framework
+        SELECT s.id, a.id, a.contract_value, a.is_framework, a.date_signed
         FROM suppliers s JOIN deduped_awards a ON a.company_number = s.company_number
         WHERE {_VALID_COMPANY_NUMBER_SQL} AND a.supplier_id IS DISTINCT FROM s.id
           AND a.source_portal IN ({_PORTALS_SQL_LIST}){d_sql}{in_matched_s}
@@ -664,7 +830,8 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
                COALESCE(SUM(CASE WHEN (is_framework IS NULL OR is_framework = 0) AND contract_value BETWEEN 0 AND {SINGLE_AWARD_STATS_CEILING_GBP} THEN contract_value ELSE 0 END), 0) AS total_value,
                COALESCE(AVG(CASE WHEN (is_framework IS NULL OR is_framework = 0) AND contract_value BETWEEN 0 AND {SINGLE_AWARD_STATS_CEILING_GBP} THEN contract_value END), 0) AS avg_value,
                COALESCE(SUM(CASE WHEN is_framework = 1 THEN contract_value ELSE 0 END), 0) AS framework_total_ceiling,
-               COUNT(CASE WHEN is_framework = 1 THEN 1 END) AS framework_appointments_count
+               COUNT(CASE WHEN is_framework = 1 THEN 1 END) AS framework_appointments_count,
+               MAX(date_signed) AS latest
         FROM links GROUP BY sid
     )""")
 
@@ -678,7 +845,11 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
     if geo:
         where.append(geo["where_sql"])
         params += geo["where_params"]
-    join_matched = (" JOIN matched m ON m.id = s.id" if q_patterns else "") + (
+    r_conds, r_vals = _refine_conditions(opts, "COALESCE(g.total_value, 0)")
+    if r_conds:
+        where += r_conds
+        params += r_vals
+    join_matched = (" JOIN matched m ON m.id = s.id" if has_match else "") + (
         " JOIN supplier_stats st ON st.supplier_id = s.id" if use_listable else "")
     only_with_awards = bool(start_date or end_date or only_awarded)
     agg_join = "JOIN" if only_with_awards else "LEFT JOIN"
@@ -690,18 +861,13 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
     # (see the `matched` CTE above) -- any big supplier that just happens to have won a contract
     # from a buyer or tender whose name contains the search text, outranks or buries the supplier
     # actually being looked up (e.g. "GRAHAM", or "Ian Williams Limited" for a search of "ian").
-    order_sql = "total_value DESC, total_awards DESC, s.id"
-    if exact_q:
-        order_sql = (
-            "CASE WHEN LOWER(s.name) = LOWER(?) THEN 0 "
-            "WHEN LOWER(s.name) LIKE LOWER(?) THEN 1 ELSE 2 END, " + order_sql
-        )
-        params.append(exact_q)
-        params.append(exact_q + "%")
+    order_sql, order_params = _order_clause(opts, exact_q, (opts or {}).get("q_key") or "", "COALESCE(g.total_value, 0)",
+                                            "COALESCE(g.total_awards, 0)", "g.latest", "st.entity_key" if use_listable else None)
+    params += order_params
 
     sql = f"""
         WITH {", ".join(ctes)}
-        SELECT {_SUPPLIER_LIST_COLS},
+        SELECT {_SUPPLIER_LIST_COLS}, {_STATS_EXTRA_COLS if use_listable else _NO_STATS_EXTRA_COLS},
                COALESCE(g.total_awards, 0) AS total_awards,
                COALESCE(g.total_value, 0) AS total_value,
                COALESCE(g.avg_value, 0) AS avg_value,
@@ -771,6 +937,27 @@ def search_suppliers():
 
     only_awarded = request.args.get("only_awarded", "false").lower() in ("true", "1", "yes")
 
+    # Sort and the extra filters: region, value won, buyer, CPV code.
+    sort = (request.args.get("sort") or "value").strip().lower()
+    if sort not in SUPPLIER_SORTS:
+        return jsonify({"ok": False, "error": "sort must be one of: " + ", ".join(SUPPLIER_SORTS)}), 400
+    try:
+        min_value = float(request.args["min_value"]) if request.args.get("min_value") not in (None, "") else None
+        max_value = float(request.args["max_value"]) if request.args.get("max_value") not in (None, "") else None
+    except ValueError:
+        return jsonify({"ok": False, "error": "min_value and max_value must be numbers"}), 400
+    from tender_app.entity_merge import entity_name_key
+    q_key = entity_name_key(q) if q else ""
+    opts = {
+        "q_key": q_key if len(q_key) >= 2 else "",
+        "sort": sort,
+        "region": (request.args.get("region") or "").strip() or None,
+        "min_value": min_value,
+        "max_value": max_value,
+        "buyer": (request.args.get("buyer") or "").strip() or None,
+        "cpv": (request.args.get("cpv") or "").strip() or None,
+    }
+
     # Proximity filter (same lat/lng/radius_km convention as /api/planning/search) — optional,
     # and only applied when both lat and lng are given.
     geo = None
@@ -800,22 +987,39 @@ def search_suppliers():
 
         has_dates = bool(start_date or end_date)
         can_use_stats = limit is not None and stats.is_ready(cursor, "supplier_stats")
-        use_stats = can_use_stats and (fast or not (q or has_dates))
+        # A date range is never answered from the all-time stats: the exact answer is quick now, and an approximate one showed the
+        # same totals whatever range was chosen.
+        use_stats = can_use_stats and ((fast and not has_dates) or not (q or has_dates))
         approximate = use_stats and bool(q or has_dates)
 
         if use_stats:
             raw_rows, total_count = _supplier_page_from_stats(
-                cursor, conn, q_patterns, sme_only, vcse_only, only_awarded, limit, offset, geo=geo, exact_q=q or None)
+                cursor, conn, q_patterns, sme_only, vcse_only, only_awarded, limit, offset, geo=geo, exact_q=q or None, opts=opts)
         else:
             raw_rows, total_count = _supplier_page_exact(
                 cursor, conn, q_patterns, sme_only, vcse_only, only_awarded, start_date, end_date, limit, offset,
                 use_listable=stats.is_ready(cursor, "supplier_stats"), geo=geo, exact_q=q or None,
-                widen_match=widen_match)
+                widen_match=widen_match, opts=opts)
 
         suppliers = _shape_supplier_rows(cursor, raw_rows, sme_only, vcse_only)
+        # The other records of a company already on the page come with it, filtered the same way (same date range), so the
+        # merged card shows the same totals whatever was typed ("Capita" and "Capita plc" used to differ by the records that
+        # happened to match the text).
+        sibling_ids = _sibling_ids(cursor, conn, [s["id"] for s in suppliers if s.get("id")])
+        if sibling_ids:
+            if use_stats or not has_dates:
+                sib_rows, _n = _supplier_page_from_stats(cursor, conn, None, sme_only, vcse_only, only_awarded, None, None, id_filter=sibling_ids)
+            else:
+                sib_rows, _n = _supplier_page_exact(cursor, conn, None, sme_only, vcse_only, only_awarded, start_date, end_date, None, None,
+                                                    use_listable=stats.is_ready(cursor, "supplier_stats"), id_filter=sibling_ids)
+            suppliers += _shape_supplier_rows(cursor, sib_rows, sme_only, vcse_only)
         try:
             from tender_app.entity_merge import merge_duplicate_suppliers
             suppliers = merge_duplicate_suppliers(suppliers)   # "XMA LIMITED" / "Xma Ltd" listed once
+            if sibling_ids:  # a sibling that did not merge into a card (another company number) is not a result of this search
+                members = {i for sp in suppliers for i in (sp.get("merged_ids") or [])}
+                sib = set(sibling_ids)
+                suppliers = [sp for sp in suppliers if sp.get("id") not in sib or sp.get("id") in members]
         except Exception:
             pass   # never fail a search over the tidy-up
         return jsonify({
@@ -829,6 +1033,9 @@ def search_suppliers():
             "total_pages": (total_count + per_page - 1) // per_page if per_page > 0 else 1,
             "fast": use_stats,
             "approximate": approximate,
+            "sort": sort,
+            "buyers": _matching_buyers(cursor, conn, q) if q and not request.args.get("widen") else [],
+            "did_you_mean": _did_you_mean(cursor, conn, opts["q_key"]) if (q and total_count == 0 and opts["q_key"]) else None,
             "attribution": OGL_V3_ATTRIBUTION,
         })
     except Exception as ex:
@@ -1096,6 +1303,34 @@ def enrich_supplier_contacts(supplier_id: int):
         conn.close()
 
 
+@suppliers_bp.route("/api/suppliers/<int:supplier_id>/group", methods=["GET"])
+def get_supplier_group(supplier_id: int):
+    """Records that share this supplier's leading name ("Serco Limited", "Serco Leisure Operating Limited", "Serco Group plc"), with
+    their totals. A guide to related records by name, not a statement about who owns whom."""
+    conn = _get_connection()
+    cursor = conn.cursor()
+    try:
+        _execute(cursor, conn, "SELECT brand_key FROM supplier_stats WHERE supplier_id = ?", [supplier_id])
+        row = cursor.fetchone()
+        brand = (row[0] if row else "") or ""
+        if not brand:
+            return jsonify({"ok": True, "brand": "", "members": [], "totals": {"records": 0, "awards": 0, "value": 0.0}})
+        _execute(cursor, conn, """
+            SELECT s.id, s.name, s.company_number, st.total_awards, st.total_value, st.framework_appointments_count
+            FROM supplier_stats st JOIN suppliers s ON s.id = st.supplier_id
+            WHERE st.brand_key = ? AND st.listable AND st.total_awards > 0
+            ORDER BY st.total_value DESC, st.total_awards DESC LIMIT 60""", [brand])
+        members = [{"id": r[0], "name": r[1], "company_number": r[2] if is_valid_ch_company_number(r[2]) else "Not available",
+                    "awards": int(r[3] or 0), "value": float(r[4] or 0), "framework_places": int(r[5] or 0)} for r in cursor.fetchall()]
+        return jsonify({
+            "ok": True, "brand": brand.title(), "members": members,
+            "totals": {"records": len(members), "awards": sum(m["awards"] for m in members), "value": sum(m["value"] for m in members)},
+            "note": "Records whose name starts with the same word. Related by name only: check Companies House for who owns whom.",
+        })
+    finally:
+        conn.close()
+
+
 @suppliers_bp.route("/api/suppliers/<identifier>", methods=["GET"])
 def get_supplier_detail(identifier: str):
     """Fetch complete supplier profile and aggregated intelligence metrics with date range filtering."""
@@ -1189,12 +1424,24 @@ def get_supplier_detail(identifier: str):
         }
 
         # Contract awards list with date filtering (scoped to the 6 real UK/IE portals)
-        if _is_valid_cnum_for_award_join(cnum):
-            award_where = ["(supplier_id = ? OR company_number = ?)", f"source_portal IN ({_PORTALS_SQL_LIST})"]
-            award_params = [sup_id, cnum]
+        # A list card can stand for several supplier records of one company ("Scott Aerospace" published under two
+        # company numbers): the card adds their awards, so the profile opened from it must too, or the card says 38 wins
+        # and the profile 16. The card sends the ids it merged as ?merged=1,2,3.
+        merged_ids = [sup_id]
+        for part in (request.args.get("merged") or "").split(",")[:20]:
+            if part.strip().isdigit() and int(part) not in merged_ids:
+                merged_ids.append(int(part))
+        merged_cnums = [cnum] if _is_valid_cnum_for_award_join(cnum) else []
+        if len(merged_ids) > 1:
+            _execute(cursor, conn, f"SELECT company_number FROM suppliers WHERE id IN ({','.join('?' * (len(merged_ids) - 1))});", merged_ids[1:])
+            merged_cnums += [r[0] for r in cursor.fetchall() if _is_valid_cnum_for_award_join(r[0]) and r[0] not in merged_cnums]
+        ids_ph = ",".join("?" * len(merged_ids))
+        if merged_cnums:
+            award_where = [f"(supplier_id IN ({ids_ph}) OR company_number IN ({','.join('?' * len(merged_cnums))}))", f"source_portal IN ({_PORTALS_SQL_LIST})"]
+            award_params = merged_ids + merged_cnums
         else:
-            award_where = ["supplier_id = ?", f"source_portal IN ({_PORTALS_SQL_LIST})"]
-            award_params = [sup_id]
+            award_where = [f"supplier_id IN ({ids_ph})", f"source_portal IN ({_PORTALS_SQL_LIST})"]
+            award_params = merged_ids
         if start_date:
             award_where.append("date_signed >= ?")
             award_params.append(start_date)
@@ -1202,17 +1449,31 @@ def get_supplier_detail(identifier: str):
             award_where.append("date_signed <= ?")
             award_params.append(end_date)
 
-        award_sql = f"""
-            SELECT contract_awards.*, {_SHARED_N_SELECT} FROM contract_awards
-            WHERE {" AND ".join(award_where)}
-            ORDER BY date_signed DESC NULLS LAST;
-        """
-        _execute(cursor, conn, award_sql, award_params)
-        raw_award_rows = _dedup_recurring_awards([_row_to_dict(cursor, r) for r in cursor.fetchall()])
+        from tender_app import stats as _stats
+
+        if _stats.award_values_ready(cursor):
+            # The same rows the list and the stats are built from: already de-duplicated, shared notice values divided,
+            # and framework values copied onto call-offs left out. So the profile total equals the list total.
+            award_sql = f"""
+                SELECT * FROM award_values
+                WHERE {" AND ".join(award_where)}
+                ORDER BY date_signed DESC NULLS LAST;
+            """
+            _execute(cursor, conn, award_sql, award_params)
+            raw_award_rows = [_row_to_dict(cursor, r) for r in cursor.fetchall()]
+        else:
+            award_sql = f"""
+                SELECT contract_awards.*, {_SHARED_N_SELECT} FROM contract_awards
+                WHERE {" AND ".join(award_where)}
+                ORDER BY date_signed DESC NULLS LAST;
+            """
+            _execute(cursor, conn, award_sql, award_params)
+            raw_award_rows = _dedup_recurring_awards([_row_to_dict(cursor, r) for r in cursor.fetchall()])
 
         awards = []
         total_value = 0.0
         framework_total_ceiling = 0.0
+        framework_largest_ceiling = 0.0
         framework_appointments_count = 0
         direct_awards_count = 0
         competitive_count = 0
@@ -1231,9 +1492,14 @@ def get_supplier_detail(identifier: str):
             # excluded from every direct-value sum below, same as stats.py's precomputed path, but
             # still counted in the overall award/contract total (len(awards) below).
             over_ceiling = (not is_fw) and val > SINGLE_AWARD_STATS_CEILING_GBP
+            # A call-off published with its framework's value has no value of its own: it is a win, but never money.
+            ceiling_copy = bool(a.get("ceiling_copy"))
+            if ceiling_copy:
+                over_ceiling = True
             if is_fw:
                 framework_appointments_count += 1
                 framework_total_ceiling += val
+                framework_largest_ceiling = max(framework_largest_ceiling, val)
             elif not over_ceiling:
                 direct_awards_count += 1
                 total_value += val
@@ -1246,10 +1512,14 @@ def get_supplier_detail(identifier: str):
             else:
                 non_competitive_count += 1
 
-            # Authority breakdown
-            auth = a.get("authority_name") or "Unknown Authority"
-            if auth not in authority_stats:
-                authority_stats[auth] = {"authority_name": auth, "count": 0, "total_value": 0.0}
+            # Authority breakdown: one row per buyer however its name is capitalised or punctuated
+            auth_raw = a.get("authority_name") or "Unknown Authority"
+            auth_key = _norm_authority(auth_raw) or auth_raw
+            if auth_key not in authority_stats:
+                authority_stats[auth_key] = {"authority_name": auth_raw, "count": 0, "total_value": 0.0}
+            elif _nicer_name(auth_raw, authority_stats[auth_key]["authority_name"]):
+                authority_stats[auth_key]["authority_name"] = auth_raw
+            auth = auth_key
             authority_stats[auth]["count"] += 1
             if not is_fw and not over_ceiling:
                 authority_stats[auth]["total_value"] += val
@@ -1274,6 +1544,8 @@ def get_supplier_detail(identifier: str):
                 "cpv_code": a.get("cpv_code"),
                 "cpv_description": a.get("cpv_description"),
                 "contract_value": val,
+                "value_note": "The framework's value, not this order's: not counted" if ceiling_copy else None,
+                "ceiling_copy": ceiling_copy,
                 "currency": a.get("currency") or "GBP",
                 "date_signed": str(a.get("date_signed") or ""),
                 "contract_duration": a.get("contract_duration"),
@@ -1311,9 +1583,14 @@ def get_supplier_detail(identifier: str):
                 "total_value": total_value,
                 "avg_value": avg_value,
                 "framework_appointments": framework_appointments_count,
+                "framework_places": framework_appointments_count,
+                # The sum of every framework's full ceiling is not money this supplier can win (the ceiling is shared with the
+                # other suppliers on it), so the page shows the count and the largest ceiling, not this total.
                 "framework_total_ceiling": framework_total_ceiling,
+                "framework_largest_ceiling": framework_largest_ceiling,
                 "competitive_awards": competitive_count,
                 "non_competitive_awards": non_competitive_count,
+                "known_route_awards": competitive_count + non_competitive_count,
                 "non_competitive_ratio": round((non_competitive_count / (competitive_count + non_competitive_count) * 100), 1) if (competitive_count + non_competitive_count) > 0 else 0.0,
                 "unknown_route_awards": unknown_route_count,
                 "top_authorities": top_authorities,
@@ -1389,13 +1666,16 @@ def get_supplier_executive_summary(identifier: str):
             """, (sup_id,))
         raw_awards = cursor.fetchall()
         awards = _dedup_recurring_awards([_row_to_dict(cursor, r) for r in raw_awards])
+        from_table = _awards_from_table(cursor, conn, [sup_id], [cnum])
+        if from_table is not None:  # the same rows as the list and the profile
+            awards = from_table
 
         direct_awards = [a for a in awards if not a.get("is_framework")]
         framework_awards = [a for a in awards if a.get("is_framework")]
         # See SINGLE_AWARD_STATS_CEILING_GBP's docstring: a single non-framework award above this
         # is untrustworthy scraper/source noise, excluded from direct value/count (still counted
         # in total_awards above) to match every other aggregation path.
-        direct_awards_in_ceiling = [a for a in direct_awards if 0 <= float(a.get("contract_value") or 0) <= SINGLE_AWARD_STATS_CEILING_GBP]
+        direct_awards_in_ceiling = [a for a in direct_awards if not a.get("ceiling_copy") and 0 <= float(a.get("contract_value") or 0) <= SINGLE_AWARD_STATS_CEILING_GBP]
 
         total_value = sum(float(a.get("contract_value") or 0) for a in direct_awards_in_ceiling)
         framework_total_ceiling = sum(float(a.get("contract_value") or 0) for a in framework_awards)
@@ -2667,6 +2947,9 @@ def download_supplier_profile(supplier_id):
         """, (supplier_id,))
         raw_awards = cursor.fetchall()
         awards = _dedup_recurring_awards([_row_to_dict(cursor, r) for r in raw_awards])
+        from_table = _awards_from_table(cursor, conn, [supplier_id], [sup.get("company_number")])
+        if from_table is not None:  # the same rows as the list and the profile
+            awards = from_table
 
         # ── Compute Aggregated Breakdown Metrics ──────────────────────────────
         # Framework/call-off ceilings are shared across every supplier appointed to that
@@ -2678,7 +2961,10 @@ def download_supplier_profile(supplier_id):
             float(a.get("contract_value") or 0) for a in awards
             if not a.get("is_framework") and float(a.get("contract_value") or 0) <= SINGLE_AWARD_STATS_CEILING_GBP
         )
-        avg_value = total_value / len(awards) if awards else 0
+        # the average is over the awards that have a value of their own, as on the profile (not over every award, frameworks included)
+        valued_awards = sum(1 for a in awards if not a.get("is_framework") and not a.get("ceiling_copy")
+                            and 0 <= float(a.get("contract_value") or 0) <= SINGLE_AWARD_STATS_CEILING_GBP)
+        avg_value = total_value / valued_awards if valued_awards else 0
         non_comp, _known_route = _competition_stats(awards)
         non_comp_pct = round(non_comp / _known_route * 100, 1) if _known_route else 0
 
