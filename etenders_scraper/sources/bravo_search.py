@@ -224,6 +224,56 @@ def _fill_missing_from_details(rows: list[dict[str, Any]], site_root: str) -> No
         pool.shutdown(wait=False, cancel_futures=True)
 
 
+_PCS_CONTRACT_RESULTS = "2"  # the portal's "Contract Results" notice type
+
+
+def search_pcs_contract_results(
+    site_root: str, start_page: int = 1, max_pages: int = 10, timeout: int = 60
+) -> tuple[list[dict[str, Any]], int]:
+    """Rows from `max_pages` result pages of Public Contracts Scotland's "Contract Results" list, from `start_page` on.
+
+    The newest notices almost never name a winner yet (awards are published weeks later), so a scan of the first pages finds
+    about 1 in 10; pages a few months back name one in nearly every notice. Returns (rows, total_pages); a page that fails
+    ends the run with what was read so far.
+    """
+    search_url = f"{site_root.rstrip('/')}/Search/Search_MainPage.aspx"
+    session = requests.Session()
+    session.headers.update(DEFAULT_HEADERS)
+    first = session.get(search_url, timeout=timeout).text
+    data = _essential_asp_fields(first)
+    data.update({
+        "ctl00$maincontent$ddDocType": _PCS_CONTRACT_RESULTS,
+        "ctl00$maincontent$ddLocation": "-1",
+        "ctl00$maincontent$txtKeywords": "",
+        "ctl00$maincontent$btnSearch": "Search",
+    })
+    html = session.post(search_url, data=data, timeout=timeout).text
+    total_pages = _total_pages(html) or 1
+    rows: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        if page >= start_page:
+            rows.extend(_parse_results_html(html, site_root))
+        if page >= min(total_pages, start_page + max_pages - 1):
+            break
+        page = start_page if page < start_page else page + 1
+        form = {
+            **_essential_asp_fields(html),
+            "ctl00$maincontent$ddDocType": _PCS_CONTRACT_RESULTS,
+            "__EVENTTARGET": _PCS_PAGE_TARGET,
+            "__EVENTARGUMENT": "",
+            _PCS_PAGE_SELECT: str(page),
+        }
+        try:
+            response = session.post(search_url, data=form, timeout=timeout)
+            response.raise_for_status()
+        except Exception as exc:
+            print(f"[search_pcs_contract_results page {page}]: {exc}")
+            break
+        html = response.text
+    return rows, total_pages
+
+
 def _pcs_collect_all_pages(
     session: requests.Session,
     search_url: str,

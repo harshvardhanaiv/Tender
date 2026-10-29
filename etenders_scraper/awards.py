@@ -1242,6 +1242,7 @@ def scrape_live_bravo_awards(
     source_label: str,
     limit: int = 30,
     conn: Any = None,
+    start_page: int | None = None,
 ) -> list[dict[str, Any]]:
     """Scrapes real, live Contract Award Notices from a Bravo-based portal
     (Sell2Wales / Public Contracts Scotland).
@@ -1267,12 +1268,15 @@ def scrape_live_bravo_awards(
     from .sources.bravo_search import search_bravo_portal, search_sell2wales_contract_results, fetch_bravo_details
 
     scraped_records: list[dict[str, Any]] = []
+    next_page = None
 
     try:
         if source_id == "sell2wales":
             rows = search_sell2wales_contract_results(
                 source_id=source_id, source_label=source_label, site_root=site_root, max_results=limit,
             )
+        elif source_id == "pcs":
+            rows, next_page = _pcs_candidate_rows(site_root, limit, conn, start_page)
         else:
             rows = search_bravo_portal(
                 site_root=site_root,
@@ -1287,17 +1291,24 @@ def scrape_live_bravo_awards(
 
     region = "Scotland" if source_id == "pcs" else "Wales"
 
-    for row in rows:
+    def _fetch(row: dict[str, Any]) -> Any:
+        key = row.get("resource_id") or row.get("detail_url")
+        if not key:
+            return None
+        try:
+            return fetch_bravo_details(source_id, key, site_root=site_root)
+        except Exception as ex:
+            print(f"[{source_label} awards] detail fetch error for {key}: {ex}")
+            return None
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        fetched = list(pool.map(_fetch, rows))
+
+    for row, details in zip(rows, fetched):
         resource_id = row.get("resource_id")
         detail_url = row.get("detail_url")
-        if not resource_id and not detail_url:
-            continue
-
-        try:
-            details = fetch_bravo_details(source_id, resource_id or detail_url, site_root=site_root)
-        except Exception as ex:
-            print(f"[{source_label} awards] detail fetch error for {resource_id}: {ex}")
-            continue
         if not details:
             continue
 
@@ -1372,7 +1383,66 @@ def scrape_live_bravo_awards(
 
         scraped_records.append(contract_record)
 
+    if source_id == "pcs" and next_page and conn:
+        _save_cursor(conn, "pcs_contract_results_page", next_page)
     return scraped_records
+
+
+def _save_cursor(conn: Any, name: str, value: int) -> None:
+    try:
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS scrape_cursors (name TEXT PRIMARY KEY, value INTEGER NOT NULL, updated_at TIMESTAMP DEFAULT NOW())")
+        cur.execute(
+            "INSERT INTO scrape_cursors (name, value, updated_at) VALUES (%s, %s, NOW()) "
+            "ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()", (name, int(value)))
+        conn.commit()
+    except Exception as ex:
+        print(f"[cursor] not saved: {ex}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
+def _load_cursor(conn: Any, name: str) -> int:
+    try:
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS scrape_cursors (name TEXT PRIMARY KEY, value INTEGER NOT NULL, updated_at TIMESTAMP DEFAULT NOW())")
+        cur.execute("SELECT value FROM scrape_cursors WHERE name = %s", (name,))
+        row = cur.fetchone()
+        conn.commit()
+        return int(row[0]) if row else 1
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 1
+
+
+def _pcs_candidate_rows(site_root: str, limit: int, conn: Any, start_page: int | None) -> tuple[list[dict[str, Any]], int]:
+    """Notices to read for winners: the next `limit` of Public Contracts Scotland's Contract Results list, walking on from where
+    the last run stopped (wrapping to the start at the end), minus notices already stored. Returns (rows, page to resume from)."""
+    from .sources.bravo_search import search_pcs_contract_results
+
+    pages = max(1, -(-limit // 10))
+    page = start_page or (_load_cursor(conn, "pcs_contract_results_page") if conn else 1)
+    rows, total_pages = search_pcs_contract_results(site_root, start_page=page, max_pages=pages)
+    resume = page + pages if page + pages <= total_pages else 1
+    if conn and rows:
+        try:
+            cur = conn.cursor()
+            urls = [r.get("detail_url") for r in rows if r.get("detail_url")]
+            cur.execute("SELECT DISTINCT notice_url FROM contract_awards WHERE notice_url = ANY(%s)", (urls,))
+            known = {r[0] for r in cur.fetchall()}
+            rows = [r for r in rows if r.get("detail_url") not in known]
+        except Exception as ex:
+            print(f"[Public Contracts Scotland awards] known-notice check skipped: {ex}")
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    return rows, resume
 
 
 AWARD_SCHEDULER_STATUS: dict[str, Any] = {
@@ -1394,6 +1464,9 @@ AWARD_SCHEDULER_STATUS: dict[str, Any] = {
 # Few of the notices these portals list have a published winner (about 1 in 10 here), so a run of 30 stored only a handful; 100
 # per run gives Wales and Scotland a real flow of awards instead of the trickle that left them at under 100 each.
 BRAVO_SCHEDULED_LIMIT = 100
+# Scotland's list is read from where the last run stopped, and a few months back nearly every notice names a winner, so it
+# can take more per run than Wales; at 400 every 6 hours the whole back catalogue is read in about two weeks.
+PCS_SCHEDULED_LIMIT = 400
 
 
 def get_award_scheduler_status() -> dict[str, Any]:
@@ -1436,7 +1509,7 @@ def start_award_scheduler(get_db_conn_func: Any = None):
             ("Contracts Finder", lambda conn: scrape_live_contracts_finder_awards(limit=50, days_back=30, conn=conn)),
             ("Find a Tender", lambda conn: scrape_live_find_tender_awards(max_records=50, conn=conn)),
             ("Sell2Wales", lambda conn: scrape_live_bravo_awards("sell2wales", "https://www.sell2wales.gov.wales", "Sell2Wales", limit=BRAVO_SCHEDULED_LIMIT, conn=conn)),
-            ("Public Contracts Scotland", lambda conn: scrape_live_bravo_awards("pcs", "https://www.publiccontractsscotland.gov.uk", "Public Contracts Scotland", limit=BRAVO_SCHEDULED_LIMIT, conn=conn)),
+            ("Public Contracts Scotland", lambda conn: scrape_live_bravo_awards("pcs", "https://www.publiccontractsscotland.gov.uk", "Public Contracts Scotland", limit=PCS_SCHEDULED_LIMIT, conn=conn)),
         ]
         while True:
             total_count = 0
