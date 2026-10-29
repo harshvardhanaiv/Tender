@@ -27,6 +27,8 @@ from etenders_scraper.awards import (
     UK_IE_SOURCE_PORTALS,
     SINGLE_AWARD_STATS_CEILING_GBP,
     DEDUPED_AWARDS_CTE_SQL,
+    PANEL_MIN_SUPPLIERS,
+    PANEL_MIN_VALUE,
 )
 
 from tender_app.blueprints.buyers_bp import _norm_auth_sql
@@ -407,6 +409,10 @@ def ensure_fresh_async(get_connection: Callable[[], Any], cursor=None) -> None:
                 if age is None or age > STATS_TTL_S:
                     return True
             if not award_values_ready(cur):  # first start after this table was introduced: build it now, not in up to 6 hours
+                return True
+            # a table built before the panel-notice rule: it still holds large shared values that rule now withholds
+            cur.execute(f"SELECT EXISTS (SELECT 1 FROM {AWARD_VALUES_TABLE} WHERE shared_n >= {PANEL_MIN_SUPPLIERS} AND contract_value_notice >= {PANEL_MIN_VALUE} AND NOT COALESCE(ceiling_copy, FALSE) AND COALESCE(is_framework, 0) = 0 LIMIT 1)")
+            if cur.fetchone()[0]:
                 return True
             # rows written before entity_key existed, or with the first version of it (lot suffixes not yet removed)
             cur.execute("SELECT EXISTS (SELECT 1 FROM supplier_stats WHERE entity_key IS NULL OR region_norm IS NULL OR entity_key LIKE '%APPOINTEDTOLOT%' LIMIT 1)")

@@ -7704,7 +7704,8 @@ function renderPipelineBoard() {
       </button>`).join("")}</div>` : "";
   const statsHtml = entityOnlyView ? entityStatsHtml : `
     <div class="dash-stats">
-      <div class="dash-stat"><span class="dash-stat__num">${items.length}</span><span class="dash-stat__label">Tracked</span></div>
+      <div class="dash-stat"><span class="dash-stat__num">${items.length}</span><span class="dash-stat__label">Tracked tenders</span></div>
+      ${_pipelineKind === "all" ? `<div class="dash-stat" title="Buyers and suppliers you watch; they sit in the Watching column with your tenders"><span class="dash-stat__num">${entities.length}</span><span class="dash-stat__label">Watched buyers &amp; suppliers</span></div>` : ""}
       <div class="dash-stat dash-stat--urgent"><span class="dash-stat__num">${urgent.filter(i => i.daysLeft <= 7).length}</span><span class="dash-stat__label">Deadline ≤7 days</span></div>
       <div class="dash-stat"><span class="dash-stat__num">${items.filter(i => i.stage === "bidding").length}</span><span class="dash-stat__label">Bidding</span></div>
       <div class="dash-stat dash-stat--fit"><span class="dash-stat__num">${highFit.length}</span><span class="dash-stat__label">High fit (≥60)</span>${profilePromptHtml}</div>
@@ -7751,7 +7752,7 @@ function renderPipelineBoard() {
       const key = item.tender_key;
       const daysLeft = dashDaysLeft(item.submission_deadline, now);
       const daysHtml = daysLeft !== null
-        ? `<span class="dash-card__days ${daysLeft <= 7 ? "dash-card__days--urgent" : ""}">${daysLeft >= 0 ? daysLeft + "d left" : "Expired"}</span>`
+        ? `<span class="dash-card__days ${daysLeft <= 7 ? "dash-card__days--urgent" : ""}">${daysLeft >= 0 ? daysLeft + "d left" : "Closed " + esc(item.submission_deadline || "")}</span>`
         : "";
       const aiChip = item.ai_score != null
         ? `<span class="fit-badge-deep-pill fit-badge-deep-pill--${item.ai_band}" title="AI deep score: ${item.ai_score}/100 (a separate measure from the Keyword Score)">★ ${item.ai_score}</span>`
@@ -16813,7 +16814,7 @@ function renderHistoryList() {
 
   let html = "";
   filtered.forEach(item => {
-    const formattedDate = new Date(item.created_at).toLocaleString();
+    const formattedDate = new Date(item.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
     let typeLabel = "";
     let iconClass = "";
     let badgeClass = "";
@@ -17716,7 +17717,7 @@ function renderAnswerBank() {
 
     let fileBadgeHtml = "";
     if (item.file_name) {
-      fileBadgeHtml = `<span class="ab-card__file-pill" title="Attached document: ${esc(item.file_name)}">📄 ${esc(item.file_name)}</span>`;
+      fileBadgeHtml = `<span class="ab-card__file-pill" title="Attached to this answer: its text was read when the answer was written. It is kept with the answer and is not listed in My Documents.">📄 Attached: ${esc(item.file_name)}</span>`;
     }
 
     const catLabel = typeof formatCatLabel === "function" ? formatCatLabel(item.category) : item.category;
@@ -22196,6 +22197,15 @@ let _buyerRadarController = null;
 let _buyerFeedPending = false; // true while a feed request is in flight — lets the Map tab
                                 // know to show its own spinner instead of a premature "0 buyers"
 
+// One money format for buyer figures: £820, £45k, £3.8M, £3.77bn (a bare "£3767.8M" is hard to read next to "£11k").
+function fmtBuyerMoney(val) {
+  val = Number(val) || 0;
+  if (val >= 1e9) return `£${(val / 1e9).toFixed(2)}bn`;
+  if (val >= 1e6) return `£${(val / 1e6).toFixed(1)}M`;
+  if (val >= 1e3) return `£${(val / 1e3).toFixed(0)}k`;
+  return `£${val.toFixed(0)}`;
+}
+
 // Set when a buyer drawer is open and the user follows an incumbent-supplier link out to
 // Supplier Intelligence (see openSupplierIntelligenceModal). Consumed the next time Buyer
 // Intelligence is opened — via the sidebar nav, not just the browser Back button — so that
@@ -22327,7 +22337,7 @@ function populateBuyerProfileDrawer(data) {
   $("drawerBuyerRegion").textContent = data.stats?.region || "UK Public Sector Authority";
 
   const stats = data.stats || {};
-  const fmtMoney = (val) => val >= 1e6 ? `£${(val/1e6).toFixed(1)}M` : (val >= 1e3 ? `£${(val/1e3).toFixed(0)}k` : `£${val.toFixed(0)}`);
+  const fmtMoney = fmtBuyerMoney;
   const floatVal = (v) => parseFloat(v || 0);
 
   $("drawerTotalSpend").textContent = fmtMoney(stats.total_spend || 0);
@@ -22630,7 +22640,7 @@ function renderOpportunityFeed(data) {
     return;
   }
 
-  const fmtMoney = (val) => val >= 1e6 ? `£${(val/1e6).toFixed(1)}M` : (val >= 1e3 ? `£${(val/1e3).toFixed(0)}k` : `£${val.toFixed(0)}`);
+  const fmtMoney = fmtBuyerMoney;
 
   cardsList.innerHTML = cards.map(c => {
     const tagsHtml = (c.category_tags || []).map(t => {
@@ -22754,7 +22764,7 @@ function renderOpportunityRadar(data) {
     return;
   }
 
-  const fmtMoney = (val) => val >= 1e6 ? `£${(val/1e6).toFixed(1)}M` : (val >= 1e3 ? `£${(val/1e3).toFixed(0)}k` : `£${val.toFixed(0)}`);
+  const fmtMoney = fmtBuyerMoney;
 
   tbody.innerHTML = renewals.map(r => {
     const daysColor = r.days_left <= 180 ? "#dc2626" : (r.days_left <= 365 ? "#d97706" : "var(--text)");
@@ -23821,10 +23831,9 @@ async function populateUserDocsCompanyFilter() {
 
     if (currentVal && currentVal !== "all" && (state.companyProfiles || []).some(p => String(p.id) === String(currentVal))) {
       filter.value = String(currentVal);
-    } else if (targetId && (state.companyProfiles || []).some(p => String(p.id) === String(targetId))) {
-      filter.value = String(targetId);
     } else {
-      filter.value = currentVal || "all";
+      // Open on "All Documents": a company filter would hide documents that belong to no company (the list looked empty)
+      filter.value = "all";
     }
   } catch {/* ignore */ }
 }
@@ -23869,7 +23878,10 @@ function renderUserDocuments(docs) {
   if (!list) return;
   renderDocExpiryAlertsBanner(state.userDocuments || docs, "userDocsAlertBanner");
   if (docs.length === 0) {
-    list.innerHTML = `<div class="profile-doc-empty">No documents uploaded yet. Add files to help tailor bid proposals. Once you upload files above, they will be displayed here.</div>`;
+    const others = (state.userDocuments || []).length;
+    list.innerHTML = others
+      ? `<div class="profile-doc-empty">No documents for this company. ${others} other document${others === 1 ? "" : "s"} ${others === 1 ? "is" : "are"} under <strong>All Documents</strong>.</div>`
+      : `<div class="profile-doc-empty">No documents uploaded yet. Add files to help tailor bid proposals. Files attached to Answer Bank answers stay with those answers and are not listed here.</div>`;
     return;
   }
 

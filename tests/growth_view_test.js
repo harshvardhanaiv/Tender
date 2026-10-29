@@ -201,7 +201,7 @@ test("selected, dismissed, opted-out and already-in-a-campaign signals say so", 
   has(dismissed, "is-dismissed", "Dismissed", 'data-action="restore"', "Restore");
   lacks(dismissed, 'data-action="dismiss"');
   const campaign = V.signalCard(renewal({ state: { dismissed: false, opted_out: false, campaigns: [{ id: 12, name: "Q1 renewals" }] } }), ctx());
-  has(campaign, 'data-action="open-campaign"', 'data-id="12"', "In: Q1 renewals");
+  has(campaign, 'data-action="open-campaign"', 'data-id="12"', "Buyer already in: Q1 renewals");
   has(V.signalCard(renewal({ state: { dismissed: false, opted_out: true, campaigns: [] }, target: { targetable: false, reason: "They asked not to be contacted." } }), ctx()),
     "Do not contact", "gs-signal__why", "They asked not to be contacted.");
 });

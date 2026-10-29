@@ -89,6 +89,42 @@ def test_repeated_framework_values_are_not_won_value():
         conn.close()
 
 
+PANEL_BUYER = "ZZ Panel Buyer"
+
+
+def test_a_panel_notice_value_is_not_split_into_made_up_shares():
+    """Five or more suppliers on one notice at one identical value (a marketplace / panel) have no value of their own: the
+    GBP 1.1bn children's-residential marketplace named 30 providers at GBP 1.1bn each, and splitting gave each a share nobody
+    published. Two to four suppliers stay a split joint award; a small panel is left alone."""
+    import unittest
+    try:
+        conn = get_db_connection()
+    except Exception as exc:  # noqa: BLE001
+        raise unittest.SkipTest(f"no database: {exc}")
+    cur = conn.cursor()
+    cur.execute("DELETE FROM contract_awards WHERE authority_name = %s", (PANEL_BUYER,))
+    try:
+        for notice, n, val in (("p5", 5, 20_000_000), ("p4", 4, 20_000_000), ("small6", 6, 400_000)):
+            for i in range(n):
+                cur.execute(
+                    "INSERT INTO contract_awards (authority_name, supplier_name, tender_title, cpv_code, date_signed, contract_value, is_framework, procurement_type, notice_url, source_portal, currency) "
+                    "VALUES (%s,%s,%s,'72000000','2026-02-01',%s,0,'Restricted procedure',%s,'Contracts Finder','GBP')",
+                    (PANEL_BUYER, f"zz_panel_{notice}_{i}", f"zz {notice}", val, f"https://zz.invalid/panel/{notice}"))
+        conn.commit()
+        cur.execute(
+            f"""WITH {DEDUPED_AWARDS_CTE_SQL}
+                SELECT split_part(tender_title, ' ', 2), COUNT(*), COUNT(*) FILTER (WHERE ceiling_copy), COALESCE(SUM(contract_value), 0)
+                FROM deduped_awards WHERE authority_name = %s GROUP BY 1 ORDER BY 1""", (PANEL_BUYER,))
+        got = {r[0]: r[1:] for r in cur.fetchall()}
+        assert got["p5"] == (5, 5, 0), got["p5"]
+        assert got["p4"][:2] == (4, 0) and float(got["p4"][2]) == 20_000_000, got["p4"]
+        assert got["small6"][:2] == (6, 0), got["small6"]
+    finally:
+        cur.execute("DELETE FROM contract_awards WHERE authority_name = %s", (PANEL_BUYER,))
+        conn.commit()
+        conn.close()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

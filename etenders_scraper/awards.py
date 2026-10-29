@@ -162,10 +162,16 @@ SHARED_VALUE_N_SQL = (
 # Identical values are more likely by chance on small sums, so the bar rises as the value falls.
 CEILING_COPY_TIERS = ((1_000_000, 3), (100_000, 5))  # (value at least, rows at least)
 _ceiling_window = "COUNT(*) OVER (PARTITION BY q.auth_key, q.contract_value_notice, q.procurement_type)"
+# The same applies to a marketplace or panel notice: one large value published identically against many appointed suppliers
+# (a GBP 1.1bn children's-residential marketplace names 30 providers at GBP 1.1bn each). Dividing it by the number of
+# suppliers still gives each a figure nobody published, so five or more suppliers on one identical notice value of GBP 1m or
+# more count as appointments with no value. Two to four suppliers are a joint or lotted award and keep the split.
+PANEL_MIN_SUPPLIERS = 5
+PANEL_MIN_VALUE = 1_000_000
 CEILING_COPY_SQL = (
-    "(COALESCE(q.is_framework, 0) = 0 AND q.procurement_type = 'Framework / Call-off' AND ("
+    "(COALESCE(q.is_framework, 0) = 0 AND ((q.procurement_type = 'Framework / Call-off' AND ("
     + " OR ".join(f"(q.contract_value_notice >= {v} AND {_ceiling_window} >= {n})" for v, n in CEILING_COPY_TIERS)
-    + "))"
+    + f")) OR (q.shared_n >= {PANEL_MIN_SUPPLIERS} AND q.contract_value_notice >= {PANEL_MIN_VALUE})))"
 )
 
 
@@ -410,6 +416,22 @@ _BUYER_AUTHORITY_NAME_RE = re.compile(
 )
 
 
+# Text lifted from a notice page that is not a name: a section heading read as the buyer ("one.1) Name and addressesI.1) Name
+# and addresses") or the middle of a sentence read as the winner ("is PwC, with a committed").
+_JUNK_AUTHORITY_RE = re.compile(r"name\s+and\s+address|^\s*(?:one|[ivx]+|\d+)\.\d+\)|^\s*section\s+[ivx\d]+", re.IGNORECASE)
+_JUNK_SUPPLIER_RE = re.compile(r"^(?:is|are|was|were|has|have|will|and|being|which|that|by)\s+\S")
+
+
+def is_junk_authority_name(name: str | None) -> bool:
+    return bool(name) and bool(_JUNK_AUTHORITY_RE.search(name))
+
+
+def is_junk_supplier_name(name: str | None) -> bool:
+    """A lower-case verb or joining word at the start: a fragment of prose ("is PwC, with a committed"), never a company
+    ("IS Group" is upper-case and is kept)."""
+    return bool(name) and bool(_JUNK_SUPPLIER_RE.match(name.strip()))
+
+
 def looks_like_buyer_authority(name: str) -> bool:
     """True if `name` looks like a contracting authority (NHS trust, ICB, council, police/fire
     authority, ...) rather than a company that could plausibly win and deliver a contract.
@@ -446,6 +468,12 @@ def ingest_award_record(contract_record: dict[str, Any], conn: Any, overwrite: b
     # Check for invalid placeholder supplier names
     if supplier_name.lower() in PLACEHOLDER_SUPPLIER_NAMES:
         return False
+
+    # Prose or a section heading picked up from the notice page is not a name; a heading as the buyer is stored as "unknown buyer".
+    if is_junk_supplier_name(supplier_name):
+        return False
+    if is_junk_authority_name(contract_record.get("authority_name")):
+        contract_record["authority_name"] = ""
 
     # A buyer authority (NHS trust, ICB, council, police/fire authority, ...) is never a real
     # supplier -- reject rather than upsert it (e.g. a delivery-partner field that got
@@ -777,6 +805,8 @@ def scrape_live_find_tender_awards(keywords: str = "services", max_records: int 
                         h3 = parent.find("h3")
                         if h3:
                             authority_name = h3.get_text(strip=True)
+                            if is_junk_authority_name(authority_name):
+                                authority_name = ""
                         lines_a = [l.strip() for l in parent.get_text("\n").split("\n") if l.strip()]
                         for idx, l in enumerate(lines_a):
                             if l.startswith("Email:"):

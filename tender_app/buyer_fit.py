@@ -35,7 +35,7 @@ def factors(*, cpv_score: float, prox_score: float, renew_score: float, openness
     else:
         prox = f"About {int(round(dist_km))} km from your chosen location."
     if days_until_renewal is not None and 0 <= days_until_renewal <= 180:
-        renew = f"A contract is due to renew in {days_until_renewal} days ({next_renewal})."
+        renew = f"A contract is due to renew in {days_until_renewal} day{'' if days_until_renewal == 1 else 's'} ({next_renewal})."
     elif days_until_renewal is not None and 180 < days_until_renewal <= 365:
         renew = f"Next renewal is about {round(days_until_renewal / 30)} months away ({next_renewal})."
     else:

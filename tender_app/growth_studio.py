@@ -559,7 +559,7 @@ def _renewal_text(entry: Mapping[str, Any]) -> tuple[str, str]:
     elif entry["value"] is not None:
         value = f"Last award on record: {gbp(entry['value'])}"
         if entry["annual_value"] and entry["term_years"]:
-            value += f" (about {gbp(entry['annual_value'])} a year over {entry['term_years']:g} years)"
+            value += f" (about {gbp(entry['annual_value'])} a year over {entry['term_years']:g} {'year' if entry['term_years'] == 1 else 'years'})"
         bits.append(value + ".")
     return headline, " ".join(bits)
 

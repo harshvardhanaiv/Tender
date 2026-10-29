@@ -20,7 +20,8 @@ from tender_app.grants import grants_for_funder
 from datetime import datetime, timedelta
 
 from etenders_scraper.deadline import enrich_deadline_fields
-from etenders_scraper.awards import SINGLE_AWARD_STATS_CEILING_GBP, DEDUPED_AWARDS_CTE_SQL, deduped_awards_cte_sql, classify_buyer_type
+from etenders_scraper.awards import SINGLE_AWARD_STATS_CEILING_GBP, DEDUPED_AWARDS_CTE_SQL, deduped_awards_cte_sql, classify_buyer_type, looks_like_buyer_authority
+from tender_app.entity_merge import entity_name_key
 
 buyers_bp = Blueprint("buyers", __name__)
 
@@ -557,6 +558,38 @@ def search_buyers():
 BUYER_CTE_PARAMS = 3
 
 
+def _tidy_top_suppliers(rows: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
+    """A buyer's winners as one row per company: other public bodies that appear in the supplier field (an NHS trust named
+    as a delivery partner) are dropped, and spellings of one name ("Mears Limited" / "MEARS LIMITED") are added together."""
+    merged: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        name = (r.get("supplier_name") or "").strip()
+        if not name or looks_like_buyer_authority(name):
+            continue
+        key = entity_name_key(name) or name.upper()
+        cur = merged.get(key)
+        if cur is None:
+            merged[key] = dict(r, supplier_name=name, _best=r.get("contracts_won") or 0)
+            continue
+        for f in ("contracts_won", "total_value", "framework_total_ceiling", "framework_appointments"):
+            cur[f] = (cur.get(f) or 0) + (r.get(f) or 0)
+        if (r.get("last_award_date") or "") > (cur.get("last_award_date") or ""):
+            cur["last_award_date"] = r.get("last_award_date")
+        if (r.get("contracts_won") or 0) > cur["_best"] and not _shouty(name):
+            cur["supplier_name"], cur["_best"] = name, r.get("contracts_won") or 0
+        elif _shouty(cur["supplier_name"]) and not _shouty(name):
+            cur["supplier_name"] = name
+    out = sorted(merged.values(), key=lambda x: (-(x.get("total_value") or 0), -(x.get("framework_total_ceiling") or 0), -(x.get("contracts_won") or 0)))
+    for r in out:
+        r.pop("_best", None)
+    return out[:limit]
+
+
+def _shouty(text: str) -> bool:
+    letters = [c for c in text if c.isalpha()]
+    return bool(letters) and all(c.isupper() for c in letters)
+
+
 @buyers_bp.route("/api/buyers/<authority_name>", methods=["GET"])
 def get_buyer_detail(authority_name: str):
     """
@@ -668,11 +701,11 @@ def get_buyer_detail(authority_name: str):
               AND supplier_name IS NOT NULL
               AND supplier_name != ''
             GROUP BY supplier_name
-            ORDER BY total_value DESC NULLS LAST, framework_total_ceiling DESC NULLS LAST
-            LIMIT 10
+            ORDER BY total_value DESC NULLS LAST, framework_total_ceiling DESC NULLS LAST, contracts_won DESC
+            LIMIT 60
         """
         _execute(cursor, conn, top_suppliers_query, [authority_name] * BUYER_CTE_PARAMS)
-        top_suppliers = [_row_to_dict(cursor, row) for row in cursor.fetchall()]
+        top_suppliers = _tidy_top_suppliers([_row_to_dict(cursor, row) for row in cursor.fetchall()])
 
         # 3. SME / VCSE ratio
         sme_query = f"""
@@ -1445,7 +1478,8 @@ def get_opportunity_feed():
             # same buyer, and which variant got picked (and so which suppliers surfaced)
             # could differ request to request. `ORDER BY sv DESC, supplier_name ASC` makes
             # ties between equal-value suppliers deterministic too.
-            norm_to_auth = {re.sub(r"\s+", " ", (n or "").strip()).upper(): n for n in auth_names_for_sup}
+            _execute(cursor, conn, f"SELECT t.n, {_norm_auth_sql('t.n')} FROM UNNEST(?::text[]) AS t(n)", [auth_names_for_sup])
+            norm_to_auth = {norm: n for n, norm in cursor.fetchall()}
             placeholders = ",".join([_norm_auth_sql("?")] * len(auth_names_for_sup))
             # Exclude framework ceilings from the ranking value for the same reason as
             # top_suppliers_query in get_buyer_detail() above — that figure is duplicated
@@ -1457,15 +1491,18 @@ def get_opportunity_feed():
                 FROM contract_awards
                 WHERE {_norm_auth_sql("authority_name")} IN ({placeholders}) AND supplier_name IS NOT NULL AND supplier_name != ''
                 GROUP BY {_norm_auth_sql("authority_name")}, supplier_name
-                ORDER BY sv DESC, supplier_name ASC
+                ORDER BY sv DESC NULLS LAST, supplier_name ASC
             """
             try:
                 _execute(cursor, conn, sup_sql, auth_names_for_sup)
                 top_sup_map = {}
                 for an_norm, sn, _sv in cursor.fetchall():
                     an = norm_to_auth.get(an_norm, an_norm)
-                    if len(top_sup_map.get(an, [])) < 2:
-                        top_sup_map.setdefault(an, []).append(sn)
+                    if looks_like_buyer_authority(sn):
+                        continue
+                    seen = top_sup_map.setdefault(an, [])
+                    if len(seen) < 2 and entity_name_key(sn) not in {entity_name_key(x) for x in seen}:
+                        seen.append(sn)
                 for c in top_cards:
                     c["top_suppliers"] = top_sup_map.get(c["authority_name"], [])
             except Exception as _sup_err:

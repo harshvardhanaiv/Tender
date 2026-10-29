@@ -257,7 +257,7 @@
       const first = inCampaigns[0];
       const more = inCampaigns.length - 1;
       chips.push(
-        `<button type="button" class="gs-badge gs-badge--accent gs-badge--link" data-action="open-campaign" data-id="${esc(first.id)}" title="${more ? "Also in " + more + " other campaign" + (more > 1 ? "s" : "") + ". " : ""}Open this campaign">In: ${esc(first.name)}${more ? " +" + more : ""}</button>`
+        `<button type="button" class="gs-badge gs-badge--accent gs-badge--link" data-action="open-campaign" data-id="${esc(first.id)}" title="${more ? "Also in " + more + " other campaign" + (more > 1 ? "s" : "") + ". " : ""}Open this campaign">Buyer already in: ${esc(first.name)}${more ? " +" + more : ""}</button>`
       );
     }
     const select = target.targetable
