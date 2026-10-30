@@ -33,7 +33,7 @@
   <link rel="stylesheet" href="/mobile.css?v=4" />
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=19" />
-  <link rel="stylesheet" href="/funding.css?v=21" />
+  <link rel="stylesheet" href="/funding.css?v=24" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
   <script src="/translations.js?v=6"></script>
@@ -2673,6 +2673,7 @@
 
         <section id="planningDetail" class="supplier-detail-card planning-detail" aria-live="polite" aria-label="Application details">
           <div class="planning-empty">
+            <div id="planningProfileNote" class="planning-empty__note hidden" role="note"></div>
             <h3>Pick an application</h3>
             <p>Each lead shows who is behind the scheme, where it is in planning, and why it scores the way it does.</p>
             <p class="planning-empty__note">Planning registers do not publish contract values, so none is shown or estimated.</p>
@@ -2714,6 +2715,8 @@
       <div class="funding-layout">
         <button type="button" id="btnFundingFilters" class="funding-btn funding-filters-toggle" aria-expanded="false" aria-controls="fundingFilterBar">Filters</button>
         <form id="fundingFilterBar" class="funding-side" aria-label="Filter grants">
+          <div class="funding-side__head"><span class="funding-side__title">Filters</span>
+            <button type="button" id="btnFundingFiltersHide" class="funding-side__hide" aria-label="Hide the filters" title="Hide the filters to give the results more room">&laquo;</button></div>
           <h3 class="funding-side__h">Who's applying</h3>
           <select id="selFundingApplicant" name="applicant" class="funding-select" aria-label="Who is applying">
             <option value="Private Sector">Private company</option>
@@ -3414,9 +3417,9 @@
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=1"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=261"></script>
-  <script src="/planning.js?v=18"></script>
-  <script src="/funding.js?v=9"></script>
+  <script src="/app.js?v=262"></script>
+  <script src="/planning.js?v=20"></script>
+  <script src="/funding.js?v=11"></script>
   <script src="/grants-board.js?v=1"></script>
   <script src="/funding-ai.js?v=8"></script>
   <script src="/policy-lib.js?v=2"></script>

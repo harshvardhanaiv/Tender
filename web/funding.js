@@ -452,10 +452,19 @@
     byId("btnFunding")?.addEventListener("click", openFunding);
     byId("fundingClose")?.addEventListener("click", closeFunding);
     byId("fundingFilterBar")?.addEventListener("submit", (e) => { e.preventDefault(); reload(0); });
-    byId("btnFundingFilters")?.addEventListener("click", () => {
-      const open = byId("fundingFilterBar")?.classList.toggle("is-open");
-      byId("btnFundingFilters").setAttribute("aria-expanded", open ? "true" : "false");
-    });
+    // The filters sit behind the "Filters" button at every width; the grants use the full width until it is pressed.
+    const setFiltersOpen = (open) => {
+      byId("fundingFilterBar")?.classList.toggle("is-open", open);
+      document.querySelector("#fundingModal .funding-layout")?.classList.toggle("has-filters-open", open);
+      byId("btnFundingFilters")?.setAttribute("aria-expanded", open ? "true" : "false");
+      try { localStorage.setItem("tf_funding_filters_open", open ? "1" : "0"); } catch (_) { /* private mode */ }
+    };
+    byId("btnFundingFilters")?.addEventListener("click", () => setFiltersOpen(true));
+    byId("btnFundingFiltersHide")?.addEventListener("click", () => setFiltersOpen(false));
+    // Open on a wide screen, hidden on a small one, until the reader chooses; the choice is remembered.
+    let wantOpen = window.innerWidth > 900;
+    try { const saved = localStorage.getItem("tf_funding_filters_open"); if (saved === "1" || saved === "0") wantOpen = saved === "1"; } catch (_) { /* private mode */ }
+    setFiltersOpen(wantOpen);
     byId("txtFundingSearch")?.addEventListener("input", () => reload(300));
     ["selFundingLocation", "selFundingAward", "selFundingSort", "chkFundingUkWide", "chkFundingHideUnlikely", "chkFundingSoon", "chkFundingSaved"].forEach((id) => {
       byId(id)?.addEventListener("change", () => { track("funding_filter_changed", { filter: id.replace(/^(sel|chk)Funding/, "").toLowerCase(), value: String(byId(id).type === "checkbox" ? byId(id).checked : byId(id).value).slice(0, 40) }); reload(0); });

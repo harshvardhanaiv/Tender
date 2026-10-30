@@ -939,8 +939,32 @@
     }
   }
 
+  // Planning leads are schemes that will need builders and trades. For a company whose profile mentions none of that, say who the
+  // list is for instead of ranking housing schemes as if they were its leads (re-test P5); for one that does, name the trades.
+  const BUILD_WORDS = /\b(construction|building|builder|civil|groundwork|scaffold|roofing|plumbing|electrical|mechanical|m&e|drainage|surfacing|driveway|paving|landscap|fit[- ]?out|joinery|plastering|demolition|facilities management|architect|surveyor|engineering|developer|housebuilder)\w*/gi;
+  function profileNote() {
+    const el = byId("planningProfileNote");
+    if (!el) return;
+    let meta = null;
+    try { meta = typeof getActiveProfileMeta === "function" ? getActiveProfileMeta() : null; } catch (_) { meta = null; }
+    if (!meta) { el.classList.add("hidden"); return; }
+    const text = `${meta._text || ""} ${meta._name || ""}`;
+    const found = [...new Set((text.match(BUILD_WORDS) || []).map((w) => w.toLowerCase()))].slice(0, 4);
+    el.classList.remove("hidden");
+    el.textContent = found.length
+      ? `Matched to your profile (${meta._name || "selected profile"}): your services mention ${found.join(", ")}, so large schemes here are likely to need them.`
+      : `These leads suit construction, trades and property services. Your profile (${meta._name || "selected profile"}) does not mention any, so treat this list as market context, not as leads for your business.`;
+  }
+
+  // The section has its own address and title (re-test P7: it stayed on "/" and "Tender search").
+  const PLANNING_TITLE = "Planning leads · TenderFlow";
+  let prevTitle = "";
   function openPlanningLeads() {
     byId("planningLeadsModal")?.classList.remove("hidden");
+    if (document.title !== PLANNING_TITLE) prevTitle = document.title;
+    document.title = PLANNING_TITLE;
+    profileNote();
+    try { if (location.pathname !== "/planning") history.replaceState(null, "", "/planning"); } catch (_) { /* no history */ }
     if (view.initialised) return;
     view.initialised = true;
     loadStats();
@@ -950,6 +974,8 @@
 
   function closePlanningLeads() {
     byId("planningLeadsModal")?.classList.add("hidden");
+    if (prevTitle) document.title = prevTitle;
+    try { if (location.pathname === "/planning") history.replaceState(null, "", "/"); } catch (_) { /* no history */ }
     view.creditsWarningShown = false; // ask again fresh next time they open Planning Leads
   }
 
@@ -959,6 +985,11 @@
   function init() {
     if (!byId("planningLeadsModal")) return;
     bind();
+    // A link to /planning opens the section; this script may load after the page's load event, so check readyState.
+    if (location.pathname === "/planning") {
+      const open = () => setTimeout(() => (byId("btnPlanningLeads") || { click: openPlanningLeads }).click(), 400);
+      if (document.readyState === "complete") open(); else window.addEventListener("load", open);
+    }
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

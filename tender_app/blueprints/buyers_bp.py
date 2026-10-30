@@ -1576,7 +1576,7 @@ def get_opportunity_feed():
             if repeat_rate < 35.0 and total_c >= 5:
                 signals.append(f"Low repeat-supplier rate ({repeat_display}) across {total_c} contracts indicates strong openness to new vendors")
             if dist_km <= (radius_km if radius_km > 0 else 50.0):
-                signals.append(f"Located within your local operating radius (~{int(dist_km)} km)")
+                signals.append(f"Located within your local operating radius (about {int(round(dist_km * 0.621371))} miles)")
 
             why_seeing_this = f"This recommendation is produced because: " + "; ".join(signals) + "."
 

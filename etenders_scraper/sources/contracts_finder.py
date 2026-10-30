@@ -138,8 +138,10 @@ def _iter_release_pages(
     session: requests.Session,
     state: dict[str, Any],
     window: tuple[datetime, datetime] | None = None,
+    stages: str | None = "tender",
 ):
     """Yield the latest tender notices one API page at a time, until the feed runs out.
+    `stages` is the feed's own stage filter ("tender" by default; None asks for every stage, awards included).
 
     Sets state["complete"] only when the feed genuinely ended, so the caller can tell a full
     scan from one cut short by a rate limit or error (state["reason"] then says why, for the
@@ -148,9 +150,10 @@ def _iter_release_pages(
     since_date = window[0] if window else datetime.utcnow() - timedelta(days=_LOOKBACK_DAYS)
     params: dict[str, Any] = {
         "publishedFrom": since_date.strftime("%Y-%m-%dT%H:%M:%S"),
-        "stages": "tender",
         "limit": 100,
     }
+    if stages:
+        params["stages"] = stages
     if window:
         params["publishedTo"] = window[1].strftime("%Y-%m-%dT%H:%M:%S")
     cursor = None

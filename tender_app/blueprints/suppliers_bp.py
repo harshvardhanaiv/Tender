@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import re
+import time
 from typing import Any
 from flask import Blueprint, jsonify, request, Response, session
 from etenders_scraper.awards import (
@@ -965,8 +966,33 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
     return rows, total_count
 
 
+# The same search typed again (a filter toggled back, a refresh, two people looking at "Capita") is answered from memory for two minutes:
+# the answer does not depend on who asks, and the cold query on the live database took 4 to 5 s (re-test R8).
+_SUPPLIER_SEARCH_TTL_S = 120
+_supplier_search_cache: dict[str, tuple[float, Any]] = {}
+
+
 @suppliers_bp.route("/api/suppliers/search", methods=["GET"])
 def search_suppliers():
+    _key = request.full_path
+    _hit = _supplier_search_cache.get(_key)
+    if _hit and time.time() - _hit[0] < _SUPPLIER_SEARCH_TTL_S:
+        return jsonify(_hit[1])
+    _resp = _search_suppliers_uncached()
+    # only a good answer is kept (jsonify'd responses are (response) objects; errors come back as (response, status) tuples)
+    if not isinstance(_resp, tuple) and getattr(_resp, "status_code", 500) == 200:
+        try:
+            payload = _resp.get_json()
+            if payload and payload.get("ok"):
+                if len(_supplier_search_cache) > 500:
+                    _supplier_search_cache.clear()
+                _supplier_search_cache[_key] = (time.time(), payload)
+        except Exception:
+            pass
+    return _resp
+
+
+def _search_suppliers_uncached():
     """Search suppliers by company name or Companies House number, with optional date range.
 
     Two speeds, same response shape:

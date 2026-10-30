@@ -97,7 +97,15 @@
     if (prefill.preset) return { preset: prefill.preset };
     return null;
   }
+  // An account that is not verified as working for a public body can read Market Radar but not plan an engagement (QA W1). The server
+  // refuses it too (403); this keeps the form from opening at all.
+  function planningAllowed() {
+    const v = BW.state && BW.state.verification;
+    if (v && !v.verified) { toast((v.message || "Planning an engagement needs a verified public-body account."), true); return false; }
+    return true;
+  }
   async function openNewEngagement(prefill = {}) {
+    if (!planningAllowed()) return;
     await BW.ensureOptions();
     const spec = prefillSpec(prefill);
     openModal(`<h2 id="bwModalTitle">New market engagement</h2>
@@ -113,6 +121,7 @@
       <div class="bw-actions bw-actions--end"><button class="bw-btn" data-action="modal-close">Cancel</button><button class="bw-btn bw-btn--primary" data-action="eng-create">Create plan</button></div>`);
   }
   async function createPlan() {
+    if (!planningAllowed()) return;
     const box = document.getElementById("bwModalBox");
     const errorBox = box.querySelector("#engNewError");
     errorBox.innerHTML = "";

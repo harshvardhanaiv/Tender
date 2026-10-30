@@ -4074,6 +4074,11 @@ def create_app() -> Flask:
         # The Funding section has its own address (/funding?where=Scotland, /funding/<grant>); the page reads it when it loads.
         return app.send_static_file("index.html")
 
+    @app.get("/planning")
+    def planning_page():
+        # Planning Leads has its own address (/planning); the page reads it when it loads.
+        return app.send_static_file("index.html")
+
     @app.get("/buyers")
     def buyers_page():
         # Buyer intelligence has its own address (/buyers?q=leeds); the page reads it when it loads.

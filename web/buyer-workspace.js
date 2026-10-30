@@ -1113,6 +1113,14 @@
     const v = S.verification;
     const main = document.getElementById("bwMain");
     if (!v || v.verified || !main || document.getElementById("bwVerifyNote")) return;
+    // The buttons that start a plan are disabled while the account is unverified, with the reason on hover.
+    const lock = () => document.querySelectorAll('[data-action="plan-from"], [data-action="eng-new"], [data-action="eng-create"]').forEach((b) => {
+      if (b.disabled) return;
+      b.disabled = true;
+      b.title = "Verify your public-body account to plan an engagement";
+    });
+    lock();
+    new MutationObserver(lock).observe(document.body, { childList: true, subtree: true });
     const note = document.createElement("div");
     note.id = "bwVerifyNote";
     note.className = "bw-card";

@@ -85,6 +85,15 @@ CATEGORY_PRESETS: tuple[dict[str, Any], ...] = (
         "keyword_cpv": ("48", "72", "79", "85"),
     },
     {
+        # A narrower choice inside CRM & case management software (re-test W5: legal case management had no category of its own).
+        "id": "legal-case-management",
+        "label": "Legal case management software",
+        "hint": "Case, matter and document systems for legal teams and law practices",
+        "cpv": ("48445",),
+        "keywords": ("legal case management", "legal practice management", "legal matter management", "legal management system"),
+        "keyword_cpv": ("48", "72", "79"),
+    },
+    {
         "id": "highways-maintenance",
         "label": "Highways maintenance",
         "hint": "Road surfacing and maintenance, street lighting, winter service",
@@ -440,7 +449,7 @@ PRESET_GROUPS: dict[str, tuple[str, ...]] = {
     "Housing & property": ("housing-repairs-gas", "new-build-housing", "energy-efficiency-retrofit", "property-estates", "asbestos-decontamination", "lifts-escalators", "fire-safety"),
     "Construction & engineering": ("construction-works", "mechanical-electrical", "roofing-building-fabric", "groundworks-civils", "highways-maintenance", "architecture-engineering", "building-materials"),
     "Environment, waste & grounds": ("grounds-tree-works", "waste-recycling", "hazardous-waste", "street-cleansing", "environmental-ecology", "water-wastewater", "pest-control", "cleaning-facilities"),
-    "Technology": ("crm-case-management", "it-services-software", "cyber-security", "data-analytics", "cloud-hosting", "it-hardware", "telecoms-networks"),
+    "Technology": ("crm-case-management", "legal-case-management", "it-services-software", "cyber-security", "data-analytics", "cloud-hosting", "it-hardware", "telecoms-networks"),
     "Professional services": ("legal-services", "accountancy-audit", "management-consultancy", "recruitment-staffing", "marketing-communications", "print-design", "translation-interpreting", "research-development", "insurance-finance", "training-education"),
     "People & care": ("social-care", "health-medical-services", "medical-equipment", "catering-food", "security-guarding", "leisure-culture", "funeral-bereavement"),
     "Energy, transport & supplies": ("energy-utilities", "vehicles-fleet", "transport-logistics", "postal-courier", "furniture-fit-out"),

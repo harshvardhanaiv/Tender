@@ -4,8 +4,8 @@ let _csrfToken = sessionStorage.getItem("tf_csrf") || "";
 const originalFetch = window.fetch;
 // Opening a section used to ask for the same user, preferences and profiles 4 to 7 times. Identical GETs of these three, made within a
 // few seconds of each other, share one request; any write clears them so the next read is fresh.
-const _SHARED_GET_PATHS = ["/api/user-prefs", "/api/me", "/api/company-profiles"];
-const _SHARED_GET_TTL_MS = 3000;
+const _SHARED_GET_PATHS = ["/api/user-prefs", "/api/me", "/api/company-profiles", "/api/answer-bank", "/api/recent-searches"];
+const _SHARED_GET_TTL_MS = 10000;   // the pages still asked 2 to 3 times each while a slow start took longer than 3 s (re-test N8)
 const _sharedGets = new Map();
 function _fetchShared(url, opts) {
   if (typeof url !== "string" || !url.startsWith("/api/")) return originalFetch(url, opts);
@@ -23065,7 +23065,7 @@ function buyerFitSummaryHtml(c) {
   const reasons = factors.length
     ? factors.map((f) => `<li><b>${escapeHtml(f.label)}:</b> ${escapeHtml(f.note)}</li>`).join("")
     : `<li>${escapeHtml(c.why_seeing_this || "Matched on your profile and location.")}</li>`;
-  const chip = eng ? `<span class="fit-eng fit-eng--${escapeHtml(eng.level)}" title="${escapeHtml(eng.note)}">${eng.percent}% engagement likelihood (est.)</span>` : "";
+  const chip = eng ? `<span class="fit-eng fit-eng--${escapeHtml(eng.level)}" title="${escapeHtml(eng.note)}">${eng.percent}% engagement likelihood (est.)</span><span class="fit-eng__why" style="display:block;font-size:11px;color:var(--muted,#64748b);margin-top:2px">An estimate from sector fit, openness to new suppliers, renewal timing and distance. It does not predict who wins.</span>` : "";
   return `<div class="fit-why"><div class="fit-why__head"><span>Why it fits</span>${chip}</div><ul class="fit-why__list">${reasons}</ul></div>`;
 }
 

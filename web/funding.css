@@ -186,6 +186,25 @@
   .funding-layout { gap: 10px; }
 }
 
+/* Filters sit behind the Filters button at every width (re-test follow-up): the grants use the full width until it is pressed. */
+.funding-filters-toggle { display: inline-flex; align-items: center; gap: 6px; grid-column: 1 / -1; justify-self: start; width: auto; }
+.funding-filters-toggle::before { content: "\00BB"; font-size: 15px; line-height: 1; }
+.funding-layout.has-filters-open .funding-filters-toggle { display: none; }   /* shown only while the filters are hidden */
+.funding-side__head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.funding-side__title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted, #5b6472); }
+.funding-side__hide { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line, #dfe3ea); border-radius: 8px; background: var(--card, #fff); color: var(--ink, #1c2430); font-size: 16px; line-height: 1; cursor: pointer; }
+.funding-side__hide:hover { background: var(--teal-soft, #e4f0ef); border-color: var(--teal, #0f766e); }
+.funding-layout { grid-template-columns: minmax(0, 1fr); }
+/* On a wide screen the grants list fills the row under the Filters button and scrolls inside it; small screens scroll the whole layout. */
+@media (min-width: 901px) {
+  .funding-layout { grid-template-rows: auto minmax(0, 1fr); }
+  .funding-layout.has-filters-open { grid-template-rows: minmax(0, 1fr); }
+}
+.funding-layout.has-filters-open { grid-template-columns: 236px minmax(0, 1fr); }
+.funding-side { display: none; }
+.funding-side.is-open { display: flex; }
+@media (max-width: 900px) { .funding-layout.has-filters-open { grid-template-columns: minmax(0, 1fr); } }
+
 /* The Run buttons in the AI dialog: white text on the app's yellow accent was unreadable (contrast 1.5); dark ink on it reads at about 12 */
 body.tf-shell #fundingAiModal .btn--primary, body.tf-shell #policyLibModal .btn--primary { color: var(--ink, #0c1d30) !important; font-weight: 700; }
 
