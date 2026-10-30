@@ -273,8 +273,8 @@ def test_default_host_is_the_main_host():
 
 
 def test_config_problem_covers_every_state_without_quoting_the_key():
-    assert "OUTREACH_API_KEY" in oc.config_problem("", False)
-    assert "OUTREACH_API_KEY" in oc.config_problem(None, True)
+    assert "Connected apps" in oc.config_problem("", False) and "OUTREACH_API_KEY" not in oc.config_problem("", False)
+    assert "Connected apps" in oc.config_problem(None, True) and "OUTREACH_API_KEY" not in oc.config_problem(None, True)
     assert "sk_test_" in oc.config_problem("not-a-key", False)
     live = oc.config_problem(LIVE, False)
     assert live and "OUTREACH_ALLOW_LIVE" in live and LIVE not in live

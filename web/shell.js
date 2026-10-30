@@ -46,10 +46,22 @@
     });
   }
 
+  // The page the address names is the one highlighted, even if another section is also open (re-test 3 BN4: /buyers lit "Pipeline").
+  const ROUTE_NAV = {
+    buyers: "btnBuyerIntelligence", suppliers: "btnSupplierIntelligence", funding: "btnFunding", planning: "btnPlanningLeads",
+    growth: "btnGrowthStudio", answers: "btnAnswerBank", documents: "btnUserDocuments", history: "btnHistory", pipeline: "btnDashboard",
+  };
+  function pickActive(path, isSectionOpen) {
+    const open = SECTIONS.filter(([, sectionId]) => isSectionOpen(sectionId));
+    const routeNav = ROUTE_NAV[(String(path || "").split("/")[1] || "").toLowerCase()];
+    return open.find(([navId]) => navId === routeNav) || open[0] || null;
+  }
+
   function syncActive() {
-    const open = SECTIONS.find(([, sectionId]) => isOpen(byId(sectionId)));
+    const open = pickActive(location.pathname, (sectionId) => isOpen(byId(sectionId)));
     const activeId = open ? open[0] : "navSearch";
     document.body.classList.toggle("tf-section-open", Boolean(open));
+    if (open) document.documentElement.classList.remove("tf-routing");   // the section the address named has opened
     document.querySelectorAll(".tf-nav").forEach((el) => {
       const active = el.id === activeId;
       el.classList.toggle("is-active", active);
@@ -148,6 +160,8 @@
     syncActive();
   }
 
+  if (typeof module !== "undefined" && module.exports) module.exports = { pickActive, ROUTE_NAV, SECTIONS };
+  if (typeof document === "undefined") return;
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 })();

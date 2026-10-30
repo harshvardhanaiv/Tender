@@ -93,7 +93,9 @@ from tender_app.blueprints.watchlist_bp import init_watchlist_blueprint
 from tender_app.email_notifier import init_email_scheduler
 from tender_app.security import ensure_csrf_token, validate_csrf
 from tender_app.search_terms import split_terms
-from tender_app.text_fix import fix_row_text
+from tender_app.text_fix import clean_history_title, fix_row_text
+
+HISTORY_TITLE_FALLBACK = "Untitled tender"   # saved when the title is a placeholder such as "Analyzing Pasted Details..."
 
 
 
@@ -1653,6 +1655,15 @@ def deep_alerts_for_user(username: str) -> tuple[list[dict], dict]:
     """
     alerts: list[dict] = []
     progress: dict[str, dict] = {}
+    try:   # a tracked planning lead that has reached a new stage raises its alert here, so it shows with the others (re-test 3 PN3)
+        from tender_app import planning_track
+        _c = get_db_connection()
+        try:
+            planning_track.check_tracked(_c, username)
+        finally:
+            _c.close()
+    except Exception as e:  # noqa: BLE001
+        print("planning stage check failed:", e)
     conn = get_db_connection()
     try:
         cur = conn.cursor()
@@ -4849,6 +4860,14 @@ def create_app() -> Flask:
                 rows = [r for r in rows if not r.get("source") or r.get("source") in _wanted]
                 total = len(rows)
 
+        # A notice with no location of its own takes it from its region code or the buyer's postcode, and says which (re-test 3 T7).
+        from tender_app.regions import infer_notice_location
+        for r in rows:
+            if is_location_unstated(r):
+                found = infer_notice_location(r)
+                if found:
+                    r["location"], r["location_source"] = found
+
         # Filter by Counties if specified
         counties_raw = request.args.get("counties", "").strip()
         whole_nations = [n.strip() for n in request.args.get("nations", "").split(",") if n.strip() in NATION_HINTS]
@@ -5669,7 +5688,7 @@ Include every question, in the form's order."""
                     "id": row[0],
                     "source": row[1],
                     "resource_id": row[2],
-                    "tender_title": row[3],
+                    "tender_title": clean_history_title(row[3], HISTORY_TITLE_FALLBACK),   # titles saved before the clean-up show tidy too
                     "company": row[4],
                     "type": row[5],
                     "created_at": row[6].isoformat() if hasattr(row[6], "isoformat") else str(row[6])
@@ -6295,7 +6314,7 @@ Return this JSON structure:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO analyses (username, source, resource_id, tender_title, company, files_json, type, analysis_json) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (username, source, resource_id, title, company, files_json, analysis_type, json.dumps(analysis))
+                    (username, source, resource_id, clean_history_title(title, HISTORY_TITLE_FALLBACK), company, files_json, analysis_type, json.dumps(analysis))
                 )
                 conn.commit()
                 cursor.close()
@@ -6488,7 +6507,7 @@ Return ONLY valid JSON with no markdown fences:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO analyses (username, source, resource_id, tender_title, company, files_json, type, analysis_json) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (username, source, resource_id, title, summary_company, "[]", summary_type, json.dumps(summary_data))
+                    (username, source, resource_id, clean_history_title(title, HISTORY_TITLE_FALLBACK), summary_company, "[]", summary_type, json.dumps(summary_data))
                 )
                 conn.commit()
                 cursor.close()
@@ -7696,7 +7715,7 @@ Return ONLY valid JSON with no markdown fences matching this schema:
                     cursor = conn.cursor()
                     cursor.execute(
                         "INSERT INTO analyses (username, source, resource_id, tender_title, company, files_json, type, analysis_json) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                        (username, source, resource_id, title, company, files_json, prop_type, json.dumps(proposal_data))
+                        (username, source, resource_id, clean_history_title(title, HISTORY_TITLE_FALLBACK), company, files_json, prop_type, json.dumps(proposal_data))
                     )
                     conn.commit()
                     cursor.close()
@@ -9765,7 +9784,7 @@ Return ONLY valid JSON with no markdown fences matching this schema:
             cursor.execute(
                 f"INSERT INTO analyses (username, source, resource_id, tender_title, company, files_json, type, analysis_json) "
                 f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})",
-                (username, source, resource_id, title, company, files_json, prop_type, json.dumps(existing_proposal))
+                (username, source, resource_id, clean_history_title(title, HISTORY_TITLE_FALLBACK), company, files_json, prop_type, json.dumps(existing_proposal))
             )
             conn.commit()
             cursor.close()

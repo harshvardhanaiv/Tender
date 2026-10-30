@@ -1802,12 +1802,13 @@ body.tf-shell #abModal .ab-add-btn {
 body.tf-shell #abModal .ab-add-btn:hover { background: var(--accent); filter: brightness(1.08); }
 :root[data-theme="dark"] body.tf-shell #abModal .ab-add-btn { color: #0A1521; }
 /* One row: search, category chips (scrolling sideways when the window is narrow), then Add answer */
-body.tf-shell #abModal .ab-controls { flex-direction: row; flex-wrap: nowrap; align-items: center; }
+body.tf-shell #abModal .ab-controls { flex-direction: row; flex-wrap: wrap; align-items: center; }
 body.tf-shell #abModal :is(.ab-controls__row, .ab-legend-row) { display: contents; }
-body.tf-shell #abModal .ab-search-container { order: 1; flex: 0 0 220px; width: 220px; }
-body.tf-shell #abModal .ab-tabs { order: 2; flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; gap: 6px; padding: 2px 0; overflow-x: auto; scrollbar-width: thin; }
+body.tf-shell #abModal .ab-search-container { order: 1; flex: 0 0 220px; width: 220px; margin-right: auto; }
+/* the category chips get a line of their own (wrapping, then scrolling), not the space left beside the buttons where they ran under them (re-test 3 AB3) */
+body.tf-shell #abModal .ab-tabs { order: 4; flex: 1 1 100%; min-width: 0; flex-wrap: wrap; gap: 6px; padding: 2px 0; max-height: 84px; overflow-y: auto; scrollbar-width: thin; }
 body.tf-shell #abModal .ab-tab { flex: none; white-space: nowrap; }
-body.tf-shell #abModal .ab-add-btn { order: 3; flex: none; margin-left: auto; }
+body.tf-shell #abModal .ab-add-btn { order: 3; flex: none; }
 body.tf-shell #abModal .ab-footer { gap: 16px; }
 body.tf-shell #abModal .ab-footer .ab-legend { margin-right: auto; font-size: 11.5px; }
 
@@ -2254,3 +2255,8 @@ body.tf-shell #pipelineKindPills { display: inline-flex; gap: 4px; }
 /* AIV dashboard shown inside the app (an iframe filling the page) */
 .aiv-page { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 .aiv-frame { flex: 1 1 auto; min-height: 0; width: 100%; border: 0; background: var(--card, #fff); }
+
+/* Opening /funding, /planning, /buyers ... directly: show a neutral loading state, not Tender search, until the section opens (re-test 3 FN5). */
+html.tf-routing body.tf-shell #mainContent > * { visibility: hidden; }
+html.tf-routing body.tf-shell #mainContent { position: relative; }
+html.tf-routing body.tf-shell #mainContent::before { content: "Loading\2026"; position: absolute; top: 40vh; left: 0; right: 0; text-align: center; color: var(--muted, #64748b); font-size: 14px; }

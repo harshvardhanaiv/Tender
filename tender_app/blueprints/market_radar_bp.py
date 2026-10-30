@@ -144,6 +144,17 @@ def _category_from(args) -> mr.Category:
     return mr.resolve_category(args.get("category") or args.get("preset"), args.get("cpv"), args.get("q"), labels)
 
 
+_VIEW_PARAMS = {"category", "preset", "cpv", "q", "authority", "window", "scope"}
+_PEER_PAGE_PARAMS = {"search", "sort", "page", "per_page"}
+
+
+def _reject_unknown(args, allowed: set[str]) -> None:
+    """A misspelt filter (authority_type=) must not quietly return every authority."""
+    unknown = sorted(set(args) - allowed)
+    if unknown:
+        raise mr.CategoryError(f"unknown parameter: {', '.join(unknown)}")
+
+
 def _filters_from(args) -> tuple[str, str, str]:
     authority = (args.get("authority") or "all").strip()
     window = (args.get("window") or mr.DEFAULT_WINDOW).strip()
@@ -234,6 +245,7 @@ def radar_categories():
 @rate_limit(RATE_LIMIT_SEARCH)
 def radar_analysis():
     try:
+        _reject_unknown(request.args, _VIEW_PARAMS | _PEER_PAGE_PARAMS)
         cat = _category_from(request.args)
         authority, window, scope = _filters_from(request.args)
         analysis = mr.get_analysis(_connect, cat, authority, window, scope)
@@ -273,6 +285,7 @@ def radar_analysis():
 @rate_limit(RATE_LIMIT_SEARCH)
 def radar_peers():
     try:
+        _reject_unknown(request.args, _VIEW_PARAMS | _PEER_PAGE_PARAMS)
         cat = _category_from(request.args)
         authority, window, scope = _filters_from(request.args)
         analysis = mr.get_analysis(_connect, cat, authority, window, scope)

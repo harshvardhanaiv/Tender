@@ -241,7 +241,14 @@ def make_fixtures():
         conn.close()
 
 
-def make_campaign(c, keys, filters=None, **extra):
+_CAMPAIGN_SEQ = [0]
+
+
+def make_campaign(c, keys, filters=None, auto=False, **extra):
+    # a named campaign is always created: an unnamed one for the same signals reopens the untouched draft (GS6, tested on its own)
+    _CAMPAIGN_SEQ[0] += 1
+    if not auto:
+        extra.setdefault("name", f"ZZ campaign {_CAMPAIGN_SEQ[0]}")
     st, body = call(c, "post", "/api/growth/campaigns", {"keys": keys, "filters": filters or FILTERS, **extra})
     assert st == 201, (st, body)
     return body
@@ -627,7 +634,7 @@ def test_campaign_from_signals_and_its_targets():
     alpha = by_buyer(r["signals"], ALPHA)["key"]
     beta = by_buyer(r["signals"], BETA)["key"]
     dev_ok, dev_none = "development:zz_growth_test_1", "development:zz_growth_test_2"
-    body = make_campaign(a, [beta, dev_none, alpha, dev_ok, "renewal:NO SUCH BUYER", alpha])
+    body = make_campaign(a, [beta, dev_none, alpha, dev_ok, "renewal:NO SUCH BUYER", alpha], auto=True)
     camp, targets = body["campaign"], body["targets"]
     assert camp["status"] == "draft" and camp["channel"] == "email" and camp["profile_id"] == FIXTURE_IDS["A1"] and camp["profile_name"] == "ZZ Growth Profile One"
     assert camp["name"].startswith("Housing repairs & gas servicing: renewals, ") and camp["category_label"] == "Housing repairs & gas servicing"
@@ -666,6 +673,33 @@ def test_campaign_from_signals_and_its_targets():
         assert st == 404 and resp.get("error") == "Campaign not found", (method, url, st, resp)
     assert call(b, "get", "/api/growth/campaigns")[1]["campaigns"] == [], "another user's list is empty"
     assert call(a, "get", f"/api/growth/campaigns/{cid}")[1]["campaign"]["name"] == camp["name"], "and nothing of A's was touched"
+
+
+def test_starting_the_same_campaign_again_reopens_the_untouched_draft():
+    """Re-test 3 GS6: 20 drafts, auto-named "... (2)", from pressing Start campaign again on the same signals."""
+    reset_limits()
+    a = client(USER_A)
+    keys = signal_keys(a, ALPHA)
+    first = make_campaign(a, keys, auto=True)
+    st, again = call(a, "post", "/api/growth/campaigns", {"keys": keys, "filters": FILTERS})
+    assert st == 200 and again["existing"] is True and again["campaign"]["id"] == first["campaign"]["id"], (st, again.get("campaign", {}).get("name"))
+    # once the message is edited it is the user's work: a new campaign is made, with its own number
+    assert call(a, "patch", f"/api/growth/campaigns/{first['campaign']['id']}", {"subject": "Edited subject"})[0] == 200
+    st, third = call(a, "post", "/api/growth/campaigns", {"keys": keys, "filters": FILTERS})
+    assert st == 201 and third["campaign"]["id"] != first["campaign"]["id"] and third["campaign"]["name"].endswith(")"), third["campaign"]["name"]
+
+
+def test_a_saved_signals_days_to_go_are_counted_from_today():
+    """Re-test 3 GS6: a campaign made on 16 Oct still said "ends in 43 days" two weeks later."""
+    from tender_app import growth_studio as gs
+    snap = {"headline": "“Boiler servicing” contract ends in 43 days (12 December 2026)", "date": "2026-12-12", "days": 43}
+    out = gs.refresh_snapshot_days(snap, date(2026, 10, 30))
+    assert out["days"] == 43 and "ends in 43 days" in out["headline"]
+    out = gs.refresh_snapshot_days(snap, date(2026, 11, 20))
+    assert out["days"] == 22 and "ends in 22 days (12 December 2026)" in out["headline"], out["headline"]
+    assert "tomorrow" in gs.refresh_snapshot_days(snap, date(2026, 12, 11))["headline"]
+    assert "ended 3 days ago" in gs.refresh_snapshot_days(snap, date(2026, 12, 15))["headline"]
+    assert gs.refresh_snapshot_days({"headline": "x"}, date(2026, 10, 30)) == {"headline": "x"}
 
 
 def test_campaign_creation_validation():

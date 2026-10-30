@@ -241,7 +241,7 @@ def test_status_not_connected_and_bad_keys():
     install(key="")
     code, body, _ = call(c, "get", "/api/email/outreach/status")
     assert code == 200 and body["configured"] is False and body["ready"] is False
-    assert "OUTREACH_API_KEY" in body["problem"] and FAKE.calls == []
+    assert "Connected apps" in body["problem"] and "OUTREACH_API_KEY" not in body["problem"] and FAKE.calls == []
     install(key="not-a-key-at-all")
     code, body, text = call(c, "get", "/api/email/outreach/status")
     assert body["configured"] is True and body["ready"] is False and "sk_test_" in body["problem"] and FAKE.calls == []
@@ -767,7 +767,7 @@ def test_refresh_stops_on_a_fatal_error_and_says_so():
     send(c, people(2))
     FAKE.handler = lambda m, u, h, d: (401, {"error": {"code": "unauthorized", "message": "bad key"}})
     code, body, _ = call(c, "post", "/api/email/outreach/refresh", {})
-    assert code == 200 and body["stopped"] == "bad key" and "OUTREACH_API_KEY" in body["hint"]
+    assert code == 200 and body["stopped"] == "bad key" and "Connected apps" in body["hint"] and "OUTREACH_API_KEY" not in body["hint"]
     assert [r["status"] for r in rows()] == ["approved"] * 2
 
 

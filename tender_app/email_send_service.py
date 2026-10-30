@@ -38,7 +38,7 @@ def setup_hint(exc: oc.OutreachError) -> str | None:
     if exc.status == 402:
         return "Top up credits in Outreach."
     if exc.status == 401:
-        return "Outreach did not accept the key. Check OUTREACH_API_KEY on the server."
+        return "Outreach did not accept the key. Reconnect it from Connected apps in the sidebar."
     return None
 
 

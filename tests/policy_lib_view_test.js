@@ -35,3 +35,10 @@ assert(!gh.includes("<b>") && gh.includes("already have this in Documents: ACME_
 assert(gh.includes('data-pl-policy="complaints"') && !gh.includes('data-pl-policy="missing"') && gh.includes('href="https://www.iso.org/x"') && gh.includes("Get quotes") && gh.includes("upload the certificate"));
 assert(!f.guideHtml({ ...g, have: [], policies: [] }, "", {}).includes("Help with the preparation") && f.guideHtml({ ...g, have: [] }, "", {}).includes("pl-back") );
 console.log("certificate guides ok");
+
+// starter packs can be previewed before they are added (re-test 3 AB2)
+const previewed = f.packsHtml([{ key: "general", title: "General", summary: "s", count: 2, questions: [{ category: "Insurance", question: "Confirm your <b>cover</b>?" }, { category: "Insurance", question: "Renewal date?" }, { category: "Quality", question: "Accreditations?" }] }]);
+assert(previewed.includes("Preview the 3 questions") && previewed.includes("<strong>Insurance</strong>") && previewed.includes("<li>Renewal date?</li>"));
+assert(!previewed.includes("<b>cover</b>") && previewed.includes("&lt;b&gt;cover"));
+assert(!f.packsHtml([{ key: "g", title: "G", summary: "s", count: 1 }]).includes("Preview the"));
+console.log("starter pack preview ok");

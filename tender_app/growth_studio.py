@@ -52,6 +52,7 @@ from etenders_scraper.awards import UK_IE_SOURCE_PORTALS
 from etenders_scraper.planning.scoring import lead_score
 from tender_app import email_rich as er
 from tender_app import market_radar as mr
+from tender_app.text_fix import clean_notice_title  # noqa: F401  (History shares it; still importable from here)
 
 SIGNAL_TYPES = ("renewal", "development", "engagement", "funding")
 # "funding" is opt-in: a request that names no types gets the first three, so nobody's view changes until they tick it.
@@ -121,6 +122,26 @@ def in_days_text(days: int) -> str:
     if days == 1:
         return "tomorrow"
     return f"in {days} days"
+
+
+_ENDS_IN_RE = re.compile(r"\b(ends|ended) (?:in \d+ days|today|tomorrow|\d+ days ago|yesterday)")
+
+
+def refresh_snapshot_days(snap: Mapping[str, Any], today: date) -> dict[str, Any]:
+    """A saved signal's "ends in 43 days" was worked out the day the campaign was made. Count it again from the signal's own end
+    date, so a draft opened a month later does not still say 43 (re-test 3 GS6). A snapshot without an end date is returned as it was."""
+    out = dict(snap)
+    try:
+        ends = date.fromisoformat(str(snap.get("date") or "")[:10])
+    except ValueError:
+        return out
+    days = (ends - today).days
+    out["days"] = days
+    headline = snap.get("headline")
+    if isinstance(headline, str) and _ENDS_IN_RE.search(headline):
+        when = ("ends " + in_days_text(days)) if days >= 0 else ("ended yesterday" if days == -1 else f"ended {-days} days ago")
+        out["headline"] = _ENDS_IN_RE.sub(when, headline, count=1)
+    return out
 
 
 def _clean_where(raw: Any) -> str:
@@ -1278,20 +1299,6 @@ def message_warnings(subject: str | None, body: str | None) -> list[dict[str, st
     if unknown:
         out.append({"code": "unknown_fields", "text": "Not a merge field: " + ", ".join("{{" + n + "}}" for n in unknown)})
     return out
-
-
-_TITLE_TAIL_RE = re.compile(r"\s*[-–—:]\s*(award(ed)?( notice)?|contract award|notice of award|ref\.?[^-–—]*)\s*$", re.IGNORECASE)
-_TITLE_REF_RE = re.compile(r"^\s*[A-Z0-9][A-Z0-9/._-]{3,}\s*[-–—:]\s+")
-
-
-def clean_notice_title(title: str | None) -> str:
-    """A notice title as a person would say it: no "- AWARD" tail and no leading reference number
-    ("PPCS/2024/12 - Works Services - AWARD" becomes "Works Services")."""
-    text = re.sub(r"\s+", " ", str(title or "")).strip()
-    for _ in range(2):
-        text = _TITLE_TAIL_RE.sub("", text).strip()
-    text = _TITLE_REF_RE.sub("", text).strip() if re.search(r"[a-z]{3}", _TITLE_REF_RE.sub("", text)) else text
-    return text.strip(" -–—:")
 
 
 def cut_at_word(text: str, limit: int) -> str:

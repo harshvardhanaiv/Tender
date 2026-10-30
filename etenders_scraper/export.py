@@ -9,6 +9,7 @@ import pandas as pd
 from .fields import flatten_for_export, order_export_columns
 
 ExportFormat = Literal["csv", "xlsx"]
+EXPORT_HEADINGS = {"estimated_value_eur": "estimated_value"}
 
 
 def rows_to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
@@ -16,7 +17,8 @@ def rows_to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
     if not normalized:
         return pd.DataFrame()
     columns = order_export_columns(list(normalized[0].keys()))
-    return pd.DataFrame(normalized, columns=columns)
+    # "estimated_value_eur" is a stored field name, not a heading: UK portals quote pounds (re-test 3 T7)
+    return pd.DataFrame(normalized, columns=columns).rename(columns=EXPORT_HEADINGS)
 
 
 def write_output(rows: list[dict[str, Any]], output_path: str | Path) -> Path:

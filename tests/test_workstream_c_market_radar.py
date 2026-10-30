@@ -60,15 +60,18 @@ def test_250m_outlier_exclusion():
 def test_awards_say_why_they_match_and_when_their_value_is_a_share():
     from tender_app import market_radar as mr
     cat = mr.resolve_category("crm-case-management", None, None, {})
-    assert mr.match_reason(cat, "Customer Care Services", "48445000") == "CPV 48445000"
+    legal = mr.resolve_category("legal-case-management", None, None, {})
+    assert mr.match_reason(cat, "Customer Care Services", "48445000") is None, "48445 is the legal case management preset's, not CRM's (re-test 3 W5)"
+    assert mr.match_reason(legal, "Customer Care Services", "48445000") == "CPV 48445000"
+    assert mr.match_reason(cat, "CRM licences", "72212445") == "CPV 72212445"
     assert mr.match_reason(cat, "New CRM system", "72000000") == "title word “crm”"
     assert mr.match_reason(cat, "Tablets for Waste In Cab CRM", "30213000") is None, "a keyword outside the software CPV divisions is not a match"
     rows = [{"id": 1, "authority_name": "Council A", "supplier_name": "S1", "tender_title": "Customer Care Services", "cpv_code": "48445000",
              "contract_value": 3_000_000, "is_framework": 0, "date_signed": "2026-01-01", "shared_n": 3, "contract_value_notice": 9_000_000},
             {"id": 2, "authority_name": "Council B", "supplier_name": "S2", "tender_title": "New CRM system", "cpv_code": "72000000",
              "contract_value": 100_000, "is_framework": 0, "date_signed": "2026-01-02"}]
-    analysis = mr.build_analysis(rows, False, cat)
-    latest = {p["buyer"]: p["_awards"][0] for p in analysis["peers"]}
+    latest = {p["buyer"]: p["_awards"][0] for p in mr.build_analysis(rows[:1], False, legal)["peers"]}
+    latest.update({p["buyer"]: p["_awards"][0] for p in mr.build_analysis(rows[1:], False, cat)["peers"]})
     assert latest["Council A"]["matched_by"] == "CPV 48445000" and latest["Council A"]["cpv"] == "48445000"
     assert latest["Council A"]["shared_with"] == 3 and latest["Council A"]["notice_value"] == 9_000_000
     assert latest["Council B"]["matched_by"].startswith("title word") and latest["Council B"]["shared_with"] == 1 and latest["Council B"]["notice_value"] is None

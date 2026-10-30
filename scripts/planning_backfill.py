@@ -16,7 +16,8 @@ Usage (inside the app container):
     docker compose exec app python scripts/planning_backfill.py --months 1 --sizes Large --max-requests 5
     docker compose exec app python scripts/planning_backfill.py --status
     docker compose exec app python scripts/planning_backfill.py --months 24 --reset
-    docker compose exec app python scripts/planning_backfill.py --rescore-all   # no PlanIt requests
+    docker compose exec app python scripts/planning_backfill.py --rescore-all --dry-run   # count what would change; writes nothing
+    docker compose exec app python scripts/planning_backfill.py --rescore-all --revert-file rescore_revert.json   # no PlanIt requests
 
 Please respect PlanIt's request to run bulk jobs overnight (18:00-06:00).
 """
@@ -101,6 +102,10 @@ def main() -> int:
     parser.add_argument("--daytime-ok", action="store_true",
                         help="Allow running outside PlanIt's requested 18:00-06:00 bulk window")
     parser.add_argument("--status", action="store_true", help="Print progress and exit")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="with --rescore-all: count the rows whose score would change and write nothing")
+    parser.add_argument("--revert-file", default=None,
+                        help="with --rescore-all: write the old score and reason of every row it changes to this file")
     parser.add_argument("--rescore-all", action="store_true",
                         help="Reclassify minor works and recompute every lead score, then exit. "
                              "Makes no PlanIt requests. Run after changing etenders_scraper/planning/scoring.py")
@@ -115,7 +120,8 @@ def main() -> int:
             return 0
 
         if args.rescore_all:
-            print(f"Rescored {harvester.rescore(conn, all_rows=True)} applications.")
+            n = harvester.rescore(conn, all_rows=True, dry_run=args.dry_run, revert_path=args.revert_file)
+            print(f"{'DRY RUN: would rescore' if args.dry_run else 'Rescored'} {n} applications." + (f" Old values written to {args.revert_file}." if args.revert_file and n else ""))
             print(f"Marked {harvester.mark_duplicate_schemes(conn)} resubmissions as duplicate.")
             return 0
 

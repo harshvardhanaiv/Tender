@@ -109,4 +109,6 @@ PACKS: dict[str, dict[str, Any]] = {
 
 
 def listing() -> list[dict[str, Any]]:
-    return [{"key": k, "title": p["title"], "summary": p["summary"], "count": len(p["items"])} for k, p in PACKS.items()]
+    # "questions" lets the page show what a pack holds before it is added (re-test 3 AB2); the answers stay in the pack until it is added
+    return [{"key": k, "title": p["title"], "summary": p["summary"], "count": len(p["items"]),
+             "questions": [{"category": i["category"], "question": i["question"]} for i in p["items"]]} for k, p in PACKS.items()]

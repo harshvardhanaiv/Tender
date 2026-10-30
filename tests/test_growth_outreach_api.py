@@ -193,7 +193,7 @@ def test_status_not_connected():
     install(key="")
     code, body, raw = call(client(USER_A), "get", "/api/growth/outreach/status")
     assert code == 200 and body["configured"] is False and body["ready"] is False and body["mode"] is None
-    assert "OUTREACH_API_KEY" in body["problem"] and FAKE.calls == []
+    assert "Connected apps" in body["problem"] and "OUTREACH_API_KEY" not in body["problem"] and FAKE.calls == []
 
 
 def test_status_sends_the_page_nowhere_else_connecting_happens_in_the_connections_window():
@@ -355,7 +355,7 @@ def test_not_connected_is_a_409_with_no_call():
     install(key="")
     cid, _ = make_campaign(USER_A)
     code, body, _ = call(client(USER_A), "post", f"/api/growth/campaigns/{cid}/outreach", {})
-    assert code == 409 and "OUTREACH_API_KEY" in body["error"] and FAKE.calls == []
+    assert code == 409 and "Connected apps" in body["error"] and "OUTREACH_API_KEY" not in body["error"] and FAKE.calls == []
 
 
 def test_a_live_key_is_refused_unless_switched_on():

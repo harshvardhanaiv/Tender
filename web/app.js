@@ -400,8 +400,8 @@ function loadPrefs() {
   // Default ON: with a county selected, a notice that names no place can't be shown to be in it, so it is hidden
   // (it used to leak through, e.g. Swindon and Trafford notices under an Essex filter). The reader can turn it off.
   state.hideLocationNotStated = lsGet(LS_HIDE_UNSTATED_LOCATION, true) !== false;
-  state.statusFilter = lsGet(LS_STATUS_FILTER, "opportunities");
-  if (state.statusFilter === "awarded") state.statusFilter = "awards"; // older saved value
+  // Tender Search always opens on Opportunities (re-test 3 T4); a link can carry another mode (?mode=awards, see SearchUrl).
+  state.statusFilter = "opportunities";
   syncStatusFilterUI();
 
   // Restore keyword scope selection (persisted so it survives refresh)
@@ -600,11 +600,7 @@ async function loadPrefsFromServer() {
       } catch { /* ignore parse error */ }
     }
     // Status filter
-    if (p.status_filter !== undefined) {
-      localStorage.setItem(storageKey(LS_STATUS_FILTER), JSON.stringify(p.status_filter));
-      state.statusFilter = p.status_filter === "awarded" ? "awards" : p.status_filter;
-      syncStatusFilterUI();
-    }
+    // (the saved notice type is no longer applied: the page opens on Opportunities, or on the mode in the address)
     // Active profile
     if (p.active_profile !== undefined) {
       localStorage.setItem(storageKey(LS_PROFILE), JSON.stringify(p.active_profile));
@@ -4372,6 +4368,18 @@ document.addEventListener("click", (ev) => {
   if (pill) pill.click();
 });
 
+// The link after the count for portal hits that only loosely match the words searched. The count in the header already includes
+// them while they are shown, so the wording says so: "12 weaker matches are in the count above" (re-test 3 T5).
+function looseHintHtml(loose, showing) {
+  if (!(loose > 0)) return "";
+  const n = Number(loose).toLocaleString();
+  const noun = loose === 1 ? "weaker match" : "weaker matches";
+  const title = "Notices a portal returned for your search that do not contain all of your words";
+  return showing
+    ? ` · <a href="#" class="results-total__hint" data-toggle-loose="1" title="${title}">${n} ${noun} included in this count — hide ${loose === 1 ? "it" : "them"}</a>`
+    : ` · <a href="#" class="results-total__hint" data-toggle-loose="1" title="${title}">${n} ${noun} not counted — show ${loose === 1 ? "it" : "them"}</a>`;
+}
+
 // `rowsNow` is the list renderRows() is drawing: the "N tenders" count, the pagination and the visible rows must
 // come from the same list (D11). It is optional so older callers that only refresh the header still work.
 function updateResultsTotal(rowsNow) {
@@ -4447,11 +4455,7 @@ function updateResultsTotal(rowsNow) {
     try {
       state.showLooseMatches = true;
       const loose = filteredAndSortedRows().filter((r) => r._loose).length;
-      if (loose > 0) {
-        looseHint = wasShowing
-          ? ` · <a href="#" class="results-total__hint" data-toggle-loose="1">${loose.toLocaleString()} loose matches shown — hide them</a>`
-          : ` · <a href="#" class="results-total__hint" data-toggle-loose="1">${loose.toLocaleString()} weaker portal matches hidden — show them</a>`;
-      }
+      looseHint = looseHintHtml(loose, wasShowing);
     } finally {
       state.showLooseMatches = wasShowing;
       filteredAndSortedRows(); // restore the per-row match labels for the real filter
@@ -4883,6 +4887,16 @@ function tableDate(value) {
   if (!raw) return "";
   const d = typeof parseDate === "function" ? parseDate(raw) : null;
   return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : raw;
+}
+
+// A date anywhere in the app as "30 Oct 2026", keeping a time of day when the portal gave one ("30 Oct 2026 12:00"); anything that is
+// not a date is returned as it came (re-test 3 T7: cards and the detail panel showed the portal's own format).
+function noticeDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const m = /^(\S+)\s+(\d{1,2}:\d{2})(?::\d{2})?\b/.exec(raw);
+  const day = tableDate(m ? m[1] : raw);
+  return m && day !== m[1] ? `${day} ${m[2]}` : (m ? raw : day);
 }
 
 // Parse a value string to a number for sorting; returns -1 for blanks (sink to bottom).
@@ -6768,6 +6782,8 @@ function buildResultCard(row) {
   if ((row.location_not_stated || (typeof isLocationUnstated === "function" && isLocationUnstated(row))) && _buyerPlace && _buyerPlace.length < 40) {
     // The notice gives no place, but a council's own name does: show it, labelled as the buyer's (re-test T7).
     bits.push(`<span class="result-card__meta-item badge" style="padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600;" title="The notice does not state where the work is; this is the buyer's area">📍 ${esc(_buyerPlace)} (buyer's area)</span>`);
+  } else if (row.location_source && row.location) {
+    bits.push(`<span class="result-card__meta-item badge" style="padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600;" title="The notice does not state where the work is; this comes from its ${esc(row.location_source)}">📍 ${esc(row.location)} (${esc(row.location_source)})</span>`);
   } else if (row.location_not_stated || (typeof isLocationUnstated === "function" && isLocationUnstated(row))) {
     bits.push(`<span class="result-card__meta-item badge badge--unstated-location" style="background:#fff7ed; color:#c2410c; border:1px solid #ffedd5; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600;" title="Notice does not state a specific UK county or region">📍 Location not stated</span>`);
   }
@@ -6778,8 +6794,8 @@ function buildResultCard(row) {
   }
   if (value) bits.push(`<span class="result-card__meta-item" title="Estimated value"><span class="result-card__meta-label">Value</span> ${esc(formatValue(value, row.source))}</span>`);
   if (row.procedure) bits.push(`<span class="result-card__meta-item" title="Procedure"><span class="result-card__meta-label">Procedure</span> ${esc(row.procedure)}</span>`);
-  if (published) bits.push(`<span class="result-card__meta-item" title="Published"><span class="result-card__meta-label">Published</span> ${esc(published)}</span>`);
-  if (deadline) bits.push(`<span class="result-card__meta-item" title="Deadline"><span class="result-card__meta-label">Deadline</span> ${esc(deadline)}</span>`);
+  if (published) bits.push(`<span class="result-card__meta-item" title="Published"><span class="result-card__meta-label">Published</span> ${esc(noticeDate(published))}</span>`);
+  if (deadline) bits.push(`<span class="result-card__meta-item" title="Deadline"><span class="result-card__meta-label">Deadline</span> ${esc(noticeDate(deadline))}</span>`);
   if (row.status) bits.push(`<span class="result-card__meta-item" title="Status"><span class="result-card__meta-label">Status</span> ${esc(statusLabel(row))}${correctsLinkHtml(row) ? ` · ${correctsLinkHtml(row)}` : ""}</span>`);
   meta.innerHTML = bits.join("");
   card.appendChild(meta);
@@ -6996,6 +7012,7 @@ function updateFitColumnVisibility() {
 }
 
 function renderRows() {
+  if (typeof syncSearchUrl === "function") syncSearchUrl();
   const wrap = document.querySelector(".table-wrap");
   const scrollTop = wrap ? wrap.scrollTop : 0;
 
@@ -7755,6 +7772,8 @@ function updatePipelineKindCounts() {
 function renderPipelineBoard() {
   const body = $("dashboardBody");
   if (!body) return;
+  // Built when the Pipeline is opened, not behind another page (/buyers used to render it off-screen, re-test 3 BN4).
+  if ($("dashboardModal")?.classList.contains("hidden")) { updatePipelineKindCounts(); return; }
   if (_pipelineKind === "grant" && window.TFGrantsBoard) {  // saved grants: their own board (web/grants-board.js)
     updatePipelineKindCounts();
     window.TFGrantsBoard.render(body);
@@ -8040,8 +8059,8 @@ function openDashboard() {
   $("pipelineKindPills")?.querySelectorAll("button").forEach((x) => { const on = x.dataset.kind === "all"; x.classList.toggle("active", on); x.setAttribute("aria-pressed", String(on)); });
   if ($("pipelineSearchInput")) $("pipelineSearchInput").value = "";
   if ($("pipelinePortalFilter")) $("pipelinePortalFilter").value = "";
-  renderPipelineBoard();
   $("dashboardModal")?.classList.remove("hidden");
+  renderPipelineBoard();
   document.body.classList.add("modal-open");
 }
 function closeDashboard() {
@@ -8444,7 +8463,7 @@ function renderDetailsHtml(d, row) {
   // Days-left badge at the top of the detail panel
   const daysHtml = formatDaysLeft(row);
   const rawDeadline = row.submission_deadline || merged.submission_deadline || "";
-  html += `<div class="item"><div class="k">Days Left</div><div class="v">${daysHtml}${rawDeadline ? `<span class="detail-deadline-raw"> — ${esc(rawDeadline)}</span>` : ""}</div></div>`;
+  html += `<div class="item"><div class="k">Days Left</div><div class="v">${daysHtml}${rawDeadline ? `<span class="detail-deadline-raw"> — ${esc(noticeDate(rawDeadline))}</span>` : ""}</div></div>`;
 
   let nonEmpty = 0;
   const shownLabelValues = new Set();   // supplier_name and awarded_supplier hold the same name: list it once (re-test T7)
@@ -8471,6 +8490,8 @@ function renderDetailsHtml(d, row) {
       `;
     } else if (k === "estimated_value_eur") {
       rendered = esc(formatValue(vs, row?.source));
+    } else if (k === "date_of_publication_invitation" || k === "submission_deadline" || k === "end_of_clarification_period") {
+      rendered = esc(noticeDate(vs));
     } else if (k === "contracting_authority") {
       rendered = `
         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -8512,6 +8533,21 @@ function renderDetailsHtml(d, row) {
   return html;
 }
 
+// The search lives in the address (/?q=...&mode=awards&portals=...&scope=title) so a reload or a shared link repeats it (re-test T6);
+// initAll reads it back. Other parameters in the address (open=, source=, id=) are left alone.
+function syncSearchUrl() {
+  try {
+    if (!(location.pathname === "/" || /^\/index\.html$/.test(location.pathname)) || typeof SearchUrl === "undefined") return;
+    if (!(state.q || "").trim()) return;
+    const u = new URL(location.href);
+    for (const k of ["q", "mode", "portals", "scope"]) u.searchParams.delete(k);
+    const want = SearchUrl.toParams(state, _selectedPortals ? [..._selectedPortals] : null);
+    want.forEach((v, k) => u.searchParams.set(k, v));
+    const next = u.pathname + u.search + u.hash;
+    if (next !== location.pathname + location.search + location.hash) history.replaceState(null, "", next);
+  } catch (_) { /* no history */ }
+}
+
 async function search() {
   state._cacheOpenToken++; // invalidate any in-flight background refresh from a cached-search open
   const q = ($("rmSearchKeywordInput")?.value || $("q")?.value || state.q || "").trim();
@@ -8531,14 +8567,7 @@ async function search() {
   state.scope = getScopeValue();
   syncNativeScope();
   pushRecentSearch(q, state.scope);
-  // The query is kept in the address (/?q=...) so a reload or a shared link repeats the search (re-test T6); initAll reads it back.
-  try {
-    if (location.pathname === "/" || /^\/index\.html$/.test(location.pathname)) {
-      const u = new URL(location.href);
-      u.searchParams.set("q", q);
-      history.replaceState(null, "", u.pathname + u.search + u.hash);
-    }
-  } catch (_) { /* no history */ }
+  syncSearchUrl();
   state.activeKey = null;
   state.sort = null;
   setDetailsPanelVisible(false);
@@ -13113,7 +13142,7 @@ function renderProposal(p, row) {
             </tr>
             <tr>
               <td style="padding:8px; border:1px solid #e2e8f0; font-weight:600; background:#f8fafc">Submission Deadline</td>
-              <td style="padding:8px; border:1px solid #e2e8f0">${esc(d.submission_deadline?.date || "")} ${esc(d.submission_deadline?.time || "")} (${esc(d.submission_deadline?.timezone || "")})</td>
+              <td style="padding:8px; border:1px solid #e2e8f0">${esc(submissionDeadlineText(d.submission_deadline))}</td>
             </tr>
           </tbody>
         </table>
@@ -16953,6 +16982,31 @@ function renderRecentViews(container, emptyState, countLabel) {
   $("rvClear")?.addEventListener("click", () => { window.RecentViews.clear(); renderHistoryList(); });
 }
 
+// "NOT STATED NOT STATED (NOT STATED)" read as three missing facts: say it once, and leave out any part that was not stated (re-test 3 HS4).
+function submissionDeadlineText(sd) {
+  const clean = (v) => {
+    const t = String(v == null ? "" : v).trim();
+    return /^(not stated|not specified|n\/?a|unknown|tbc|—|-)$/i.test(t) ? "" : t;
+  };
+  const date = clean(sd && sd.date), time = clean(sd && sd.time), zone = clean(sd && sd.timezone);
+  if (!date && !time) return "Not stated";
+  return [date, time].filter(Boolean).join(" ") + (zone ? ` (${zone})` : "");
+}
+
+// Runs of the same tender (same source, id and kind) in History: newest first, with the earlier runs under it (re-test 3 HS3).
+function groupHistoryRuns(items) {
+  const groups = [];
+  const byKey = new Map();
+  (items || []).forEach(item => {
+    const key = item.source && item.resource_id ? [item.source, item.resource_id, item.type, (item.company || "").toLowerCase().trim()].join("|") : null;
+    if (key && byKey.has(key)) { byKey.get(key).runs.push(item); return; }
+    const g = { latest: item, runs: [item] };
+    if (key) byKey.set(key, g);
+    groups.push(g);
+  });
+  return groups;
+}
+
 function renderHistoryList() {
   const container = $("historyCardList");
   const emptyState = $("historyEmptyState");
@@ -16995,8 +17049,9 @@ function renderHistoryList() {
     });
   }
 
+  const groups = groupHistoryRuns(filtered);
   if (countLabel) {
-    countLabel.textContent = `${filtered.length} ${filtered.length === 1 ? 'item' : 'items'}`;
+    countLabel.textContent = `${groups.length} ${groups.length === 1 ? 'item' : 'items'}` + (groups.length < filtered.length ? ` (${filtered.length} runs)` : "");
   }
 
   if (filtered.length === 0) {
@@ -17012,7 +17067,9 @@ function renderHistoryList() {
   emptyState.style.display = "none";
 
   let html = "";
-  filtered.forEach(item => {
+  groups.forEach(group => {
+    const item = group.latest;
+    const earlier = group.runs.slice(1);
     const formattedDate = new Date(item.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
     let typeLabel = "";
     let iconClass = "";
@@ -17054,7 +17111,9 @@ function renderHistoryList() {
             <span class="history-card__badge ${badgeClass}">${typeLabel}</span>
             <span>${detailsText}</span>
             <span class="history-card__date">📅 ${formattedDate}</span>
+            ${earlier.length ? `<button type="button" class="history-card__runs" data-runs-toggle="${item.id}" aria-expanded="false">${group.runs.length} runs</button>` : ""}
           </div>
+          ${earlier.length ? `<div class="history-card__earlier hidden" data-runs-for="${item.id}">${earlier.map(r => `<div class="history-card__earlier-row"><span>📅 ${esc(new Date(r.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }))}</span> <button class="btn-history-view" data-id="${r.id}">View</button> <button class="btn-history-delete" data-id="${r.id}" title="Delete history record">🗑️</button></div>`).join("")}</div>` : ""}
         </div>
         <div class="history-card__actions">
           <button class="btn-history-view" data-id="${item.id}">View</button>
@@ -17065,6 +17124,15 @@ function renderHistoryList() {
   });
 
   container.innerHTML = html;
+
+  container.querySelectorAll("[data-runs-toggle]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const panel = container.querySelector(`[data-runs-for="${btn.dataset.runsToggle}"]`);
+      const open = panel ? panel.classList.toggle("hidden") === false : false;
+      btn.setAttribute("aria-expanded", String(open));
+    });
+  });
 
   // Bind click event to card itself (excluding buttons)
   container.querySelectorAll(".history-card").forEach(card => {
@@ -19571,8 +19639,11 @@ async function updateSupplierScraperStatus() {
     // and no longer falls back to a hardcoded 274 when the stat is missing or 0.
     const countEl = $("lblSupplierCount");
     if (countEl) {
+      // Nothing is shown until the number arrives: "histories for — suppliers" flashed on first load (re-test 3 SN5).
       const totalSuppliers = Number(data.total_suppliers);
-      countEl.textContent = Number.isFinite(totalSuppliers) ? totalSuppliers.toLocaleString() : "—";
+      const known = data.total_suppliers != null && Number.isFinite(totalSuppliers);
+      countEl.textContent = known ? totalSuppliers.toLocaleString() : "";
+      if ($("lblSupplierCountWrap")) $("lblSupplierCountWrap").hidden = !known;
     }
 
     // Coverage, from what is stored: Scotland, Wales and Ireland hold far fewer awards than England, and the page says so.
@@ -22847,6 +22918,8 @@ function refreshBuyerIntelligenceView() {
   _buyerFilterState.minSpend = parseFloat($("rngMinSpendFilter")?.value || "0");
   _buyerFilterState.radius = milesToKm(parseFloat($("rngRadiusFilter")?.value || "0")); // slider is in miles; API's radius stays in km
   _buyerFilterState.renewalsSoon = $("chkRenewalsSoon")?.checked || false;
+  _buyerFilterState.radarAllCategories = $("chkRadarAllCategories")?.checked || false;
+  _buyerFilterState.radarEndingSoon = $("chkRadarEndingSoon")?.checked || false;
   _buyerFilterState.openToNew = $("chkOpenToNew")?.checked || false;
   _buyerFilterState.frameworksOnly = $("chkFrameworksOnly")?.checked || false;
   _buyerFilterState.feedSort = $("selFeedSort")?.value || "best_match";
@@ -22879,6 +22952,9 @@ function refreshBuyerIntelligenceView() {
     profile_id: state.activeProfileId || ""
   });
   if (_buyerFilterState.showAll) queryParams.set("show_all", "1");
+  // The radar opens on the profile's own services and renewals 60 to 365 days out; these two widen it (re-test 3 B9).
+  if (_buyerFilterState.radarAllCategories) queryParams.set("all_categories", "1");
+  if (_buyerFilterState.radarEndingSoon) queryParams.set("ending_soon", "1");
 
   // Cancel whatever's still in flight before firing the next request — otherwise a slow
   // response to an earlier filter state can arrive after a newer one and silently overwrite
@@ -23201,9 +23277,21 @@ function buyerFitSummaryHtml(c) {
   return `<div class="fit-why"><div class="fit-why__head"><span>Why it fits</span>${chip}</div><ul class="fit-why__list">${reasons}</ul></div>`;
 }
 
+// What the radar is showing, in words: "Renewals in IT services and software packages, 2 to 12 months out".
+function radarScopeText(scope) {
+  if (!scope) return "Upcoming contract renewals across all public buyers";
+  const when = scope.min_days >= 60 ? "2 to 12 months out" : "up to 12 months out, including those ending soon";
+  const what = scope.all_categories || !(scope.service_labels || []).length
+    ? "in all categories"
+    : "in " + scope.service_labels.slice(0, 3).join(", ");
+  return `Renewals ${what}, ${when}`;
+}
+
 function renderOpportunityRadar(data) {
   const radarBadge = $("radarCountBadge");
   if (radarBadge) radarBadge.textContent = `${data.total || 0} renewals`;
+  const radarScope = $("radarScopeText");
+  if (radarScope) radarScope.textContent = radarScopeText(data.scope);
 
   const tbody = $("radarTableBody");
   if (!tbody) return;
@@ -23576,6 +23664,8 @@ function initBuyerIntelligenceEvents() {
   }
 
   $("chkRenewalsSoon")?.addEventListener("change", refreshBuyerIntelligenceView);
+  $("chkRadarAllCategories")?.addEventListener("change", refreshBuyerIntelligenceView);
+  $("chkRadarEndingSoon")?.addEventListener("change", refreshBuyerIntelligenceView);
   $("chkOpenToNew")?.addEventListener("change", refreshBuyerIntelligenceView);
   $("chkFrameworksOnly")?.addEventListener("change", refreshBuyerIntelligenceView);
   $("selFeedSort")?.addEventListener("change", refreshBuyerIntelligenceView);
@@ -23771,6 +23861,20 @@ function saveSelectedBidDocIds() {
 
 let _bidDocsChecklistReqId = 0;
 
+// The document ids to tick in the Bid Response Assistant: the remembered ones that still exist, else every document that is not past its
+// expiry date.
+function bidDocsToTick(docs, rememberedIds, today) {
+  const exists = new Set(docs.map(d => String(d.id)));
+  const kept = new Set([...rememberedIds].map(String).filter(id => exists.has(id)));
+  if (kept.size > 0) return kept;
+  const day = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return new Set(docs.filter(d => {
+    if (!d.expiry_date) return true;
+    const exp = new Date(String(d.expiry_date).slice(0, 10) + "T00:00:00");
+    return isNaN(exp) || exp >= day;
+  }).map(d => String(d.id)));
+}
+
 async function loadBidUserDocsChecklist(checkDocId = null, clearSelections = false) {
   const reqId = ++_bidDocsChecklistReqId;
   const container = $("bidUserDocsChecklistContainer");
@@ -23853,9 +23957,12 @@ async function loadBidUserDocsChecklist(checkDocId = null, clearSelections = fal
         }
       });
 
-      // Default to checking ALL unique documents for this profile if no saved state exists or if saved state is empty (unless clearSelections is explicitly requested)
-      if ((!hasSavedState || checkedIds.size === 0) && !clearSelections) {
-        uniqueDocs.forEach(d => checkedIds.add(String(d.id)));
+      // Nothing remembered for this profile (or only documents that have since been deleted): tick its current certificates, so the
+      // step does not say "0 documents attached" with four on file (re-test 3 DC3). A cleared selection stays cleared.
+      if (!clearSelections) {
+        const ticked = bidDocsToTick(uniqueDocs, checkedIds, new Date());
+        checkedIds.clear();
+        ticked.forEach(id => checkedIds.add(id));
       }
 
       uniqueDocs.forEach((doc, idx) => {
@@ -24905,6 +25012,20 @@ function initAll() {
         .catch(() => {});
 
       return;
+    }
+
+    if (qVal && typeof SearchUrl !== "undefined") {
+      // Mode, portals and keyword scope come back from the address with the query (re-test 3 T6).
+      const want = SearchUrl.fromSearch(location.search, PORTALS.map((p) => p.id));
+      state.statusFilter = want.mode;
+      syncStatusFilterUI();
+      if (want.portals) _selectedPortals = new Set(want.portals);
+      if (want.scope) {
+        state.keywordScope = want.scope;
+        if ($("keywordScopeSelect")) $("keywordScopeSelect").value = want.scope;
+        if ($("rmKeywordScopeSelect")) $("rmKeywordScopeSelect").value = want.scope;
+        if (typeof updateScopeLabelAndHint === "function") updateScopeLabelAndHint(want.scope);
+      }
     }
 
     if (qVal) {

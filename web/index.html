@@ -17,6 +17,18 @@
       } catch (e) { /* ignore */ }
     })();
   </script>
+  <script>
+    /* A link straight to a section (/funding?q=TRIF, /planning, /buyers ...) must not flash Tender search first (re-test 3 FN5):
+       the page shows a neutral "Loading" until that section opens (shell.js removes the class), or after 4 seconds at the latest. */
+    (function () {
+      try {
+        if (/^\/(funding|planning|buyers|suppliers|growth|answers|documents|history|pipeline)(\/|$)/.test(location.pathname)) {
+          document.documentElement.classList.add("tf-routing");
+          setTimeout(function () { document.documentElement.classList.remove("tf-routing"); }, 4000);
+        }
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
   <link rel="prefetch" href="/pricing.html" />
   <link rel="prefetch" href="/pricing.js" />
   <!-- Was missing the /dist/ segment, so this 404'd and every <i class="ti ti-..."> icon
@@ -28,12 +40,12 @@
        instead of pins stacking invisibly on top of each other. -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-  <link rel="stylesheet" href="/styles.css?v=148" />
-  <link rel="stylesheet" href="/theme.css?v=50" />
+  <link rel="stylesheet" href="/styles.css?v=149" />
+  <link rel="stylesheet" href="/theme.css?v=52" />
   <link rel="stylesheet" href="/mobile.css?v=4" />
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
-  <link rel="stylesheet" href="/growth-studio.css?v=19" />
-  <link rel="stylesheet" href="/funding.css?v=24" />
+  <link rel="stylesheet" href="/growth-studio.css?v=20" />
+  <link rel="stylesheet" href="/funding.css?v=25" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
   <script src="/translations.js?v=6"></script>
@@ -2324,7 +2336,7 @@
             <h2 class="profile-header__title" id="supplierIntelTitle">Supplier Intelligence</h2>
             <span class="profile-header__scope" id="lblSupplierScope" title="Where the awards come from: England and UK-wide notices in full; Scotland and Wales in part; Northern Ireland and Ireland name no winners on their portals">England and UK-wide public sector</span>
           </div>
-          <span class="profile-header__sub">Past winners and award histories for <strong id="lblSupplierCount">—</strong> suppliers. <span id="lblSupplierCoverage">Awards from Contracts Finder and Find a Tender.</span> <span id="lblSupplierLastSync"></span></span>
+          <span class="profile-header__sub">Past winners and award histories<span id="lblSupplierCountWrap" hidden> for <strong id="lblSupplierCount"></strong> suppliers</span>. <span id="lblSupplierCoverage">Awards from Contracts Finder and Find a Tender.</span> <span id="lblSupplierLastSync"></span></span>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
           <button type="button" id="btnSyncContractsFinder" class="btn btn--secondary btn--small" onclick="window.syncContractsFinderAwards &amp;&amp; window.syncContractsFinderAwards()" title="Fetch the latest contract awards from Contracts Finder and Find a Tender"><span id="syncContractsFinderIcon" aria-hidden="true">↻</span> Sync more awards</button>
@@ -3055,7 +3067,11 @@
           <div id="tabViewOpportunityRadar" class="buyer-tab-view hidden">
             <div class="buyer-caption">
               <strong id="radarCountBadge">0 renewals</strong>
-              <span>Upcoming contract renewals across all public buyers</span>
+              <span id="radarScopeText">Upcoming contract renewals across all public buyers</span>
+            </div>
+            <div class="buyer-caption" id="radarFilters" style="gap:16px;">
+              <label style="display:inline-flex;gap:6px;align-items:center;font-size:12px;" title="Include renewals outside the services in your company profile"><input type="checkbox" id="chkRadarAllCategories" /> All categories</label>
+              <label style="display:inline-flex;gap:6px;align-items:center;font-size:12px;" title="Include contracts that end in less than 60 days, which is usually too late to influence"><input type="checkbox" id="chkRadarEndingSoon" /> Ending soon (under 60 days)</label>
             </div>
 
             <!-- Radar Table -->
@@ -3410,6 +3426,7 @@
   <script src="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="/uk_counties.js?v=122"></script>
   <script src="/name-format.js?v=2"></script>
+  <script src="/search-url.js?v=1"></script>
   <script src="/search-status.js?v=8"></script>
   <script src="/portal-prefs.js?v=1"></script>
   <script src="/search-cache.js?v=2"></script>
@@ -3417,12 +3434,12 @@
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=2"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=265"></script>
-  <script src="/planning.js?v=21"></script>
+  <script src="/app.js?v=266"></script>
+  <script src="/planning.js?v=22"></script>
   <script src="/funding.js?v=11"></script>
   <script src="/grants-board.js?v=1"></script>
   <script src="/funding-ai.js?v=8"></script>
-  <script src="/policy-lib.js?v=2"></script>
+  <script src="/policy-lib.js?v=3"></script>
   <script src="/responsive-fixes.js?v=1" defer></script>
   <script src="/tooltips.js?v=4"></script>
   <script src="/connections.js?v=28"></script>
@@ -3432,7 +3449,7 @@
   <script src="/growth-inbox.js?v=5"></script>
   <script src="/growth-studio.js?v=26"></script>
   <script src="/email-outreach.js?v=5"></script>
-  <script src="/shell.js?v=7"></script>
+  <script src="/shell.js?v=8"></script>
   <script src="/search-filters.js?v=10"></script>
   <script>
     // The buyer workspace (Market Radar, market engagement) is a separate page for public sector buyers,

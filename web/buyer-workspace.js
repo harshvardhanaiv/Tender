@@ -446,6 +446,7 @@
     // too many labels crowd the axis: keep only the powers of ten
     return all.length > 8 ? all.filter((v) => Math.abs(v / Math.pow(10, Math.floor(Math.log10(v))) - 1) < 1e-9) : all;
   }
+  const SMALL_SAMPLE = 20;   // fewer contracts than this are drawn as dots, not as a 10th to 90th percentile band
   function costPanelHtml(cost, basis) {
     const hasAnnual = Boolean(cost.overall.annual);
     const use = basis === "annual" && !hasAnnual ? "total" : basis;
@@ -465,10 +466,13 @@
     const rows = blocks.map((b) => {
       const r = b[use];
       const n = use === "annual" ? b.annualised : b.contracts;
-      if (n < 10) {  // 5 contracts do not make a 10th to 90th percentile: show what they are
+      if (n < SMALL_SAMPLE) {  // too few contracts for a 10th to 90th percentile band: show them as dots (re-test 3 W5)
+        const dots = [["smallest", r.min], ["typical", r.median], ["largest", r.max]].map(([what, v]) =>
+          `<div class="bw-range__dot${what === "typical" ? " bw-range__dot--mid" : ""}" title="${what} ${esc(fmtMoney(v))}" style="left:${pos(v).toFixed(1)}%"></div>`).join("");
         return `<div class="bw-range"><div class="bw-range__head"><b>${esc(b.label)}</b>
-          <span>small sample (${plural(n, "contract")}): smallest ${fmtMoney(r.min)}, typical ${fmtMoney(r.median)}, largest ${fmtMoney(r.max)}${use === "annual" ? " a year" : ""}</span></div>
-          <div class="bw-range__foot">Too few contracts to show a range. Treat these as examples, not a benchmark.</div></div>`;
+          <span>Only ${plural(n, "contract")}: treat as indicative. Smallest ${fmtMoney(r.min)}, typical ${fmtMoney(r.median)}, largest ${fmtMoney(r.max)}${use === "annual" ? " a year" : ""}</span></div>
+          <div class="bw-range__track" role="img" aria-label="${esc(b.label)}: ${n} contracts between ${fmtMoney(r.min)} and ${fmtMoney(r.max)}, typical ${fmtMoney(r.median)}">${dots}</div>
+          <div class="bw-range__foot">Too few contracts for a range: the dots are the smallest, typical and largest.</div></div>`;
       }
       return `<div class="bw-range"><div class="bw-range__head"><b>${esc(b.label)}</b>
           <span>${fmtMoney(r.p10)} to ${fmtMoney(r.p90)}${use === "annual" ? " a year" : ""} · typical ${fmtMoney(r.median)}</span></div>

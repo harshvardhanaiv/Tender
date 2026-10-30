@@ -80,7 +80,7 @@ def config_problem(key: str | None, allow_live: bool) -> str | None:
     """Why the configured key cannot be used, in the user's words; None when it can. The key is never quoted."""
     text = (key or "").strip()
     if not text:
-        return "Outreach is not connected. Ask your administrator to set OUTREACH_API_KEY on the server."
+        return "Outreach is not connected. Connect it from Connected apps in the sidebar."
     mode = key_mode(text)
     if mode is None:
         return "The configured Outreach key is not an sk_test_ or sk_live_ key."

@@ -98,6 +98,62 @@ def renewal_score(days: int | None) -> float:
     return 70.0
 
 
+def sector_score_by_spend(spend_share: float, awards: int | None = None) -> float:
+    """Sector fit from the share of the buyer's SPEND that is in your divisions (re-test 3 B1: scoring on award counts left the top 50
+    within five points). The square root keeps a small share visible: 2% scores 20, 10% scores 45, 25% scores 71, 50% or more 100.
+    Fewer than ten matching contracts count for less, as in sector_score."""
+    if spend_share <= 0:
+        return 0.0
+    base = min(100.0, 100.0 * math.sqrt(spend_share / 0.5))
+    if awards is None:
+        return base
+    depth = min(1.0, math.log10(1 + max(0, awards)) / 2.5)
+    return base * (0.5 + 0.5 * depth)
+
+
+def spend_share(spend: dict[str, Any] | None, divisions: list[str]) -> tuple[float, float, float]:
+    """(share of the buyer's spend in these divisions, spend in them, all its spend) from {division: GBP}. (0, 0, 0) when unknown or nil."""
+    if not spend:
+        return 0.0, 0.0, 0.0
+    total = sum(max(0.0, float(v or 0)) for v in spend.values())
+    mine = sum(max(0.0, float(spend.get(d) or 0)) for d in divisions)
+    return (mine / total if total else 0.0), mine, total
+
+
+def gbp_short(amount: float) -> str:
+    amount = float(amount or 0)
+    if amount >= 1e9:
+        return f"£{amount / 1e9:.1f}bn"
+    if amount >= 1e6:
+        return f"£{amount / 1e6:.1f}m"
+    if amount >= 1e3:
+        return f"£{amount / 1e3:.0f}k"
+    return f"£{amount:.0f}"
+
+
+def value_weight(value: float | None) -> float:
+    """0.55 to 1.0 from the renewing contract's value: an unstated value counts as a modest one, a £1m contract is worth chasing,
+    £10m or more is the top."""
+    if not value or value <= 0:
+        return 0.6
+    return round(min(1.0, 0.55 + 0.45 * max(0.0, math.log10(value) - 4.0) / 3.0), 3)   # £10k 0.55, £100k 0.70, £1m 0.85, £10m 1.0
+
+
+def renewal_points(days: int | None, value: float | None = None, fit: float = 1.0) -> float:
+    """Renewal timing for a contract IN YOUR SERVICES: how well the date suits an approach, times what the contract is worth, times how
+    well it fits (1.0 when its CPV division is one you sell in). Nothing (0) when there is no such renewal 60 to 365 days away: a renewal
+    of something you do not sell, or one that is too close to act on, earns no points (re-test 3 B2)."""
+    if days is None or days < 60 or days > 365:
+        return 0.0
+    if days < 120:
+        timing = 55.0 + (days - 60) * 0.75          # 55 at 60 days to 100 at 120
+    elif days <= 270:
+        timing = 100.0
+    else:
+        timing = 100.0 - (days - 270) * 0.5          # 100 at 270 days to about 52 at 365
+    return round(timing * value_weight(value) * max(0.0, min(1.0, fit)), 1)
+
+
 def band(score: float) -> str:
     return "strong" if score >= 75 else "fair" if score >= 50 else "weak"
 
@@ -108,7 +164,7 @@ def day_phrase(days: int) -> str:
 
 def factors(*, cpv_score: float, prox_score: float, renew_score: float, openness_score: float, tier: int, cpv_match: bool,
             dist_km: float | None, days_until_renewal: int | None, next_renewal: str, repeat_display: str, total_contracts: int,
-            sector_note: str = "", renewal_contract: str = "") -> list[dict[str, Any]]:
+            sector_note: str = "", renewal_contract: str = "", renewal_scoped: bool = False) -> list[dict[str, Any]]:
     # "WFD Systems Improvement Project (IT services) ends 31 Mar 2027": the contract is named so the user can judge it (re-test 2 B2)
     named = f"{renewal_contract} " if renewal_contract else "A contract "
     if sector_note:
@@ -126,9 +182,11 @@ def factors(*, cpv_score: float, prox_score: float, renew_score: float, openness
     if days_until_renewal is not None and 60 <= days_until_renewal <= 180:
         renew = f"{named}is due to renew {day_phrase(days_until_renewal)} ({next_renewal}): time to engage before it is re-procured."
     elif days_until_renewal is not None and 180 < days_until_renewal <= 365:
-        renew = f"Next renewal is about {round(days_until_renewal / 30)} months away ({next_renewal})."
+        renew = f"{named}is due to renew in about {round(days_until_renewal / 30)} months ({next_renewal})."
     elif days_until_renewal is not None and 0 <= days_until_renewal < 60:
         renew = f"{named}ends {day_phrase(days_until_renewal)} ({next_renewal}): too close to act on, so it adds nothing to the score."
+    elif renewal_scoped:
+        renew = "No renewals in your services in the next 12 months."
     else:
         renew = "No renewal is scheduled in the next year."
     if total_contracts >= 5:

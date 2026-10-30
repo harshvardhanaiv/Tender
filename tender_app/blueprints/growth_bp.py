@@ -619,7 +619,7 @@ def _public_campaign(c: dict[str, Any]) -> dict[str, Any]:
 
 
 def _public_target(t: dict[str, Any], opted_out: set[str]) -> dict[str, Any]:
-    snap = t["snapshot"]
+    snap = gs.refresh_snapshot_days(t["snapshot"], date.today())
     email = t["contact_email"]
     return {
         "id": t["id"], "buyer_key": t["buyer_key"], "buyer_name": t["buyer_name"], "signal_key": t["signal_key"],
@@ -779,6 +779,28 @@ def _dominant_type(types: list[str]) -> str:
     return max(gs.SIGNAL_TYPES, key=lambda t: (counts.get(t, 0), -gs.SIGNAL_TYPES.index(t)))
 
 
+def _identical_empty_draft(conn, username: str, category_label: str, channel: str, signal_keys: set[str],
+                           profile_id: int | None, message: dict[str, Any]) -> int | None:
+    """The id of this user's draft for the same service, channel, profile and signals that nothing has been done to: the message
+    is still the default text, no target is sent, replied to or switched off, and no outreach draft was made. None when there is none."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT c.id, c.profile_id, c.subject, c.body, COALESCE(c.body_html, ''),
+                      COALESCE(ARRAY_AGG(t.signal_key) FILTER (WHERE t.id IS NOT NULL), '{}'),
+                      BOOL_OR(t.id IS NOT NULL AND (t.status <> 'not_sent' OR NOT t.included OR t.sent_at IS NOT NULL))
+                 FROM growth_campaigns c LEFT JOIN growth_campaign_targets t ON t.campaign_id = c.id
+                WHERE c.username = %s AND c.status = 'draft' AND c.category_label = %s AND c.channel = %s
+                  AND NOT EXISTS (SELECT 1 FROM growth_outreach_drafts d WHERE d.campaign_id = c.id)
+                GROUP BY c.id ORDER BY c.id""",
+            (username, category_label, channel),
+        )
+        for cid, pid, subject, text, html, keys, touched in cur.fetchall():
+            if (not touched and set(keys) == signal_keys and pid == profile_id and not html
+                    and subject == message["subject"] and text == message["body"]):
+                return cid
+    return None
+
+
 @growth_bp.post("/api/growth/campaigns")
 def growth_create_campaign():
     body = _json_body()
@@ -800,6 +822,11 @@ def growth_create_campaign():
         fallback = f"{f.category.label}: {gs.SIGNAL_PLURALS[kind]}, {date.today().strftime('%d %b %Y').lstrip('0')}"
         name = body.get("name")
         if not name:
+            # Starting the same campaign again opens the untouched draft that already exists instead of making "... (2)" (re-test 3 GS6)
+            same = _identical_empty_draft(conn, username, f.category.label, body.get("channel") or ("portal" if set(types) == {"engagement"} else "email"),
+                                          {s["key"] for s in picked}, profile["id"] if profile else None, message)
+            if same:
+                return jsonify({**_detail(conn, username, same), "skipped": skipped, "existing": True}), 200
             # an automatic name is made unique ("... (2)") so campaigns made the same day can be told apart
             with conn.cursor() as cur:
                 cur.execute("SELECT name FROM growth_campaigns WHERE username = %s", (username,))
@@ -1284,10 +1311,10 @@ def _outreach_problem() -> str | None:
     if link["error"]:
         return link["error"]
     if link["source"] == occ.DISCONNECTED:
-        return "Outreach is disconnected. Connect it again from Connections in the top bar."
+        return "Outreach is disconnected. Connect it again from Connected apps in the sidebar."
     key = (link["key"] or "").strip()
     if not key:
-        return "Outreach is not connected. Connect it from Connections in the top bar, or ask your administrator to set OUTREACH_API_KEY on the server."
+        return "Outreach is not connected. Connect it from Connected apps in the sidebar."
     mode = oc.key_mode(key)
     if mode is None:
         return "The configured Outreach key is not an sk_test_ or sk_live_ key."

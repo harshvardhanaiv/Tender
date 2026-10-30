@@ -41,6 +41,40 @@ def test_engagement_is_bounded_ordered_and_honest():
     assert bf.engagement(cpv_score=70, prox_score=60, renew_score=70, openness_score=60, total_contracts=50)["percent"] >= mid["percent"]
 
 
+def test_b1_sector_scores_on_share_of_spend_and_spreads_buyers():
+    """Re-test 3 B1: the top 50 spanned 83-88 because a 30% share already scored full marks."""
+    shares = [0.02, 0.05, 0.10, 0.25, 0.5, 0.9]
+    scores = [bf.sector_score_by_spend(x) for x in shares]
+    assert scores == sorted(scores) and scores[0] < 25 and 40 < scores[2] < 50 and scores[4] == 100 and scores[5] == 100
+    assert bf.sector_score_by_spend(0) == 0
+    assert bf.sector_score_by_spend(0.25, 3) < bf.sector_score_by_spend(0.25, 300)
+    share, mine, total = bf.spend_share({"72": 600000.0, "45": 1400000.0, "85": None}, ["72", "48"])
+    assert (share, mine, total) == (0.3, 600000.0, 2000000.0)
+    assert bf.spend_share(None, ["72"]) == (0.0, 0.0, 0.0) and bf.spend_share({"72": 0}, ["72"]) == (0.0, 0.0, 0.0)
+    assert bf.gbp_short(2_500_000) == "£2.5m" and bf.gbp_short(45_000) == "£45k" and bf.gbp_short(900) == "£900"
+
+
+def test_b2_b1_renewal_points_follow_timing_value_and_fit_and_are_zero_outside_the_window():
+    assert bf.renewal_points(None) == 0 and bf.renewal_points(30, 5e6) == 0 and bf.renewal_points(59, 5e6) == 0 and bf.renewal_points(400, 5e6) == 0
+    assert bf.renewal_points(200, 5e6) > bf.renewal_points(200, 50_000) > 0, "a bigger contract earns more"
+    assert bf.renewal_points(200, 1e6) > bf.renewal_points(80, 1e6) > bf.renewal_points(350, 1e6) > 0, "best 4 to 9 months out"
+    assert bf.renewal_points(200, 1e6, fit=0.5) == round(bf.renewal_points(200, 1e6) / 2, 1)
+    assert bf.renewal_points(200, 10e6) == 100 and bf.renewal_points(200, None) == 60
+    assert bf.value_weight(10_000) < bf.value_weight(100_000) < bf.value_weight(1e6) < bf.value_weight(1e7) == 1.0
+
+
+def test_b2_no_renewal_in_your_services_says_so_and_every_renewal_names_its_contract():
+    kw = dict(cpv_score=60, prox_score=60, renew_score=0, openness_score=60, tier=2, cpv_match=True, dist_km=10.0,
+              repeat_display="10%", total_contracts=20)
+    none = {f["key"]: f for f in bf.factors(days_until_renewal=None, next_renewal="", renewal_scoped=True, **kw)}
+    assert none["renewal"]["note"] == "No renewals in your services in the next 12 months." and none["renewal"]["score"] == 0
+    assert "No renewal is scheduled" in {f["key"]: f for f in bf.factors(days_until_renewal=None, next_renewal="", **kw)}["renewal"]["note"]
+    for days in (30, 90, 200, 300):
+        note = {f["key"]: f for f in bf.factors(days_until_renewal=days, next_renewal="2027-05-01", renewal_contract="Programme management support",
+                                                renewal_scoped=True, **kw)}["renewal"]["note"]
+        assert "Programme management support" in note, (days, note)
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

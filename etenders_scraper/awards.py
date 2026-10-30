@@ -559,7 +559,9 @@ def ingest_award_record(contract_record: dict[str, Any], conn: Any, overwrite: b
         _val = contract_record.get(_key)
         if isinstance(_val, str) and "&" in _val:
             contract_record[_key] = _html.unescape(_val)
-    supplier_name = (contract_record.get("supplier_name") or "").strip()
+    from tender_app.text_fix import clean_org_name
+    supplier_name = clean_org_name((contract_record.get("supplier_name") or "").strip())
+    contract_record["supplier_name"] = supplier_name
     # Prose or a section heading picked up from the notice page is not a name; a heading as the buyer is stored as "unknown buyer".
     if is_junk_supplier_name(supplier_name):
         return False

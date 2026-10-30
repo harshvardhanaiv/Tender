@@ -58,6 +58,35 @@ def itl1_region(region: str | None, address: str | None = None) -> str:
     return "UK"
 
 
+# NUTS 1 codes in notices ("UKI3" is a London sub-region) -> the ITL1 region names above.
+_NUTS1 = {
+    "UKC": "North East", "UKD": "North West", "UKE": "Yorkshire and The Humber", "UKF": "East Midlands", "UKG": "West Midlands",
+    "UKH": "East of England", "UKI": "London", "UKJ": "South East", "UKK": "South West", "UKL": "Wales", "UKM": "Scotland",
+    "UKN": "Northern Ireland",
+}
+_NUTS_CODE = re.compile(r"\b(UK[C-N])[0-9A-Z]{0,2}\b")
+_ADDRESS_FIELDS = ("buyer_postcode", "postcode", "contracting_authority_address", "authority_address", "address", "contact_address")
+
+
+def infer_notice_location(row: dict) -> tuple[str, str] | None:
+    """Where a notice says it is when its own "location" is empty: (region, basis) from the notice's region code, or from the
+    buyer's postcode, else None. The basis says which, so the page can show where the place came from (re-test 3 T7: 120 of
+    154 rows had no location although nearly all of them carry one of these)."""
+    for key in ("nuts", "nuts_code", "region_code", "region", "location"):
+        text = str(row.get(key) or "")
+        m = _NUTS_CODE.search(text.upper())
+        if m:
+            return _NUTS1[m.group(1)], "region code"
+        named = _ALIASES.get(_ITL_PREFIX.sub("", text.strip()).lower())
+        if named:
+            return named, "region code"
+    for key in _ADDRESS_FIELDS:
+        m = _POSTCODE.search(str(row.get(key) or ""))
+        if m and AREA_REGION.get(m.group(1).upper()):
+            return AREA_REGION[m.group(1).upper()], "buyer postcode"
+    return None
+
+
 # The first word of a company's name, when it is distinctive: "Serco Limited", "Serco Leisure Operating Limited" and "Serco Group
 # plc" share it. Used only to list records that look related, labelled as sharing a name, never as proof of ownership.
 _GENERIC_FIRST = frozenset("""THE UK NHS BRITISH NATIONAL ROYAL FIRST NEW GLOBAL INTERNATIONAL GROUP CITY COUNTY LONDON UNIVERSITY COLLEGE HOUSING

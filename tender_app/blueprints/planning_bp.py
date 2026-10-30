@@ -614,6 +614,32 @@ def planning_application(app_id: str):
     return jsonify(result)
 
 
+@planning_bp.route("/api/planning/track/<path:app_id>", methods=["GET", "POST", "DELETE"])
+@csrf_required
+def planning_track(app_id: str):
+    """GET: is this lead tracked, and at what stage. POST: add it to Pipeline and watch its stage. DELETE: stop (re-test 3 PN3)."""
+    gate = _plan_gate()
+    if gate:
+        return gate
+    username = session.get("username", "")
+    if not username:
+        return jsonify({"error": "Unauthorized"}), 401
+    from tender_app import planning_track as pt
+    conn = _get_connection()
+    try:
+        if request.method == "POST":
+            info = pt.track(conn, username, app_id)
+            if info is None:
+                return jsonify({"error": "Not found"}), 404
+            return jsonify({"ok": True, "tracked": True, **info})
+        if request.method == "DELETE":
+            pt.untrack(conn, username, app_id)
+            return jsonify({"ok": True, "tracked": False})
+        return jsonify({"ok": True, "tracked": app_id in pt.tracked_ids(conn, username)})
+    finally:
+        conn.close()
+
+
 @planning_bp.route("/api/planning/authorities", methods=["GET"])
 def planning_authorities():
     gate = _plan_gate()
@@ -657,12 +683,15 @@ def planning_stats():
                 SELECT COUNT(*),
                        COUNT(*) FILTER (WHERE start_date >= CURRENT_DATE - 7),
                        COUNT(*) FILTER (WHERE decided_date >= CURRENT_DATE - 7
-                                        AND app_state IN ('Permitted', 'Conditions')),
-                       MAX(updated_at)
+                                        AND app_state IN ('Permitted', 'Conditions'))
                 FROM planning_applications
                 WHERE {where}
             """, params)
-            total, new_7d, approved_7d, last_updated = cur.fetchone()
+            total, new_7d, approved_7d = cur.fetchone()
+            # One "updated" date for the whole dataset: it used to be the newest row of the filtered result, so it read
+            # 30 Oct on load and 29 Oct after a keyword search (re-test 3 P6).
+            cur.execute("SELECT MAX(updated_at) FROM planning_applications")
+            last_updated = cur.fetchone()[0]
 
             breakdowns = {}
             for key, column in (("country", "country"), ("size", "app_size"),

@@ -313,6 +313,7 @@
     syncChips();
     const params = buildParams(page);
     const filtered = isFilteredSearch(params);
+    syncUrl();
 
     // The summary banner ("X schemes across the UK...") used to come only from the unfiltered
     // /api/planning/stats call made once at load (loadStats()) and just got hidden whenever a
@@ -455,7 +456,8 @@
         <span class="${scoreClass(app.lead_score)}" title="Lead score out of 100">${esc(app.lead_score ?? "–")}</span>
         ${tags(app)}
       </div>
-      ${links ? `<div class="planning-detail__actions">${links}</div>` : ""}
+      <div class="planning-detail__actions">${links}<button type="button" class="planning-link" data-planning-action="track" data-id="${esc(app.id)}" aria-pressed="false">Track lead</button></div>
+      <p class="planning-track-note hidden" id="planningTrackNote"></p>
       ${proposal}
 
       <section class="planning-section">
@@ -490,8 +492,67 @@
     byId("planningDetail").scrollTop = 0;
   }
 
+  // ── Track lead: into Pipeline, with an alert at each later stage (re-test 3 PN3) ─────────────────
+  const trackPath = (id) => `/api/planning/track/${id.split("/").map(encodeURIComponent).join("/")}`;
+  const TRACK_NOTE = "In your Pipeline. You will be alerted when it is decided, when its conditions are discharged and when work starts on site (the last two are read from other applications at the same address, as the register has no field for them).";
+
+  function paintTrack(tracked) {
+    const btn = byId("planningDetail").querySelector('[data-planning-action="track"]');
+    const note = byId("planningTrackNote");
+    if (btn) {
+      btn.textContent = tracked ? "Tracking ✓ (stop)" : "Track lead";
+      btn.setAttribute("aria-pressed", String(tracked));
+    }
+    if (note) {
+      note.textContent = tracked ? TRACK_NOTE : "";
+      note.classList.toggle("hidden", !tracked);
+    }
+  }
+
+  async function loadTrackState(id) {
+    try {
+      const res = await fetch(trackPath(id));
+      if (res.ok && view.selectedId === id) paintTrack(Boolean((await res.json()).tracked));
+    } catch (_) { /* the button still works */ }
+  }
+
+  async function toggleTrack(btn) {
+    const id = btn.dataset.id;
+    const on = btn.getAttribute("aria-pressed") !== "true";
+    btn.disabled = true;
+    try {
+      const res = await fetch(trackPath(id), { method: on ? "POST" : "DELETE" });
+      if (res.ok) {
+        paintTrack(on);
+        if (on) window.showToast?.("Added to your Pipeline. You will be alerted at each stage.");
+        else window.showToast?.("Removed from your Pipeline.");
+        if (typeof window.loadPipeline === "function") window.loadPipeline();
+      } else {
+        window.showToast?.((await errorMessage(res)).replace(/<[^>]+>/g, "") || "Could not track this lead.");
+      }
+    } catch (_) {
+      window.showToast?.("Could not reach TenderFlow. Check your connection.");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // The search and the open lead are in the address (/planning?q=care+home&lead=<id>), so a reload or a shared link returns to them.
+  function syncUrl() {
+    try {
+      if (!(location.pathname === "/planning" || location.pathname === "/planning/") || byId("planningLeadsModal")?.classList.contains("hidden")) return;
+      const q = (byId("planningFilterBar")?.elements.q.value || "").trim();
+      const u = new URLSearchParams();
+      if (q) u.set("q", q);
+      if (view.selectedId) u.set("lead", view.selectedId);
+      const qs = u.toString();
+      history.replaceState(null, "", "/planning" + (qs ? "?" + qs : ""));
+    } catch (_) { /* no history */ }
+  }
+
   function clearDetail() {
     view.selectedId = null;
+    syncUrl();
     view.detailController?.abort();
     const panel = byId("planningDetail");
     if (view.emptyDetailHtml) panel.innerHTML = view.emptyDetailHtml;
@@ -501,6 +562,7 @@
 
   async function showDetail(id) {
     view.selectedId = id;
+    syncUrl();
     byId("planningResults").querySelectorAll(".planning-lead").forEach((el) => {
       const active = el.dataset.id === id;
       el.classList.toggle("is-active", active);
@@ -525,6 +587,7 @@
         return;
       }
       renderDetail(await res.json());
+      loadTrackState(id);
       // On narrow screens the detail panel sits below the list; bring it into view.
       if (window.matchMedia("(max-width: 760px)").matches) panel.scrollIntoView({ block: "start", behavior: "smooth" });
     } catch (err) {
@@ -837,6 +900,7 @@
     document.getElementById("planningLeadsModal").addEventListener("click", (event) => {
       const action = event.target.closest("[data-planning-action]")?.dataset.planningAction;
       if (action === "retry") search(view.page || 1);
+      if (action === "track") toggleTrack(event.target.closest("[data-planning-action]"));
       if (action === "upgrade") window.openPricingModal?.();
     });
 
@@ -978,13 +1042,18 @@
     if (document.title !== PLANNING_TITLE) prevTitle = document.title;
     document.title = PLANNING_TITLE;
     profileNote();
-    try { if (location.pathname !== "/planning") history.replaceState(null, "", "/planning"); } catch (_) { /* no history */ }
+    // ?q= and ?lead= come back from the address (read before it is rewritten below)
+    const fromUrl = new URLSearchParams(location.search);
+    try { if (location.pathname !== "/planning") history.replaceState(null, "", "/planning" + location.search); } catch (_) { /* no history */ }
     if (view.initialised) return;
     view.initialised = true;
     view.emptyDetailHtml = byId("planningDetail").innerHTML;
+    const q = fromUrl.get("q");
+    if (q) byId("planningFilterBar").elements.q.value = q;
     loadStats();
     loadAuthorities();
     search(1);
+    if (fromUrl.get("lead")) showDetail(fromUrl.get("lead"));
   }
 
   function closePlanningLeads() {

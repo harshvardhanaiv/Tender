@@ -471,8 +471,11 @@ def harvest_backfill_window(
     return _finish_stats(stats)
 
 
-def rescore(conn, *, all_rows: bool = False) -> int:
+def rescore(conn, *, all_rows: bool = False, dry_run: bool = False, revert_path: str | None = None) -> int:
     """Recompute low_value_reason and lead_score. Returns the number of rows changed.
+
+    dry_run=True works out the changes and returns how many there would be without writing any. revert_path (a file name) is where the
+    old score and reason of every row about to change are written first, as {id: [old_score, old_reason]}, so a re-score can be undone.
 
     Nightly (all_rows=False): only rows inside the recency window. Scores are computed at
     upsert, but the recency component decays daily while an unchanged record is never
@@ -496,6 +499,7 @@ def rescore(conn, *, all_rows: bool = False) -> int:
             params,
         )
         changes = []
+        old_values: dict[str, list] = {}
         for row_id, desc, size, state, typ, dwell, start_d, decided_d, old_reason, old_score in cur.fetchall():
             row = {"description": desc, "app_size": size, "app_state": state, "app_type": typ,
                    "n_dwellings": dwell, "start_date": start_d, "decided_date": decided_d}
@@ -506,6 +510,14 @@ def rescore(conn, *, all_rows: bool = False) -> int:
             new_score = lead_score(row)
             if new_score != old_score or new_reason != old_reason:
                 changes.append((new_score, new_reason, row_id))
+                old_values[row_id] = [old_score, old_reason]
+        if revert_path and changes:
+            import json
+            with open(revert_path, "w", encoding="utf-8") as fh:
+                json.dump(old_values, fh)
+        if dry_run:
+            conn.rollback()
+            return len(changes)
         if changes:
             execute_values(
                 cur,

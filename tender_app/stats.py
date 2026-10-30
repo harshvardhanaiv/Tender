@@ -209,6 +209,11 @@ def ensure_stats_tables(cursor) -> None:
     cursor.execute("ALTER TABLE buyer_stats ADD COLUMN IF NOT EXISTS cpv_shares JSONB")
     cursor.execute("ALTER TABLE buyer_stats ADD COLUMN IF NOT EXISTS next_renewal_actionable TEXT")
     cursor.execute("ALTER TABLE buyer_stats ADD COLUMN IF NOT EXISTS renewals_by_division JSONB")
+    # {CPV division: GBP spent} (direct contracts, sane values) so sector fit can be scored on the share of a buyer's SPEND, not just its
+    # award count; and the title of the buyer's first actionable renewal, so every renewal reason can name its contract (re-test 3 B1, B2).
+    # NULL until the next stats rebuild; the buyer feed falls back to award counts and an unnamed contract until then.
+    cursor.execute("ALTER TABLE buyer_stats ADD COLUMN IF NOT EXISTS cpv_spend JSONB")
+    cursor.execute("ALTER TABLE buyer_stats ADD COLUMN IF NOT EXISTS next_renewal_title TEXT")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_buyer_stats_spend ON buyer_stats (total_spend DESC)")
 
 
@@ -302,6 +307,7 @@ def refresh_buyer_stats(conn, from_table: bool = False) -> int:
     """Recompute buyer_stats, grouped by the same normalised name the buyer pages group by."""
     today = datetime.now().strftime("%Y-%m-%d")
     cur = conn.cursor()
+    ensure_stats_tables(cur)   # columns added since the table was built (cpv_spend, next_renewal_title) exist before they are written
     cur.execute(f"""
         WITH {deduped_cte(cur) if from_table else DEDUPED_AWARDS_CTE_SQL}
         INSERT INTO buyer_stats
@@ -355,14 +361,37 @@ def refresh_buyer_stats(conn, from_table: bool = False) -> int:
         WHERE b.authority_key = t.k
     """)
     cur.execute("UPDATE buyer_stats SET cpv_shares = '{}'::jsonb WHERE cpv_shares IS NULL")  # no CPV on any award: empty, not unknown
+    cur.execute(f"""
+        WITH {deduped_cte(cur) if from_table else DEDUPED_AWARDS_CTE_SQL}
+        UPDATE buyer_stats b SET cpv_spend = t.spend
+        FROM (SELECT k, jsonb_object_agg(div, v) AS spend FROM (
+                  SELECT {_norm_auth_sql('authority_name')} AS k, LEFT(cpv_code, 2) AS div,
+                         SUM(CASE WHEN is_framework = 1 OR contract_value < 0 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE COALESCE(contract_value, 0) END) AS v
+                  FROM deduped_awards
+                  WHERE authority_name IS NOT NULL AND cpv_code ~ '^[0-9][0-9]' AND cpv_code NOT LIKE '00%'
+                  GROUP BY 1, 2) d GROUP BY k) t
+        WHERE b.authority_key = t.k
+    """)
+    cur.execute("UPDATE buyer_stats SET cpv_spend = '{}'::jsonb WHERE cpv_spend IS NULL")
+    cur.execute(f"""
+        WITH {deduped_cte(cur) if from_table else DEDUPED_AWARDS_CTE_SQL}
+        UPDATE buyer_stats b SET next_renewal_title = t.ttl
+        FROM (SELECT DISTINCT ON (k) k, LEFT(tender_title, 80) AS ttl FROM (
+                  SELECT {_norm_auth_sql('authority_name')} AS k, tender_title, contract_end_date
+                  FROM deduped_awards
+                  WHERE authority_name IS NOT NULL AND contract_end_date >= %s AND tender_title IS NOT NULL AND TRIM(tender_title) <> '') x
+              ORDER BY k, contract_end_date, tender_title) t
+        WHERE b.authority_key = t.k
+    """, ((datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d"),))
     # The first renewal a company can still act on, per CPV division, with the contract's title: a renewal counts for a buyer only
     # when it is in the company's own services (re-test 2 B2: a hospital's ophthalmic maintenance scored full marks for a BI firm).
     cur.execute(f"""
         WITH {deduped_cte(cur) if from_table else DEDUPED_AWARDS_CTE_SQL}
         UPDATE buyer_stats b SET renewals_by_division = t.r
-        FROM (SELECT k, jsonb_object_agg(div, jsonb_build_object('date', d, 'title', ttl)) AS r FROM (
-                  SELECT DISTINCT ON (k, div) k, div, d, ttl FROM (
-                      SELECT {_norm_auth_sql('authority_name')} AS k, LEFT(cpv_code, 2) AS div, contract_end_date AS d, LEFT(tender_title, 80) AS ttl
+        FROM (SELECT k, jsonb_object_agg(div, jsonb_build_object('date', d, 'title', ttl, 'value', val)) AS r FROM (
+                  SELECT DISTINCT ON (k, div) k, div, d, ttl, val FROM (
+                      SELECT {_norm_auth_sql('authority_name')} AS k, LEFT(cpv_code, 2) AS div, contract_end_date AS d, LEFT(tender_title, 80) AS ttl,
+                             CASE WHEN is_framework = 1 OR contract_value < 0 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN NULL ELSE contract_value END AS val
                       FROM deduped_awards
                       WHERE authority_name IS NOT NULL AND cpv_code ~ '^[0-9][0-9]' AND cpv_code NOT LIKE '00%%' AND contract_end_date >= %s) x
                   ORDER BY k, div, d) y GROUP BY k) t

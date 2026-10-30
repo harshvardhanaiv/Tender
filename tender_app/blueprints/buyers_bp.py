@@ -900,6 +900,30 @@ def get_buyer_detail(authority_name: str):
 
 # ── OPPORTUNITY RADAR (TAB 2) ─────────────────────────────────────────────
 
+RADAR_DEFAULT_MIN_DAYS = 60    # a renewal closer than this is too late to influence
+RADAR_DEFAULT_MAX_DAYS = 365
+
+
+def _profile_services(cursor, conn, username: str, profile_id) -> list[str]:
+    """CPV divisions the selected (else default) company profile sells in, read from its name and text; [] with no profile or no match."""
+    from tender_app import buyer_fit as bf
+    try:
+        if profile_id and str(profile_id).isdigit():
+            _execute(cursor, conn, "SELECT name, profile_text FROM company_profiles WHERE username = ? AND id = ?", [username, int(profile_id)])
+            row = cursor.fetchone()
+        else:
+            row = None
+        if not row:
+            _execute(cursor, conn, "SELECT name, profile_text FROM company_profiles WHERE username = ? ORDER BY is_default DESC, id DESC LIMIT 1", [username])
+            row = cursor.fetchone()
+    except Exception:
+        conn.rollback()
+        return []
+    if not row or not (row[1] or "").strip():
+        return []
+    return bf.infer_divisions(f"{row[0] or ''} {row[1]}")
+
+
 @buyers_bp.route("/api/buyers/opportunity-radar", methods=["GET"])
 def get_opportunity_radar():
     """
@@ -926,6 +950,15 @@ def get_opportunity_radar():
     except ValueError:
         return jsonify({"ok": False, "error": "min_days, max_days, page and per_page must be whole numbers"}), 422
     cpv_divisions = [d for d in re.split(r"[,\s]+", request.args.get("cpv") or "") if re.fullmatch(r"\d{2}", d)]
+    # The radar opens on the selected profile's own services and on renewals 60 to 365 days out; "All categories" and "Ending soon" are
+    # filters that widen it (re-test 3 B9). A cpv, min_days or max_days in the request still wins.
+    all_categories = request.args.get("all_categories", "").lower() in ("1", "true", "yes")
+    ending_soon = request.args.get("ending_soon", "").lower() in ("1", "true", "yes")
+    if not request.args.get("min_days"):
+        min_days = 0 if ending_soon else RADAR_DEFAULT_MIN_DAYS
+    if max_days is None:
+        max_days = RADAR_DEFAULT_MAX_DAYS
+    services: list[str] = []
 
     user_lat_param = request.args.get("user_lat")
     user_lon_param = request.args.get("user_lon")
@@ -939,6 +972,10 @@ def get_opportunity_radar():
     cursor = conn.cursor()
 
     try:
+        if not cpv_divisions and not all_categories:
+            cpv_divisions = _profile_services(cursor, conn, request.args.get("username") or session.get("username") or session.get("user")
+                                              or session.get("email") or "admin", request.args.get("profile_id"))
+            services = list(cpv_divisions)
         from tender_app import stats as _stats
         today_str = (_uk_today() + timedelta(days=min_days)).strftime("%Y-%m-%d")
         # the de-duplicated awards when that table is built: one row per award, and a framework's value never shown as an order's
@@ -1002,12 +1039,14 @@ def get_opportunity_radar():
             WHERE {where_sql}
         """
 
+        # a renewal with no CPV code cannot be matched to anyone's services: it never leads the list (181 of the first 300 rows had none)
+        no_cpv_last = "(ca.cpv_code IS NULL OR TRIM(ca.cpv_code) = '') ASC, "
         if sort_by in ("value", "highest_value", "spend"):
-            query += " ORDER BY ca.contract_value DESC NULLS LAST, ca.id"
+            query += f" ORDER BY {no_cpv_last}ca.contract_value DESC NULLS LAST, ca.id"
         elif sort_by in ("buyer_name", "name"):
-            query += " ORDER BY ca.authority_name ASC, ca.id"
+            query += f" ORDER BY {no_cpv_last}ca.authority_name ASC, ca.id"
         else:
-            query += " ORDER BY ca.contract_end_date ASC, ca.id"
+            query += f" ORDER BY {no_cpv_last}ca.contract_end_date ASC, ca.id"
 
         # A distance filter needs per-row distance, which is computed in Python below, so capping
         # the query first would drop real matches before that filter saw them: with a radius we
@@ -1076,6 +1115,11 @@ def get_opportunity_radar():
             "pages": max(1, -(-total_matches // row_cap)) if row_cap else 1,
             "fast": row_cap < 300,
             "approximate": False,  # a fast response is the same list, just shorter
+            "scope": {
+                "services": services, "service_labels": [buyer_fit.division_label(d) for d in services],
+                "all_categories": all_categories or not services, "ending_soon": ending_soon,
+                "min_days": min_days, "max_days": max_days,
+            },
         })
 
     except Exception as e:
@@ -1158,7 +1202,8 @@ def _buyer_items_from_stats(cursor, conn, q: str, buyer_type_filter: str, min_sp
     _execute(cursor, conn, f"""
         SELECT authority_name, buyer_type, total_contracts, total_spend, unique_suppliers,
                next_renewal_date, latitude, longitude, cpv_divisions, cpv_shares, next_renewal_actionable,
-               to_jsonb(buyer_stats) -> 'renewals_by_division' AS renewals_by_division  -- null until the first rebuild adds the column
+               to_jsonb(buyer_stats) -> 'renewals_by_division' AS renewals_by_division,  -- null until the first rebuild adds the column
+               to_jsonb(buyer_stats) -> 'cpv_spend' AS cpv_spend, to_jsonb(buyer_stats) ->> 'next_renewal_title' AS next_renewal_title
         FROM buyer_stats WHERE {" AND ".join(where)}
     """, params)
     cols = [d[0] for d in cursor.description]
@@ -1338,6 +1383,7 @@ def get_opportunity_feed():
         # 2. Query Buyers with Aggregates
         today_str = _uk_today().strftime("%Y-%m-%d")
         actionable_str = (_uk_today() + timedelta(days=60)).strftime("%Y-%m-%d")  # the first renewal a company can still act on
+        horizon_str = (_uk_today() + timedelta(days=365)).strftime("%Y-%m-%d")  # renewals later than this earn no points
         # Instant path: read the precomputed buyer_stats (about 50 ms instead of ~5 s). Exact unless
         # the request searches text, which then only matches buyer names (approximate=true); the
         # client follows up without fast=1 to get the full answer in the background. Framework-only
@@ -1476,16 +1522,23 @@ def get_opportunity_feed():
                 next_ren = ""  # stats predate today; the next one is unknown until the next refresh
             # With a company profile, only a renewal in the company's own services counts, and the contract is named (re-test 2 B2).
             renewal_contract = ""
+            renewal_value = None
             _mine = list(dict.fromkeys(sorted(won_cpvs) + company_divisions))
             _rbd = b.get("renewals_by_division") if rows_from_stats else None
-            if tier and _mine and isinstance(_rbd, dict):
+            # Renewal points only for a contract in the company's own services, within the next 12 months (re-test 3 B2).
+            renewal_scoped = bool(tier and _mine and isinstance(_rbd, dict))
+            if renewal_scoped:
                 _best = None
                 for _div in _mine:
                     _e = _rbd.get(_div)
-                    if isinstance(_e, dict) and _e.get("date") and _e["date"] >= today_str and (_best is None or _e["date"] < _best["date"]):
+                    if isinstance(_e, dict) and _e.get("date") and today_str <= _e["date"] <= horizon_str and (_best is None or _e["date"] < _best["date"]):
                         _best = _e
                 next_ren = _best["date"] if _best else ""
                 renewal_contract = (_best.get("title") or "").strip() if _best else ""
+                renewal_value = _best.get("value") if _best else None
+            elif next_ren:
+                # no profile services to scope it by: the buyer's first renewal, named from the stats (empty until the next rebuild)
+                renewal_contract = (b.get("next_renewal_title") or "").strip() if rows_from_stats else ""
             days_until_renewal = 999
             if next_ren:
                 _d = _days_until(next_ren)
@@ -1511,10 +1564,17 @@ def get_opportunity_feed():
                 labels = ", ".join(_bf.division_label(d) for d in my_divisions[:3])
                 if isinstance(shares, dict):
                     share, div_awards, all_awards = _bf.sector_share(shares, my_divisions)
-                    cpv_score = _bf.sector_score(share, div_awards)
+                    sp_share, sp_mine, sp_all = _bf.spend_share(b.get("cpv_spend") if rows_from_stats else None, my_divisions)
+                    if sp_all > 0:   # scored on the share of its spend, which spreads buyers far wider than a count of awards
+                        cpv_score = _bf.sector_score_by_spend(sp_share, div_awards)
+                        sector_note = (f"{round(sp_share * 100)}% of its spend ({_bf.gbp_short(sp_mine)} of {_bf.gbp_short(sp_all)}) is in {labels}; "
+                                       f"{div_awards} of its {all_awards} contracts with a CPV code." if div_awards
+                                       else f"None of its {all_awards} contracts with a CPV code are in {labels}.")
+                    else:
+                        cpv_score = _bf.sector_score(share, div_awards)
+                        sector_note = (f"{div_awards} of its {all_awards} contracts with a CPV code are in {labels}." if div_awards
+                                       else f"None of its {all_awards} contracts with a CPV code are in {labels}.")
                     cpv_match = div_awards > 0
-                    sector_note = (f"{div_awards} of its {all_awards} contracts with a CPV code are in {labels}." if div_awards
-                                   else f"None of its {all_awards} contracts with a CPV code are in {labels}.")
                 else:  # the live path holds no per-buyer mix: the divisions it buys in
                     buyer_cpvs = b.get("cpv_divisions") or []
                     cpv_match = any(str(c)[:2] in my_divisions for c in buyer_cpvs)
@@ -1531,7 +1591,10 @@ def get_opportunity_feed():
             prox_score = max(0.0, 100.0 - (dist_km * 0.5)) if dist_km < 9999 else 60.0
 
             # 3. Renewal score (0 to 100)
-            renew_score = _bf.renewal_score(days_until_renewal if days_until_renewal != 999 else None)
+            if renewal_scoped:
+                renew_score = _bf.renewal_points(days_until_renewal if days_until_renewal != 999 else None, renewal_value)
+            else:
+                renew_score = _bf.renewal_score(days_until_renewal if days_until_renewal != 999 else None)
 
             # 4. Openness score (0 to 100)
             openness_score = 100.0 - repeat_rate if total_c >= 5 else 60.0
@@ -1604,7 +1667,7 @@ def get_opportunity_feed():
                     cpv_match=cpv_match, dist_km=dist_km if dist_km < 9999 else None,
                     days_until_renewal=days_until_renewal if days_until_renewal != 999 else None,
                     next_renewal=next_ren, repeat_display=repeat_display, total_contracts=total_c, sector_note=sector_note,
-                    renewal_contract=renewal_contract),
+                    renewal_contract=renewal_contract, renewal_scoped=renewal_scoped),
                 "division_awards": div_awards,
                 "engagement": buyer_fit.engagement(
                     cpv_score=cpv_score, prox_score=prox_score, renew_score=renew_score, openness_score=openness_score, total_contracts=total_c),

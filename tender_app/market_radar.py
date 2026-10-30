@@ -80,7 +80,7 @@ CATEGORY_PRESETS: tuple[dict[str, Any], ...] = (
         "id": "crm-case-management",
         "label": "CRM & case management software",
         "hint": "Customer, case and contact management systems",
-        "cpv": ("48445", "72212445"),
+        "cpv": ("72212445",),   # 48445 is no longer here: legal case management has its own preset for it (re-test 3 W5)
         "keywords": ("crm", "customer relationship", "case management", "customer service platform"),
         "keyword_cpv": ("48", "72", "79", "85"),
     },

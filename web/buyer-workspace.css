@@ -171,6 +171,8 @@
 .bw-range__head span { color: var(--slate); font-variant-numeric: tabular-nums; }
 .bw-range__track { position: relative; height: 14px; background: var(--surface-2); border-radius: 7px; }
 .bw-range__fill { position: absolute; top: 0; bottom: 0; background: var(--sky, #3e7cb1); border-radius: 7px; min-width: 4px; }
+.bw-range__dot { position: absolute; top: 3px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; background: var(--sky, #3e7cb1); }
+.bw-range__dot--mid { background: var(--ink); }
 .bw-range__mid { position: absolute; top: -4px; width: 3px; height: 22px; background: var(--ink); border-radius: 2px; }
 .bw-range__foot { margin-top: 5px; font-size: 12.5px; color: var(--bw-faint); }
 .bw-axis { position: relative; height: 22px; margin: 2px 0 10px; border-top: 1px solid var(--line); }

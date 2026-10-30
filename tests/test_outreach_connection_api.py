@@ -68,7 +68,7 @@ def test_with_no_key_anywhere_it_says_not_connected_and_whether_a_key_can_be_sav
     growth_bp.MAIL_CRED_KEY = ""
     s = status(client(USER_A))
     assert s["ready"] is False and s["source"] == "none" and s["shared_available"] is False and s["can_store_key"] is False
-    assert "Connections" in s["problem"] and "OUTREACH_API_KEY" in s["problem"] and FAKE.calls == []
+    assert "Connected apps" in s["problem"] and "OUTREACH_API_KEY" not in s["problem"] and "top bar" not in s["problem"] and FAKE.calls == []
     enable_storage()
     assert status(client(USER_A))["can_store_key"] is True
 

@@ -41,9 +41,23 @@
     );
   }
 
+  // The questions in a pack, by category, so it can be read before it is added (re-test 3 AB2).
+  function packPreviewHtml(p) {
+    const qs = p.questions || [];
+    if (!qs.length) return "";
+    const groups = [];
+    qs.forEach((q) => {
+      let g = groups.find((x) => x.category === q.category);
+      if (!g) groups.push(g = { category: q.category, items: [] });
+      g.items.push(q.question);
+    });
+    return `<details class="pl-preview"><summary>Preview the ${esc(qs.length)} questions</summary>` +
+      groups.map((g) => `<div class="pl-preview__group"><strong>${esc(g.category)}</strong><ul>${g.items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul></div>`).join("") + `</details>`;
+  }
+
   function packsHtml(packs) {
     return (packs || []).map((p) =>
-      `<div class="pl-pack"><div><strong>${esc(p.title)}</strong> <span class="pl-hint">${esc(p.count)} answers</span><div class="pl-hint">${esc(p.summary)}</div></div>` +
+      `<div class="pl-pack"><div><strong>${esc(p.title)}</strong> <span class="pl-hint">${esc(p.count)} answers</span><div class="pl-hint">${esc(p.summary)}</div>${packPreviewHtml(p)}</div>` +
       `<button type="button" class="btn btn--primary" data-pl-pack="${esc(p.key)}">Add to my Answer Bank</button></div>`).join("") +
     `<p class="pl-hint">Free. Each answer is an editable starting point with [bracketed] gaps for facts only you know. Questions you already have are left alone.</p>`;
   }

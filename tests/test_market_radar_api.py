@@ -262,7 +262,7 @@ def test_request_validation():
     base = "category=housing-repairs-gas"
     for qs in ("", "category=nope", "cpv=5", "cpv=abc", "q=!!", f"{base}&authority=wrong", f"{base}&authority=local-other",
                f"{base}&window=10y", f"{base}&scope=sideways", f"{base}&per_page=0", f"{base}&per_page=101",
-               f"{base}&per_page=x", f"{base}&page=0", f"{base}&page=99999", f"{base}&sort=sideways"):
+               f"{base}&per_page=x", f"{base}&page=0", f"{base}&page=99999", f"{base}&sort=sideways", f"{base}&authority_type=county"):
         st, j = call(c, "get", "/api/market-radar/analysis?" + qs)
         assert st == 400 and j.get("error"), (qs, st, j)
     assert call(c, "get", f"/api/market-radar/peers/awards?{base}")[0] == 400, "buyer is required"
