@@ -628,9 +628,16 @@ def _order_merged(suppliers: list[dict[str, Any]], opts: dict | None, q_key: str
         return suppliers
     from tender_app.entity_merge import entity_name_key
 
+    # A word typed in full ("dell") that appears only inside a longer word of a name ("Riddell McKibbin") ranks after the names that
+    # start a word with it (re-test: "dell" listed RIDDELL MCKIBBIN third). Searches of 3 letters or fewer are filtered, not ranked.
+    q_word = (q or "").strip().lower()
+    q_word_start = re.compile(r"(^|[^a-z0-9])" + re.escape(q_word)) if re.fullmatch(r"[a-z]{4,}", q_word) else None
+
     def tier(s: dict[str, Any]) -> int:
         if q and q_key and (entity_name_key(s.get("name")) == q_key or (s.get("name") or "").lower() == q.lower()):
             return 0
+        if q_word_start and not q_word_start.search((s.get("name") or "").lower()):
+            return 3
         return 1 if (s.get("total_awards") or 0) > 0 or sort == "name" else 2
     if not q:
         return sorted(suppliers, key=key_fn)
@@ -1089,12 +1096,19 @@ def _search_suppliers_uncached():
         use_stats = can_use_stats and ((fast and not has_dates) or not (q or has_dates))
         approximate = use_stats and bool(q or has_dates)
 
+        # Records of one company become one card AFTER the database has cut the page, so a page of 10 records showed 4 cards and the next
+        # page skipped or repeated companies (re-test SN1). In paged mode the records from the top down to the end of this page are read
+        # (at least 200, and four times the cards wanted, up to 1,500: the same records are read for the first pages, so their order agrees), merged, and the page is cut from the merged list.
+        page_mode = limit is not None and offset is not None
+        page_end = (offset or 0) + (limit or 0)
+        raw_limit, raw_offset = (min(1500, max(200, page_end * 4)), 0) if page_mode else (limit, offset)
+
         if use_stats:
             raw_rows, total_count = _supplier_page_from_stats(
-                cursor, conn, q_patterns, sme_only, vcse_only, only_awarded, limit, offset, geo=geo, exact_q=q or None, opts=opts)
+                cursor, conn, q_patterns, sme_only, vcse_only, only_awarded, raw_limit, raw_offset, geo=geo, exact_q=q or None, opts=opts)
         else:
             raw_rows, total_count = _supplier_page_exact(
-                cursor, conn, q_patterns, sme_only, vcse_only, only_awarded, start_date, end_date, limit, offset,
+                cursor, conn, q_patterns, sme_only, vcse_only, only_awarded, start_date, end_date, raw_limit, raw_offset,
                 use_listable=stats.is_ready(cursor, "supplier_stats"), geo=geo, exact_q=q or None,
                 widen_match=widen_match, opts=opts)
 
@@ -1128,10 +1142,15 @@ def _search_suppliers_uncached():
         suppliers = _order_merged(suppliers, opts, q_key=opts["q_key"], q=q)
         if opts.get("region"):  # a merged card is filtered by its own region, not by the region of one of its records
             suppliers = [sp for sp in suppliers if (sp.get("region") or "").lower() == opts["region"].lower()]
-        # The count is of records, the list is of merged companies: when every matching record fits on this first page, the
-        # count is the number of companies shown ("IBM" said 19 suppliers over 4 cards).
-        if limit is not None and not offset and total_count <= limit and not sme_only:
-            total_count = len(suppliers)
+        if page_mode:
+            # The count is of records, the list is of merged companies. When every record was read, the count is the number of cards;
+            # otherwise it is the records' count scaled by how many cards the records read made ("IBM" said 19 suppliers over 4 cards).
+            read_all = len(raw_rows) >= total_count or len(raw_rows) < raw_limit
+            if read_all:
+                total_count = len(suppliers)
+            elif raw_rows:
+                total_count = max(len(suppliers), round(total_count * len(suppliers) / len(raw_rows)))
+            suppliers = suppliers[offset:page_end]
         buyers = _matching_buyers(cursor, conn, q) if q and not request.args.get("widen") else []
         return jsonify({
             "ok": True,

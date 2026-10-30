@@ -40,7 +40,23 @@ def test_funding_location_is_an_alias_of_where():
     assert a["total"] == b["total"] and [i["label"] for i in a["items"]] == [i["label"] for i in b["items"]]
 
 
+def test_every_page_of_a_search_is_full_and_pages_do_not_repeat_companies():
+    """Re-test SN1: a page of 10 showed 4 to 9 cards, and the next page skipped or repeated companies."""
+    c = _client()
+    seen = []
+    for page in (1, 2, 3):
+        j = c.get(f"/api/suppliers/search?q=services&per_page=10&page={page}").get_json()
+        assert len(j["suppliers"]) == 10, (page, len(j["suppliers"]))
+        seen += [s["id"] for s in j["suppliers"]]
+    assert len(seen) == len(set(seen)), "a company appears on two pages"
+    j = c.get("/api/suppliers/search?q=IBM&per_page=10&page=1").get_json()
+    assert j["total_count"] >= len(j["suppliers"])
+    if len(j["suppliers"]) < 10:
+        assert j["total_count"] == len(j["suppliers"]), "a short last page must say how many companies there are"
+
+
 if __name__ == "__main__":
     test_a_search_that_fits_one_page_reports_the_companies_it_lists()
     test_funding_location_is_an_alias_of_where()
-    print("2 passed")
+    test_every_page_of_a_search_is_full_and_pages_do_not_repeat_companies()
+    print("3 passed")

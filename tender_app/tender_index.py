@@ -292,15 +292,17 @@ def _ingest(get_conn: Callable[[], Any], source: str, batches, to_notice, *, sca
         conn.close()
 
 
-def ingest_contracts_finder(get_conn: Callable[[], Any], days: int = 2, max_pages: int | None = None) -> dict[str, Any]:
+def ingest_contracts_finder(get_conn: Callable[[], Any], days: int = 2, max_pages: int | None = None, until_days: int = 0,
+                            stages: str | None = None) -> dict[str, Any]:
     """Every notice (tenders, updates, awards, planning) published in the last `days` days, written to tender_notices. A short window keeps the 30-minute
-    job light; `days` of 180 is the one-off backfill."""
+    job light. A backfill walks back in windows: `days` ago up to `until_days` ago, with stages="tender" to keep the awards (which
+    contract_awards already holds) out of it."""
     from etenders_scraper.sources import contracts_finder as cf
 
     def batches(state):
         session = cf._new_session()
-        window = (datetime.utcnow() - timedelta(days=days), datetime.utcnow())
-        for i, releases in enumerate(cf._iter_release_pages(session, state, window, stages=None)):
+        window = (datetime.utcnow() - timedelta(days=days), datetime.utcnow() - timedelta(days=until_days))
+        for i, releases in enumerate(cf._iter_release_pages(session, state, window, stages=stages)):
             yield releases
             if max_pages and i + 1 >= max_pages:
                 state["reason"] = f"stopped after {max_pages} pages as asked"

@@ -24,6 +24,8 @@ def main() -> None:
     ap.add_argument("what", choices=["contracts_finder", "find_tender", "status"])
     ap.add_argument("--days", type=int, default=2)
     ap.add_argument("--max-pages", type=int, default=None)
+    ap.add_argument("--until-days", type=int, default=0, help="end of the window, days ago (a backfill walks back in windows)")
+    ap.add_argument("--stages", default=None, help='Contracts Finder stage filter, for example "tender"')
     args = ap.parse_args()
     if args.what == "status":
         conn = get_db_connection()
@@ -35,7 +37,8 @@ def main() -> None:
         conn.close()
         return
     fn = ti.ingest_contracts_finder if args.what == "contracts_finder" else ti.ingest_find_tender
-    print(fn(get_db_connection, days=args.days, max_pages=args.max_pages))
+    extra = {"until_days": args.until_days, "stages": args.stages} if args.what == "contracts_finder" else {}
+    print(fn(get_db_connection, days=args.days, max_pages=args.max_pages, **extra))
 
 
 if __name__ == "__main__":

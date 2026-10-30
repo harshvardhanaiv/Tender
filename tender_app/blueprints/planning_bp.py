@@ -108,7 +108,10 @@ _CONSULTATION_PATTERN = (
 )
 _CONSULTATION_RE = re.compile(_CONSULTATION_PATTERN.replace(r"\y", r"\b"), re.I)
 _CONSULTATION_SCORE_CAP = 25
-_IS_CONSULTATION_SQL = f"(COALESCE(description, '') ~* '{_CONSULTATION_PATTERN}')"
+# The rule is evaluated once per row, by a trigger, into planning_applications.is_consultation: running the text match over every
+# row on each sort took Planning Leads from 2 s to 11 s on 18,000 rows (live check, 2026-10-30).
+_CONSULTATION_REGEX_SQL = f"(COALESCE(description, '') ~* '{_CONSULTATION_PATTERN}')"
+_IS_CONSULTATION_SQL = "COALESCE(is_consultation, FALSE)"
 # The score a lead shows: consultations are capped, and "best leads first" must sort on that, not the raw score.
 _EFFECTIVE_SCORE_SQL = (
     f"(CASE WHEN {_IS_CONSULTATION_SQL} THEN LEAST(COALESCE(lead_score, 0), {_CONSULTATION_SCORE_CAP}) ELSE lead_score END)"
@@ -273,7 +276,50 @@ def _date_arg(name: str) -> date | None:
 
 
 
+_flag_state = {"ready": False}
+_flag_lock = threading.Lock()
+
+
+def _ensure_consultation_flag() -> None:
+    """Adds is_consultation and the trigger that keeps it right, once per process; existing rows are filled in the background.
+    Until that finishes a row is treated as not a consultation, so a few scoping requests can show for a few seconds."""
+    if _flag_state["ready"]:
+        return
+    with _flag_lock:
+        if _flag_state["ready"]:
+            return
+        conn = _get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("ALTER TABLE planning_applications ADD COLUMN IF NOT EXISTS is_consultation BOOLEAN")
+            cur.execute(
+                "CREATE OR REPLACE FUNCTION planning_set_consultation() RETURNS trigger AS $fn$ BEGIN "
+                f"NEW.is_consultation := COALESCE(NEW.description, '') ~* $re${_CONSULTATION_PATTERN}$re$; RETURN NEW; END $fn$ LANGUAGE plpgsql")
+            cur.execute("DROP TRIGGER IF EXISTS planning_consultation_flag ON planning_applications")
+            cur.execute("CREATE TRIGGER planning_consultation_flag BEFORE INSERT OR UPDATE OF description ON planning_applications "
+                        "FOR EACH ROW EXECUTE PROCEDURE planning_set_consultation()")
+            conn.commit()
+        finally:
+            conn.close()
+        _flag_state["ready"] = True
+        threading.Thread(target=_backfill_consultation_flag, name="planning-consultation-flag", daemon=True).start()
+
+
+def _backfill_consultation_flag() -> None:
+    try:
+        conn = _get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(f"UPDATE planning_applications SET is_consultation = {_CONSULTATION_REGEX_SQL} WHERE is_consultation IS NULL")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[planning] consultation flag backfill failed: {exc}")
+
+
 def _build_search() -> dict[str, Any]:
+    _ensure_consultation_flag()
     where: list[str] = []
     params: list[Any] = []
 
