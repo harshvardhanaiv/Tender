@@ -93,6 +93,7 @@ _SECTOR_LABEL = {
     "Q": "health and care", "G": "retail and trade", "K": "finance", "L": "housing and property", "N": "employment and skills",
     "P": "education and training", "R": "culture, arts and sport", "F": "construction", "A": "agriculture", "C": "manufacturing",
 }
+_CROSS_SECTOR = frozenset("GNR")
 # Programmes for people and communities, not for a company (matched on the grant's name only, so the call is deliberate).
 _NOT_FOR_COMPANIES = re.compile(r"elected office|\belection|candidates?\b|domestic abuse|refugee|asylum|veterans?\b|bereave|foster|\bcarers?\b|food bank|homeless", re.I)
 
@@ -107,6 +108,10 @@ def off_sector_reason(grant: dict[str, Any], applicant: dict[str, Any]) -> str:
     if not sector:
         return ""
     for letter, rx in _SECTOR_TOPICS.items():
+        # trade/export, employment/skills and culture/arts/sport cut across every sector (a software firm can export music
+        # technology), so a name alone never rules those out
+        if letter in _CROSS_SECTOR:
+            continue
         if letter != sector and letter in _SECTOR_LABEL and re.search(rx, name, re.I):
             return "Aimed at " + _SECTOR_LABEL[letter] + ", which is not your sector" + (f" ({sector_title(sector)})" if sector_title(sector) else "")
     return ""

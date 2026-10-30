@@ -34,7 +34,7 @@ test("a portal hit is its own match group, listed after the rows where the word 
 });
 
 test("the keyword filter keeps a portal hit on an all-fields search only", () => {
-  const block = appSrc.slice(appSrc.indexOf("rows = rows.filter((row) => {\n      if (matchRowToKeyword("), appSrc.indexOf("} else {\n    for (const r of rows) {"));
+  const block = appSrc.slice(appSrc.indexOf("if (matchRowToKeyword(row, parsedKeyword.query, parsedKeyword.scope)) return true;"), appSrc.indexOf("} else {\n    for (const r of rows) {"));
   assert.ok(block.includes('parsedKeyword.scope === "all" && row._portal_hit'), "a title / supplier / buyer search must still filter strictly");
   assert.ok(block.includes('row._match_reason = "portal"'));
 });
