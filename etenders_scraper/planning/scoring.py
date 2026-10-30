@@ -13,7 +13,7 @@ components can never sum past 100 -- see the "cap: 100" note below for why that 
   type      Outline 13                Earliest signal — contractors not yet appointed.
             Full 10                   New scheme, detailed design stage.
             Amendment 3               Changes to a scheme already in motion.
-  dwellings up to 17 (1 per 10 units) Housing volume.
+  dwellings up to 17 (log scale, full at 1,000)  Housing volume.
   recency   up to 13, decays over 18m Stale approvals have usually been let already.
 
   cap: 30   Low-value records (see `low_value_reason`) are capped at 30. Shown as a
@@ -53,6 +53,7 @@ Note the app_state "Conditions" (approved with conditions) is unrelated to the a
 """
 from __future__ import annotations
 
+import math
 import re
 from datetime import date
 from typing import Any
@@ -61,7 +62,8 @@ SIZE_POINTS = {"Large": 35, "Medium": 17}
 STATE_POINTS = {"Permitted": 22, "Conditions": 22, "Undecided": 9}
 TYPE_POINTS = {"Outline": 13, "Full": 10, "Amendment": 3}
 DWELLING_POINTS_MAX = 17
-DWELLINGS_PER_POINT = 10
+DWELLINGS_PER_POINT = 10  # kept for the module docstring; the score now uses DWELLING_FULL_POINTS
+DWELLING_FULL_POINTS = 1000  # homes at which the dwelling component is at its maximum
 RECENCY_POINTS_MAX = 13
 RECENCY_WINDOW_DAYS = 548  # ~18 months
 LOW_VALUE_CAP = 30
@@ -126,7 +128,8 @@ def explain_lead_score(row: dict[str, Any], today: date | None = None) -> dict[s
     today = today or date.today()
 
     dwellings = row.get("n_dwellings") or 0
-    dwelling_pts = min(DWELLING_POINTS_MAX, int(dwellings) // DWELLINGS_PER_POINT) if dwellings > 0 else 0
+    # On a log scale up to DWELLING_FULL_POINTS homes: 1 point per 10 homes stopped at 170, so a 200-home and an 850-home scheme scored alike.
+    dwelling_pts = min(DWELLING_POINTS_MAX, round(DWELLING_POINTS_MAX * math.log10(1 + dwellings) / math.log10(1 + DWELLING_FULL_POINTS))) if dwellings > 0 else 0
 
     ref = row.get("decided_date") or row.get("start_date")
     recency_pts = 0

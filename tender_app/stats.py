@@ -208,6 +208,7 @@ def ensure_stats_tables(cursor) -> None:
     # and the first contract end at least 60 days away, the earliest a company can still act on.
     cursor.execute("ALTER TABLE buyer_stats ADD COLUMN IF NOT EXISTS cpv_shares JSONB")
     cursor.execute("ALTER TABLE buyer_stats ADD COLUMN IF NOT EXISTS next_renewal_actionable TEXT")
+    cursor.execute("ALTER TABLE buyer_stats ADD COLUMN IF NOT EXISTS renewals_by_division JSONB")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_buyer_stats_spend ON buyer_stats (total_spend DESC)")
 
 
@@ -354,6 +355,20 @@ def refresh_buyer_stats(conn, from_table: bool = False) -> int:
         WHERE b.authority_key = t.k
     """)
     cur.execute("UPDATE buyer_stats SET cpv_shares = '{}'::jsonb WHERE cpv_shares IS NULL")  # no CPV on any award: empty, not unknown
+    # The first renewal a company can still act on, per CPV division, with the contract's title: a renewal counts for a buyer only
+    # when it is in the company's own services (re-test 2 B2: a hospital's ophthalmic maintenance scored full marks for a BI firm).
+    cur.execute(f"""
+        WITH {deduped_cte(cur) if from_table else DEDUPED_AWARDS_CTE_SQL}
+        UPDATE buyer_stats b SET renewals_by_division = t.r
+        FROM (SELECT k, jsonb_object_agg(div, jsonb_build_object('date', d, 'title', ttl)) AS r FROM (
+                  SELECT DISTINCT ON (k, div) k, div, d, ttl FROM (
+                      SELECT {_norm_auth_sql('authority_name')} AS k, LEFT(cpv_code, 2) AS div, contract_end_date AS d, LEFT(tender_title, 80) AS ttl
+                      FROM deduped_awards
+                      WHERE authority_name IS NOT NULL AND cpv_code ~ '^[0-9][0-9]' AND cpv_code NOT LIKE '00%%' AND contract_end_date >= %s) x
+                  ORDER BY k, div, d) y GROUP BY k) t
+        WHERE b.authority_key = t.k
+    """, ((datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d"),))
+    cur.execute("UPDATE buyer_stats SET renewals_by_division = '{}'::jsonb WHERE renewals_by_division IS NULL")
     # Stale rows (a buyer whose awards were all removed) are found with the SAME key the insert above groups by.
     # This used to repeat a shorter copy of the formula without the punctuation step, so every buyer whose name
     # has punctuation ("St. Mary's NHS Trust", "Newcastle-upon-Tyne ...") was deleted right after being written.
@@ -438,6 +453,9 @@ def ensure_fresh_async(get_connection: Callable[[], Any], cursor=None) -> None:
             # buyer_stats rows written before the buyer's CPV mix and its first actionable renewal were stored
             cur.execute("SELECT EXISTS (SELECT 1 FROM buyer_stats WHERE cpv_shares IS NULL AND total_contracts > 0 LIMIT 1) AND EXISTS (SELECT 1 FROM contract_awards WHERE cpv_code ~ '^[0-9][0-9]' LIMIT 1)")
             if cur.fetchone()[0]:
+                return True
+            cur.execute("SELECT EXISTS (SELECT 1 FROM buyer_stats WHERE renewals_by_division IS NULL AND total_contracts > 0 LIMIT 1)")
+            if cur.fetchone()[0]:  # rows written before the per-division renewal was stored
                 return True
             # values under GBP 1 (a notice value split into fractions) are now withheld; trading names in brackets after Ltd/plc now
             # merge; a postcode now decides the region. Each needs one rebuild on a table built before it.

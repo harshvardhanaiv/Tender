@@ -468,6 +468,41 @@ def _london_borough(name: str) -> str | None:
     return "London Borough of " + _BOROUGH_CANON.get(key, m.group(1).title())
 
 
+_COUNCIL_PREFIX_RE = re.compile(r"^(?:the\s+)?(?:royal\s+borough\s+of\s+|london\s+borough\s+of\s+|borough\s+of\s+|city\s+of\s+|county\s+of\s+)?")
+_COUNCIL_SUFFIX_RE = re.compile(
+    r"\s+(?:metropolitan\s+(?:borough|district)\s+council|metropolitan\s+council|borough\s+council|city\s+council|county\s+council|"
+    r"district\s+council|council|mbc)$")
+# "Tower Hamlets" and "Islington" alone are the borough councils (the only bodies published under those bare names).
+_BARE_COUNCILS = {"tower hamlets", "islington"}
+
+
+def council_core(name: str | None) -> str | None:
+    """The part of a council's name that identifies it ("Bradford" for "City of Bradford Metropolitan District Council"), or None when
+    `name` does not read as a council."""
+    if not name:
+        return None
+    s = " ".join(name.replace("&", " and ").replace("-", " ").replace(",", " ").lstrip(". ").lower().split())
+    if not re.search(r"council|\bmbc\b|borough of|city of", s):
+        return None
+    s = _COUNCIL_PREFIX_RE.sub("", s)
+    s = _COUNCIL_SUFFIX_RE.sub("", s)
+    s = re.sub(r"^(?:the\s+)", "", s)
+    return s or None
+
+
+def _council_name(name: str) -> str | None:
+    from .council_names import COUNCIL_CANON
+    core = council_core(name)
+    if core:
+        canon = COUNCIL_CANON.get(core)
+        if canon:
+            return canon
+    bare = " ".join(name.lower().split())
+    if bare in _BARE_COUNCILS:
+        return "London Borough of " + _BOROUGH_CANON[bare]
+    return None
+
+
 def canonical_authority_name(name: str | None) -> str | None:
     """The buyer's usual name when `name` is a known alias of it, else `name` unchanged."""
     if not name:
@@ -479,7 +514,7 @@ def canonical_authority_name(name: str | None) -> str | None:
         m = rx.match(name)
         if m:
             return repl(m)
-    return name
+    return _council_name(name) or name
 
 
 def looks_like_buyer_authority(name: str) -> bool:

@@ -557,6 +557,10 @@ def search_buyers():
 # three `?` placeholders per query, all bound to the same buyer name.
 BUYER_CTE_PARAMS = 3
 
+# A buyer's two top vendors change only when award data does, and working them out for 50 cards costs seconds: keep them for 30 minutes.
+_TOP_VENDOR_TTL_S = 1800
+_top_vendor_cache: dict[str, tuple[float, list[str]]] = {}
+
 
 def _tidy_top_suppliers(rows: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
     """A buyer's winners as one row per company: other public bodies that appear in the supplier field (an NHS trust named
@@ -910,7 +914,8 @@ def get_opportunity_radar():
     open_to_new_only = request.args.get("open_to_new", "").lower() in ("1", "true")
     frameworks_only = request.args.get("frameworks_only", "").lower() in ("1", "true")
     sort_by = (request.args.get("sort") or "days_left").lower()  # days_left, value, buyer_name
-    if sort_by not in ("days_left", "value", "highest_value", "buyer_name", "name"):
+    # the Buyer page sends the same sort to the radar as to the feed; best_match and soonest_renewal mean "ends soonest" here
+    if sort_by not in ("days_left", "value", "highest_value", "buyer_name", "name", "spend", "best_match", "soonest_renewal"):
         return jsonify({"ok": False, "error": "sort must be one of: days_left, value, buyer_name"}), 422
     # How far ahead, which categories and which page: a company engages 2 to 12 months before a contract ends, in its own CPV divisions.
     try:
@@ -997,7 +1002,7 @@ def get_opportunity_radar():
             WHERE {where_sql}
         """
 
-        if sort_by in ("value", "highest_value"):
+        if sort_by in ("value", "highest_value", "spend"):
             query += " ORDER BY ca.contract_value DESC NULLS LAST, ca.id"
         elif sort_by in ("buyer_name", "name"):
             query += " ORDER BY ca.authority_name ASC, ca.id"
@@ -1152,7 +1157,8 @@ def _buyer_items_from_stats(cursor, conn, q: str, buyer_type_filter: str, min_sp
         params.append(buyer_type_filter)
     _execute(cursor, conn, f"""
         SELECT authority_name, buyer_type, total_contracts, total_spend, unique_suppliers,
-               next_renewal_date, latitude, longitude, cpv_divisions, cpv_shares, next_renewal_actionable
+               next_renewal_date, latitude, longitude, cpv_divisions, cpv_shares, next_renewal_actionable,
+               to_jsonb(buyer_stats) -> 'renewals_by_division' AS renewals_by_division  -- null until the first rebuild adds the column
         FROM buyer_stats WHERE {" AND ".join(where)}
     """, params)
     cols = [d[0] for d in cursor.description]
@@ -1438,6 +1444,18 @@ def get_opportunity_feed():
             next_ren = (b.get("next_renewal_actionable") if rows_from_stats else None) or b.get("next_renewal_date") or ""
             if rows_from_stats and next_ren and next_ren < today_str:
                 next_ren = ""  # stats predate today; the next one is unknown until the next refresh
+            # With a company profile, only a renewal in the company's own services counts, and the contract is named (re-test 2 B2).
+            renewal_contract = ""
+            _mine = list(dict.fromkeys(sorted(won_cpvs) + company_divisions))
+            _rbd = b.get("renewals_by_division") if rows_from_stats else None
+            if tier and _mine and isinstance(_rbd, dict):
+                _best = None
+                for _div in _mine:
+                    _e = _rbd.get(_div)
+                    if isinstance(_e, dict) and _e.get("date") and _e["date"] >= today_str and (_best is None or _e["date"] < _best["date"]):
+                        _best = _e
+                next_ren = _best["date"] if _best else ""
+                renewal_contract = (_best.get("title") or "").strip() if _best else ""
             days_until_renewal = 999
             if next_ren:
                 _d = _days_until(next_ren)
@@ -1463,7 +1481,7 @@ def get_opportunity_feed():
                 labels = ", ".join(_bf.division_label(d) for d in my_divisions[:3])
                 if isinstance(shares, dict):
                     share, div_awards, all_awards = _bf.sector_share(shares, my_divisions)
-                    cpv_score = _bf.sector_score(share)
+                    cpv_score = _bf.sector_score(share, div_awards)
                     cpv_match = div_awards > 0
                     sector_note = (f"{div_awards} of its {all_awards} contracts with a CPV code are in {labels}." if div_awards
                                    else f"None of its {all_awards} contracts with a CPV code are in {labels}.")
@@ -1520,7 +1538,7 @@ def get_opportunity_feed():
             # Build Transparent Explanation Text
             signals = []
             if 60 <= days_until_renewal <= 180:
-                signals.append(f"Contract renewal {_bf.day_phrase(days_until_renewal)} ({next_ren}), early enough to engage")
+                signals.append(f"{(renewal_contract + ' renews') if renewal_contract else 'Contract renewal'} {_bf.day_phrase(days_until_renewal)} ({next_ren}), early enough to engage")
             if sector_note and cpv_match:
                 signals.append(sector_note.rstrip("."))
             elif tier == 1 and cpv_match:
@@ -1555,7 +1573,8 @@ def get_opportunity_feed():
                     cpv_score=cpv_score, prox_score=prox_score, renew_score=renew_score, openness_score=openness_score, tier=tier,
                     cpv_match=cpv_match, dist_km=dist_km if dist_km < 9999 else None,
                     days_until_renewal=days_until_renewal if days_until_renewal != 999 else None,
-                    next_renewal=next_ren, repeat_display=repeat_display, total_contracts=total_c, sector_note=sector_note),
+                    next_renewal=next_ren, repeat_display=repeat_display, total_contracts=total_c, sector_note=sector_note,
+                    renewal_contract=renewal_contract),
                 "division_awards": div_awards,
                 "engagement": buyer_fit.engagement(
                     cpv_score=cpv_score, prox_score=prox_score, renew_score=renew_score, openness_score=openness_score, total_contracts=total_c),
@@ -1579,7 +1598,13 @@ def get_opportunity_feed():
         top_cards = cards[:50]
 
         # Batch populate top 2 suppliers only for the returned top cards
-        auth_names_for_sup = [c["authority_name"] for c in top_cards if c["total_contracts"] > 0]
+        _now = time.time()
+        for c in top_cards:
+            _hit = _top_vendor_cache.get(c["authority_name"])
+            if _hit and _now - _hit[0] < _TOP_VENDOR_TTL_S:
+                c["top_suppliers"] = list(_hit[1])
+        auth_names_for_sup = [c["authority_name"] for c in top_cards if c["total_contracts"] > 0
+                              and not (_top_vendor_cache.get(c["authority_name"]) and _now - _top_vendor_cache[c["authority_name"]][0] < _TOP_VENDOR_TTL_S)]
         if auth_names_for_sup:
             # Match on the normalized key (see _norm_auth_sql), not an exact TRIM() string —
             # `authority_name` above is just one casing/whitespace variant the ARRAY_AGG
@@ -1616,7 +1641,11 @@ def get_opportunity_feed():
                     by_buyer.setdefault(norm_to_auth.get(rec["an_norm"], rec["an_norm"]), []).append(rec)
                 top_sup_map = {an: [r["supplier_name"] for r in _tidy_top_suppliers(rows, limit=2)] for an, rows in by_buyer.items()}
                 for c in top_cards:
-                    c["top_suppliers"] = top_sup_map.get(c["authority_name"], [])
+                    if c["authority_name"] in auth_names_for_sup:
+                        c["top_suppliers"] = top_sup_map.get(c["authority_name"], [])
+                        _top_vendor_cache[c["authority_name"]] = (_now, list(c["top_suppliers"]))
+                if len(_top_vendor_cache) > 5000:
+                    _top_vendor_cache.clear()
             except Exception as _sup_err:
                 pass
 

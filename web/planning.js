@@ -430,7 +430,7 @@
       fact("Agent", app.agent_company),
       fact("Agent contact", app.agent_name),
       fact("Agent address", app.agent_address),
-      fact("Applicant", app.applicant_company || app.applicant_name),
+      fact("Applicant", app.applicant_company || app.applicant_name || (app.agent_company || app.agent_name ? "Not published: only the agent is named" : "")),
       fact("Case officer", app.case_officer),
     ].join("");
 

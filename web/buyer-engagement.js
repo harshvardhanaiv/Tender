@@ -85,7 +85,15 @@
   function prefillSpec(prefill = {}) {
     const c = prefill.category;
     if (c && (c.preset || c.cpv || c.q)) return c.preset ? { preset: c.preset } : { cpv: c.cpv || undefined, q: c.q || undefined };
-    if (prefill.cpv) return { cpv: String(prefill.cpv) };
+    if (prefill.cpv) {
+      // A CPV that belongs to one of the listed categories pre-selects it ("Grounds & tree works" for 77211600), not "Something else…".
+      const digits = String(prefill.cpv).replace(/\D/g, "");
+      let best = null, bestLen = 0;
+      for (const p of (BW.state.options && BW.state.options.presets) || []) {
+        for (const c of p.cpv || []) if (digits.startsWith(c) && c.length > bestLen) { best = p.preset; bestLen = c.length; }
+      }
+      return best ? { preset: best } : { cpv: String(prefill.cpv) };
+    }
     if (prefill.preset) return { preset: prefill.preset };
     return null;
   }
@@ -93,7 +101,7 @@
     await BW.ensureOptions();
     const spec = prefillSpec(prefill);
     openModal(`<h2 id="bwModalTitle">New market engagement</h2>
-      <p class="bw-card__sub">Start with the basics. You can change everything later.${prefill.incumbent ? ` Filled in from the current contract with ${esc(prefill.incumbent)}; check the value and term.` : ""}</p>
+      <p class="bw-card__sub">Start with the basics. You can change everything later.${prefill.incumbent ? ` Filled in from the current contract with ${esc(String(prefill.incumbent).replace(/[\s:;,.]+$/, ""))}; check the value and term.` : ""}</p>
       <div id="engNewError"></div>
       <label class="bw-label" for="engTitle">Title</label>
       <input class="bw-input" id="engTitle" maxlength="200" placeholder="For example: Responsive repairs and gas servicing, 2027 framework" value="${esc(prefill.title || "")}">

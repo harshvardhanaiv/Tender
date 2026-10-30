@@ -12,6 +12,8 @@ Pure functions, no database, tested in tests/test_buyer_fit.py.
 """
 from __future__ import annotations
 
+import math
+
 from typing import Any
 
 WEIGHTS = {"sector": 0.35, "proximity": 0.25, "renewal": 0.25, "openness": 0.15}
@@ -25,7 +27,7 @@ SECTOR_WORDS: dict[str, tuple[str, ...]] = {
            "digital", "platform", "web", "app development", "systems integration", "managed service", "crm", "database"),
     "48": ("software", "analytics", "business intelligence", "platform", "application", "crm", "erp", "saas"),
     "79": ("consulting", "consultancy", "recruitment", "marketing", "research", "legal", "audit", "translation", "training provider", "print"),
-    "45": ("construction", "building", "civil engineering", "groundworks", "refurbishment", "roofing", "paving", "driveway", "surfacing", "scaffold", "drainage", "demolition"),
+    "45": ("construction", "building works", "building contractor", "builder", "civil engineering", "groundworks", "refurbishment", "roofing", "paving", "driveway", "surfacing", "scaffold", "drainage", "demolition"),
     "71": ("architect", "engineering consult", "surveying", "design services", "planning consult"),
     "50": ("repair", "maintenance", "servicing", "fleet"),
     "77": ("grounds", "landscap", "tree", "forestry", "horticult", "garden"),
@@ -76,9 +78,15 @@ def sector_share(shares: dict[str, int] | None, divisions: list[str]) -> tuple[f
     return (mine / total if total else 0.0), mine, total
 
 
-def sector_score(share: float) -> float:
-    """0 when the buyer buys nothing in your divisions; 13% of its awards is a fair fit, 30% or more a strong one."""
-    return 0.0 if share <= 0 else min(100.0, 40.0 + share * 200.0)
+def sector_score(share: float, awards: int | None = None) -> float:
+    """0 when the buyer buys nothing in your divisions; 13% of its awards is a fair fit, 30% or more a strong one.
+    With `awards` (how many of its contracts are in your divisions) a buyer with a handful of matching contracts scores below one with
+    hundreds, so 25 buyers with a high share no longer all score alike (re-test 2 B1)."""
+    base = 0.0 if share <= 0 else min(100.0, 40.0 + share * 200.0)
+    if awards is None or base == 0:
+        return base
+    depth = min(1.0, math.log10(1 + max(0, awards)) / 2.5)   # 1 contract ~ 0.12, 10 ~ 0.42, 100 and over ~ 0.8 to 1
+    return base * (0.5 + 0.5 * depth)
 
 
 def renewal_score(days: int | None) -> float:
@@ -100,7 +108,9 @@ def day_phrase(days: int) -> str:
 
 def factors(*, cpv_score: float, prox_score: float, renew_score: float, openness_score: float, tier: int, cpv_match: bool,
             dist_km: float | None, days_until_renewal: int | None, next_renewal: str, repeat_display: str, total_contracts: int,
-            sector_note: str = "") -> list[dict[str, Any]]:
+            sector_note: str = "", renewal_contract: str = "") -> list[dict[str, Any]]:
+    # "WFD Systems Improvement Project (IT services) ends 31 Mar 2027": the contract is named so the user can judge it (re-test 2 B2)
+    named = f"{renewal_contract} " if renewal_contract else "A contract "
     if sector_note:
         sector = sector_note
     elif tier == 0:
@@ -114,11 +124,11 @@ def factors(*, cpv_score: float, prox_score: float, renew_score: float, openness
     else:
         prox = f"About {int(round(dist_km * 0.621371))} miles from your chosen location."
     if days_until_renewal is not None and 60 <= days_until_renewal <= 180:
-        renew = f"A contract is due to renew {day_phrase(days_until_renewal)} ({next_renewal}): time to engage before it is re-procured."
+        renew = f"{named}is due to renew {day_phrase(days_until_renewal)} ({next_renewal}): time to engage before it is re-procured."
     elif days_until_renewal is not None and 180 < days_until_renewal <= 365:
         renew = f"Next renewal is about {round(days_until_renewal / 30)} months away ({next_renewal})."
     elif days_until_renewal is not None and 0 <= days_until_renewal < 60:
-        renew = f"A contract ends {day_phrase(days_until_renewal)} ({next_renewal}): too close to act on, so it adds nothing to the score."
+        renew = f"{named}ends {day_phrase(days_until_renewal)} ({next_renewal}): too close to act on, so it adds nothing to the score."
     else:
         renew = "No renewal is scheduled in the next year."
     if total_contracts >= 5:

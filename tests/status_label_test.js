@@ -17,7 +17,7 @@ function cut(first, lastPattern) {
 }
 const CODE = [
   cut("function _calendarDate(", /^}/), cut("function parseDate(", /^}/), cut("function isDeadlinePassed(", /^}/),
-  cut("function isClosedTender(", /^}/), cut("function statusLabel(", /^}/),
+  cut("function isAwardNotice(", /^}/), cut("function isClosedTender(", /^}/), cut("function statusLabel(", /^}/),
   'this.statusLabel = statusLabel;',
 ].join("\n");
 const ctx = vm.createContext({});
@@ -56,6 +56,26 @@ test("supplier and buyer labels on both renderers go through the name formatter"
   const src = lines.join("\n");
   assert.equal((src.match(/Awarded to \$\{esc\(displayName\((sup|cardSup)\)\)\}/g) || []).length, 3, "an 'Awarded to' label shows the raw capitals again");
   assert.ok(src.includes("${esc(displayName(authority))}</button>"), "the card's buyer button shows the raw name again");
+});
+
+test("report 6 T1: award notices and no-deadline notices are never open; a future deadline is open", () => {
+  const closed = (row) => ctx.isClosedTender(row);
+  const pcsAward = { source: "pcs", status: null, notice_type: "03 Contract Award Notice - Successful Supplier(s)", date_published: "29/10/2026" };
+  const quickQuote = { source: "pcs", status: null, notice_type: "Quick Quote Award", title: "Award of Intelligent Email Security" };
+  assert.equal(closed(pcsAward), true);
+  assert.equal(closed(quickQuote), true);
+  assert.equal(closed({ source: "pcs", status: null, title: "Award of Solar PV and Battery", date_published: "29/10/2026" }), true);
+  assert.equal(closed({ source: "pcs", status: null, date_published: "29/10/2026" }), true, "no status and no deadline is nothing to bid on");
+  assert.equal(closed({ source: "find_tender", status: "Active", submission_deadline: "31/12/2099", notice_type: "UK4: Tender Notice" }), false);
+  assert.equal(closed({ source: "gca_agreements", status: "Live", deadline_date: "2099-03-06" }), false);
+  assert.equal(closed({ source: "x", title: "Awards management software", status: "Active", submission_deadline: "31/12/2099" }), false, "'Awards' in a title is not an award notice");
+});
+
+test("report 6 T2: opening a tender does not run the paid deep score", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "web", "app.js"), "utf8");
+  assert.ok(!/renderRows\(\);\s*loadDeepFit\(/.test(src), "the detail view starts the paid score on open again");
+  assert.ok(!/if \(fitActive\(\)\) loadDeepFit\(window\._detailRow, null\)/.test(src), "a profile switch starts the paid score again");
+  assert.ok(src.includes("data-run-deep-fit"), "the 'Run AI deep score · 1 credit' button is gone");
 });
 
 (() => {

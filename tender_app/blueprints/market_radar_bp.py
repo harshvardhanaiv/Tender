@@ -213,7 +213,7 @@ def _org_key_for(username: str) -> str | None:
 @market_radar_bp.get("/api/market-radar/options")
 def radar_options():
     return jsonify({
-        "presets": [{"preset": p["id"], "label": p["label"], "hint": p["hint"]} for p in mr.CATEGORY_PRESETS],
+        "presets": [{"preset": p["id"], "label": p["label"], "hint": p["hint"], "cpv": list(p.get("cpv") or ())} for p in mr.CATEGORY_PRESETS],
         "authority_types": [{"id": i, "label": label} for i, label in mr.AUTHORITY_TYPES],
         "windows": [{"id": w, "label": mr.WINDOW_LABELS[w]} for w in mr.WINDOWS],
         "scopes": [

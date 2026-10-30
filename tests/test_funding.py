@@ -185,3 +185,25 @@ if __name__ == "__main__":
         t()
         print("ok", t.__name__)
     print(f"{len(tests)} passed")
+
+
+def test_a_grant_that_must_be_led_by_a_research_organisation_is_a_check_for_a_company():
+    """Re-test 2 R2: 'You must be based at a UK research organisation eligible for EPSRC funding' was shown as Likely eligible."""
+    from tender_app import funding_fit as ff
+    grant = {"name": "UKRI: Integration of AI/HPC with quantum computing", "funder": "UK Research and Innovation",
+             "summary": "Apply for funding to deliver collaborative research projects.\n\nYou must be based at a UK research organisation eligible for EPSRC funding.",
+             "eligibility": "UKRI individual eligibility rules apply.", "locations": [ff.UK_WIDE], "applicants": ["Private sector"]}
+    company = {"kind": "Private sector", "region": "South East", "size": "sme", "about": "AI software and data analytics", "turnover": 2_000_000}
+    out = ff.assess(grant, company, kind="Private sector", has_profile=True)
+    assert out["verdict"] == "check" and out["checks"][0].startswith("A research organisation must lead"), out
+
+
+def test_a_grant_that_needs_a_100m_project_blocks_a_small_company():
+    """Re-test 2 R3: TRIF listed only 'Sector mismatch', not the project-cost floor."""
+    from tender_app import funding_fit as ff
+    text = "eligible projects must exceed £100 million in total costs"
+    assert ff._project_cost_floor(text) == 100_000_000
+    assert ff._project_cost_floor("Have a total cost (including eligible capital) of £100 million or more") == 100_000_000
+    grant = {"name": "Life Sciences TRIF Pilot", "funder": "DSIT", "summary": text, "eligibility": "", "locations": [ff.UK_WIDE], "applicants": ["Private sector"]}
+    out = ff.assess(grant, {"kind": "Private sector", "region": "South East", "size": "sme", "about": "software", "turnover": 2_000_000}, kind="Private sector", has_profile=True)
+    assert out["verdict"] == "unlikely" and any("£100m" in b or "100" in b for b in out["blockers"]), out

@@ -59,6 +59,8 @@ def test_a_company_is_matched_to_cpv_divisions_from_what_it_says_it_sells():
     assert bi[:2] == ["72", "48"], bi
     assert bf.infer_divisions("TVD Driveways: driveway installation, surfacing, groundworks and drainage") == ["45"]
     assert bf.infer_divisions("We run a bus and coach hire firm") == ["60"], "'bus' is a word, not the start of 'business'"
+    assert "45" not in bf.infer_divisions("integrating analytics, building executive dashboards and BI software"), "'building' as a verb is not construction"
+    assert bf.infer_divisions("a building contractor doing groundworks") == ["45"]
     assert bf.infer_divisions("") == []
 
 

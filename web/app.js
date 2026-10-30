@@ -5151,6 +5151,13 @@ function isOnlyPastDeadline(row) {
   return true;
 }
 
+// True when the notice reports a result, not an invitation to bid: its type or title says "award".
+function isAwardNotice(row) {
+  if (!row) return false;
+  if (/award/i.test(String(row.notice_type || ""))) return true;
+  return /^\s*(contract\s+)?award(ed)?\s+(of|notice)\b/i.test(String(row.title || ""));
+}
+
 function isClosedTender(row) {
   if (!row) return false;
 
@@ -5192,9 +5199,15 @@ function isClosedTender(row) {
     return true;
   }
 
+  // An award notice is never open, whatever its status field says: Public Contracts Scotland files "03 Contract
+  // Award Notice" and "Quick Quote Award" notices with no status and no deadline, and they filled Opportunities.
+  if (isAwardNotice(row)) return true;
+
   // A notice with no deadline that was published over a year ago cannot still be open for bids (Find a
   // Tender 2021-2022 notices were listed under Opportunities as "Active" with "No deadline").
   if (!row.submission_deadline && !row.deadline_date && typeof days !== "number") {
+    // With no deadline and no open-looking status there is nothing to bid on.
+    if (!/^(active|open|live|established)$/.test(status)) return true;
     const pub = typeof parseDate === "function" ? parseDate(row.date_published) : null;
     if (pub && Date.now() - pub.getTime() > 365 * 86400000) return true;
   }
@@ -7429,7 +7442,7 @@ async function loadDetails(row) {
     if (btnD) btnD.disabled = false;
     syncExpandActionButtons();
     renderRows();
-    loadDeepFit(enrichedRow, data);
+    window._detailData = data;
     if (!$("expandModal")?.classList.contains("hidden")) {
       const dest = $("expandDetails");
       if (dest) dest.innerHTML = $("details").innerHTML;
@@ -8009,7 +8022,7 @@ function fitPanelHtml(row) {
           <span class="fit-explain-banner__text">The AI deep score performs a full-specification analysis and is more reliable than the quick keyword estimate.</span>
         </div>`;
     }
-  } else {
+  } else if (state.fitLoading && state.fitLoading[key]) {
     leftHtml = `
       <div class="fit-card fit-card--deep fit-card--loading">
         <div class="fit-card__score-block">
@@ -8017,7 +8030,25 @@ function fitPanelHtml(row) {
         </div>
         <div class="fit-card__info-block">
           <div class="fit-card__title" id="fitDeepLoading">✨ Calculating AI deep score…</div>
-          <div class="fit-card__desc">Using advanced LLM analysis · will use 1 credit</div>
+          <div class="fit-card__desc">Using advanced LLM analysis · 1 credit</div>
+        </div>
+      </div>`;
+  } else if (isClosedTender(row)) {
+    // A bid is not possible on a closed or awarded notice, so the paid score is not offered.
+    leftHtml = `
+      <div class="fit-card fit-card--deep">
+        <div class="fit-card__info-block">
+          <div class="fit-card__title">AI deep score</div>
+          <div class="fit-card__desc">Not available: this notice is closed or awarded · no credit used</div>
+        </div>
+      </div>`;
+  } else {
+    // Opening a tender must not spend a credit: the paid score runs only when the user asks for it.
+    leftHtml = `
+      <div class="fit-card fit-card--deep">
+        <div class="fit-card__info-block">
+          <div class="fit-card__title">AI deep score</div>
+          <button type="button" class="btn btn-sm" data-run-deep-fit="1">Run AI deep score · 1 credit</button>
         </div>
       </div>`;
   }
@@ -8070,6 +8101,8 @@ async function loadDeepFit(row, detail) {
     refreshFitPanel(row);
     return;
   }
+  state.fitLoading = { ...(state.fitLoading || {}), [key]: true };
+  if (state.activeKey === key) refreshFitPanel(row);
   try {
     const res = await fetch("/api/fit-score", {
       method: "POST",
@@ -8119,8 +8152,16 @@ async function loadDeepFit(row, detail) {
     loaders.forEach(l => {
       l.textContent = "AI deep score unavailable — showing quick estimate.";
     });
+  } finally {
+    state.fitLoading = { ...(state.fitLoading || {}), [key]: false };
   }
 }
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest && e.target.closest("[data-run-deep-fit]");
+  if (!btn || !window._detailRow) return;
+  loadDeepFit(window._detailRow, window._detailData || null);
+});
 
 function refreshFitPanel(row) {
   const panels = document.querySelectorAll("#fitPanel");
@@ -11695,7 +11736,6 @@ function handleCompanyProfileSelectionChange(val, { makeDefault = true } = {}) {
   // the newly selected profile instead of leaving the old score on screen.
   if (state.activeKey && window._detailRow) {
     refreshFitPanel(window._detailRow);
-    if (fitActive()) loadDeepFit(window._detailRow, null);
   }
 }
 
@@ -18992,6 +19032,8 @@ let _currentSupplierFilterSme = false;
 let _currentSupplierFilterVcse = false;
 let _currentSupplierDateRange = "all";
 let _selectedSupplierId = null;
+let _supplierDetailInflight = "";   // the profile request in flight: the same one is not sent twice (re-test 2 SN3)
+let _supplierDetailMergedKey = "";  // which records the open profile combines, so a list that arrives merged reloads it (SN2)
 let _currentLoadedSuppliers = [];
 let _supplierIntelIsExpanded = false;
 window._supplierIntelIsExpanded = _supplierIntelIsExpanded;
@@ -19305,15 +19347,17 @@ function setSupplierAddress(query, supplierId) {
 }
 
 // A link such as /suppliers?q=serco or /suppliers/123 opens the page where it was left.
-document.addEventListener("DOMContentLoaded", () => {
+// app.js loads after sign-in, so the page's load events may already have fired: check readyState instead.
+(function restoreSupplierPageFromAddress() {
   const m = /^\/suppliers(?:\/(\d+))?\/?$/.exec(location.pathname || "");
   if (!m) return;
   const q = new URLSearchParams(location.search || "").get("q") || "";
-  window.addEventListener("load", () => setTimeout(() => {
+  const open = () => setTimeout(() => {
     openSupplierIntelligenceModal(q, { reset: true });
     if (m[1]) setTimeout(() => { try { loadSupplierDetail(Number(m[1])); } catch (_) {} }, 600);
-  }, 400));
-});
+  }, 400);
+  if (document.readyState === "complete") open(); else window.addEventListener("load", open);
+})();
 
 async function updateSupplierScraperStatus() {
   try {
@@ -19684,6 +19728,13 @@ function renderSupplierListData(data, query) {
 
   if (suppliers.length > 0) {
     const currentStillVisible = _selectedSupplierId && suppliers.some(s => s.id === _selectedSupplierId);
+    if (currentStillVisible) {
+      // The first (fast) list can arrive before records are merged; when the merged list arrives the open profile must follow it,
+      // or it shows one record's totals under a card that shows the company's (re-test 2 SN2).
+      const shown = suppliers.find(s => s.id === _selectedSupplierId);
+      const key = shown && Array.isArray(shown.merged_ids) ? shown.merged_ids.filter((i) => i != null).join(",") : "";
+      if (key !== _supplierDetailMergedKey) loadSupplierDetail(_selectedSupplierId);
+    }
     if (!currentStillVisible) {
       // Prefer an exact name match over whatever the backend ranked first (by award value) --
       // defense-in-depth alongside the backend's own exact-match ORDER BY boost, so a deep link
@@ -20078,6 +20129,12 @@ function supplierContactDisplays(s, opts = {}) {
 }
 
 async function loadSupplierDetail(supplierId) {
+  const _cardNow = (_currentLoadedSuppliers || []).find((s) => String(s.id) === String(supplierId));
+  const _mergedNow = _cardNow && Array.isArray(_cardNow.merged_ids) ? _cardNow.merged_ids.filter((i) => i != null).join(",") : "";
+  const _requestKey = `${supplierId}|${_mergedNow}|${_currentSupplierDateRange || ""}`;
+  if (_supplierDetailInflight === _requestKey) return;
+  _supplierDetailInflight = _requestKey;
+  _supplierDetailMergedKey = _mergedNow;
   _selectedSupplierId = supplierId;
 
   document.querySelectorAll(".supplier-item-card").forEach(el => {
@@ -20111,6 +20168,7 @@ async function loadSupplierDetail(supplierId) {
       url += `&date_range=${encodeURIComponent(_currentSupplierDateRange)}`;
     }
     const res = await fetch(url);
+    _supplierDetailInflight = "";
     if (!res.ok) throw new Error("Failed to load supplier details");
     const data = await res.json();
     // The Companies House and website contact lookups cost seconds of outside calls, so they run when the user asks (the
@@ -20367,6 +20425,11 @@ async function loadSupplierDetail(supplierId) {
       ${grantsPanelHtml(data.grants, "supplier")}
     `;
     loadSupplierGroup(supplierId);
+    // A card that combines several records says which names it combines, so a changed total can be explained (SN4).
+    const _names = card && Array.isArray(card.merged_names) ? card.merged_names.filter((n) => n && n !== s.name) : [];
+    if (_names.length) {
+      panel.insertAdjacentHTML("afterbegin", `<div class="supplier-also-as" style="font-size:12px; color:var(--muted,#64748b); padding:8px 12px 0;">Also published as: ${_names.map((n) => esc(n)).join(" · ")}</div>`);
+    }
     if (!panel.dataset.contactsWired) {  // one listener for "Find contact details", however many profiles are opened
       panel.dataset.contactsWired = "1";
       panel.addEventListener("click", (ev) => {
@@ -20382,6 +20445,7 @@ async function loadSupplierDetail(supplierId) {
       });
     }
   } catch (err) {
+    _supplierDetailInflight = "";
     panel.innerHTML = `<div style="padding:20px; color:var(--critical-text, #ef4444);">Error loading supplier profile: ${esc(err.message)}</div>`;
   }
 }
@@ -22259,6 +22323,14 @@ let _buyerFeedPending = false; // true while a feed request is in flight — let
                                 // know to show its own spinner instead of a premature "0 buyers"
 
 // "today", "tomorrow", "in 5 days": the same words in the feed, the radar and the profile, never "-1d" or "0d left".
+// A date as a UK reader writes it (29 Oct 2026); anything that is not a date is returned as it came.
+function ukDay(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ""));
+  if (!m) return value || "";
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return isNaN(d) ? value : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
 function dayWords(n) {
   if (n === null || n === undefined || isNaN(n)) return "date not stated";
   if (n < 0) return Math.abs(n) === 1 ? "ended yesterday" : `ended ${Math.abs(n)} days ago`;
@@ -22320,15 +22392,17 @@ function setBuyerAddress(query) {
     history.replaceState(null, "", "/buyers" + (query ? "?q=" + encodeURIComponent(query) : ""));
   } catch (_) { /* no history */ }
 }
-document.addEventListener("DOMContentLoaded", () => {
+// app.js can be added after the page has already loaded (behind the sign-in check), so do not wait for events that have passed.
+(function restoreBuyerPageFromAddress() {
   if (!/^\/buyers\/?$/.test(location.pathname || "")) return;
   const q = new URLSearchParams(location.search || "").get("q") || "";
-  window.addEventListener("load", () => setTimeout(() => {
+  const open = () => setTimeout(() => {
     const box = $("txtBuyerSearchSidebar");
     if (box && q) box.value = q;
     openBuyerIntelligenceModal();
-  }, 400));
-});
+  }, 400);
+  if (document.readyState === "complete") open(); else window.addEventListener("load", open);
+})();
 
 function openBuyerProfileDrawer(authorityName) {
   if (!authorityName) return;
@@ -22336,6 +22410,7 @@ function openBuyerProfileDrawer(authorityName) {
   if (!drawerModal) return;
 
   $("drawerBuyerName").textContent = authorityName;
+  $("drawerBuyerTypePill").textContent = "";   // the previous buyer's type must not show while this one loads (re-test 2 BN3)
   if (window.RecentViews) window.RecentViews.record("buyer", String(authorityName).toUpperCase(), authorityName, "");
   const watchSlot = $("drawerBuyerWatch");
   if (watchSlot && window.TFWatch) watchSlot.innerHTML = window.TFWatch.buttonHtml("buyer", authorityName, authorityName, "buyer_intelligence", { label: true });
@@ -22526,7 +22601,7 @@ function populateBuyerProfileDrawer(data) {
           </div>
           <div style="text-align:right;">
             <div style="font-weight:700; color:var(--primary);">${moneyOrNotPublished(floatVal(r.contract_value), fmtMoney)}</div>
-            <div style="font-size:10px; color:#d97706; font-weight:700;">Ends ${r.contract_end_date} (${dayWords(r.days_left)})</div>
+            <div style="font-size:10px; color:#d97706; font-weight:700;">Ends ${ukDay(r.contract_end_date)} (${dayWords(r.days_left)})</div>
           </div>
         </div>
       `;
@@ -22539,7 +22614,7 @@ function populateBuyerProfileDrawer(data) {
   if (historyList) {
     const hist = data.contract_history || [];
     const histCount = $("drawerHistoryCount");
-    if (histCount) histCount.textContent = hist.length ? `(latest ${hist.length})` : "";
+    if (histCount) histCount.textContent = hist.length ? `(latest ${Math.min(15, hist.length)})` : "";
     historyList.innerHTML = hist.length ? hist.slice(0, 15).map(h => {
       const noticeUrl = safeHttpUrl(h.notice_url);
       const title = escapeHtml(h.tender_title || "Public Sector Contract");
@@ -22844,7 +22919,7 @@ function renderOpportunityFeed(data) {
           </div>
           <div title="Expected contract expiration date for this buyer's upcoming recompete opportunity" style="cursor:help;">
             <span style="color:var(--muted); font-weight:600;">Next Renewal</span>
-            <div style="font-weight:800; color:#d97706; font-size:12px; margin-top:2px;">${c.next_renewal_date !== "None scheduled" ? c.next_renewal_date : "None scheduled"}</div>
+            <div style="font-weight:800; color:#d97706; font-size:12px; margin-top:2px;">${c.next_renewal_date !== "None scheduled" ? ukDay(c.next_renewal_date) : "None scheduled"}</div>
           </div>
         </div>
 
@@ -22925,7 +23000,7 @@ function renderOpportunityRadar(data) {
         <td style="padding:8px 10px; font-weight:600; color:var(--muted);">${escapeHtml(r.current_supplier)}</td>
         <td style="padding:8px 10px; font-weight:700; color:var(--primary);">${r.value_published === false ? '<span style="color:var(--muted);font-weight:600" title="The notice states no value of its own for this contract">not published</span>' : fmtMoney(r.contract_value)}</td>
         <td style="padding:8px 10px; font-weight:700; color:${daysColor};">
-          <div>${r.contract_end_date}</div>
+          <div>${ukDay(r.contract_end_date)}</div>
           <span style="font-size:10px; font-weight:600;">(${dayWords(r.days_left)})</span>
         </td>
         <td style="padding:8px 10px; text-align:center;">
@@ -24506,7 +24581,9 @@ function initAll() {
     const sourceVal = urlParams.get("source");
     const idVal = urlParams.get("id") || urlParams.get("tender_id");
     const titleVal = urlParams.get("tender_title") || urlParams.get("title");
-    const qVal = urlParams.get("q") || urlParams.get("search") || urlParams.get("tender");
+    // On /suppliers, /buyers and /funding the q belongs to that page: it must not start a tender search or land in recent searches.
+    const ownsQuery = /^\/(suppliers|buyers|funding)(\/|$)/.test(location.pathname || "");
+    const qVal = ownsQuery ? null : (urlParams.get("q") || urlParams.get("search") || urlParams.get("tender"));
 
     // Handle deep links opened in a new tab from a buyer/supplier "↗" link elsewhere in the
     // app (see buyerDeepLinkUrl/supplierDeepLinkUrl) — jump straight to that profile instead

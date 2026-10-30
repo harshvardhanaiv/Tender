@@ -71,14 +71,6 @@ DETAIL_COLUMNS = LIST_COLUMNS + (
     "agent_address", "case_officer", "ward_name", "consultation_end_date", "updated_at",
 )
 
-SORTS = {
-    "lead_score": "lead_score DESC NULLS LAST, n_dwellings DESC NULLS LAST, start_date DESC NULLS LAST",
-    "newest": "start_date DESC NULLS LAST, lead_score DESC NULLS LAST",
-    "decided": "decided_date DESC NULLS LAST, lead_score DESC NULLS LAST",
-    "dwellings": "n_dwellings DESC NULLS LAST, lead_score DESC NULLS LAST",
-}
-
-
 def init_planning_blueprint(get_db_connection):
     global _get_db
     _get_db = get_db_connection
@@ -106,12 +98,28 @@ def _with_breakdown(row: dict[str, Any]) -> dict[str, Any]:
 
 # EIA scoping / screening requests and Habitats Regulations consultations are not development proposals: they are
 # not "approved outline applications" and are not leads worth a top score.
-_CONSULTATION_RE = re.compile(
-    r"(screening|scoping)\s+(opinion|request|direction)|\b(eia|environmental impact assessment)\s+(screening|scoping)"
-    r"|habitats?\s+regulations?(\s+assessment)?|regulation\s+(63|68)\b|\bhra\b\s+(consultation|screening)",
-    re.I,
+#
+# The pattern is written once with \y (Postgres word boundary) so the database can sort and filter on the same rule
+# the display applies; Python reads \y as \b.
+_CONSULTATION_PATTERN = (
+    r"(screening|scoping)\s+(opinion|request|direction)|\y(eia|environmental impact assessment)\s+(screening|scoping)"
+    r"|scoping\s+(for|of)\s+pre[- ]?app|habitats?\s+regulations?(\s+assessment)?|regulation\s+(63|68)\y"
+    r"|\yhra\y\s+(consultation|screening)"
 )
+_CONSULTATION_RE = re.compile(_CONSULTATION_PATTERN.replace(r"\y", r"\b"), re.I)
 _CONSULTATION_SCORE_CAP = 25
+_IS_CONSULTATION_SQL = f"(COALESCE(description, '') ~* '{_CONSULTATION_PATTERN}')"
+# The score a lead shows: consultations are capped, and "best leads first" must sort on that, not the raw score.
+_EFFECTIVE_SCORE_SQL = (
+    f"(CASE WHEN {_IS_CONSULTATION_SQL} THEN LEAST(COALESCE(lead_score, 0), {_CONSULTATION_SCORE_CAP}) ELSE lead_score END)"
+)
+
+SORTS = {
+    "lead_score": f"{_EFFECTIVE_SCORE_SQL} DESC NULLS LAST, n_dwellings DESC NULLS LAST, start_date DESC NULLS LAST",
+    "newest": f"start_date DESC NULLS LAST, {_EFFECTIVE_SCORE_SQL} DESC NULLS LAST",
+    "decided": f"decided_date DESC NULLS LAST, {_EFFECTIVE_SCORE_SQL} DESC NULLS LAST",
+    "dwellings": f"n_dwellings DESC NULLS LAST, {_EFFECTIVE_SCORE_SQL} DESC NULLS LAST",
+}
 
 
 def _mark_consultation(row: dict[str, Any]) -> dict[str, Any]:
@@ -295,10 +303,10 @@ def _build_search() -> dict[str, Any]:
     if types:
         where.append("app_type = ANY(%s)")
         params.append(types)
-        if not include_low_value:
-            where.append(OPPORTUNITIES_SQL)
-    elif not include_low_value:
+    if not include_low_value:
         where.append(OPPORTUNITIES_SQL)
+        # Screening and scoping requests are early signals, not schemes: they stay out of the default list.
+        where.append(f"NOT {_IS_CONSULTATION_SQL}")
 
     min_dwellings = _int_arg("min_dwellings", lo=0)
     if min_dwellings:
@@ -307,7 +315,7 @@ def _build_search() -> dict[str, Any]:
 
     min_score = _int_arg("min_score", lo=0, hi=100)
     if min_score:
-        where.append("lead_score >= %s")
+        where.append(f"{_EFFECTIVE_SCORE_SQL} >= %s")
         params.append(min_score)
 
     for arg, column, op in (

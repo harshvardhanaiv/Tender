@@ -136,7 +136,7 @@ def list_funding():
             cur,
             q=(args.get("q") or "")[:100],
             applicant=applicant or "",
-            location=args.get("location") or "",
+            location="",   # the older ?location= is an alias of ?where=, so both give the same grants
             min_award=_number(args.get("min_award")),
             need_min=_number(args.get("need_min")),
             need_max=_number(args.get("need_max")),
@@ -144,7 +144,7 @@ def list_funding():
             sort=args.get("sort") or "relevance",
             page=page,
             keywords=ctx["keywords"],
-            where=args.get("where") or "",
+            where=args.get("where") or args.get("location") or "",
             include_uk_wide=include_uk_wide,
             fit_applicant=ctx["applicant"],
             hide_unlikely=args.get("hide_unlikely") in ("1", "true"),

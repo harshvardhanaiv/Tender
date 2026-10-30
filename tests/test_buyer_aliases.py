@@ -31,3 +31,25 @@ def test_a_london_borough_is_one_body_however_it_is_written():
     assert canon("Hammersmith & Fulham Council") == "London Borough of Hammersmith and Fulham"
     assert canon("Camden Highline") == "Camden Highline" and canon("Camden") == "Camden", "no 'council' and no 'London Borough': left alone"
     assert canon("Leeds City Council - PACS") == "Leeds City Council"
+
+
+def test_a_council_published_under_several_spellings_is_one_buyer():
+    """Report-6 follow-up: spelling variants of one council (case, '&', 'The', MBC, Borough/City/County Council) go to one name."""
+    for name in ("Bradford Metropolitan District Council", "CITY OF BRADFORD METROPOLITAN DISTRICT COUNCIL", "The City of Bradford Metropolitan District Council"):
+        assert canon(name) == "Bradford Metropolitan District Council", name
+    for name in ("Milton Keynes Council", "Milton Keynes City Council", "Milton Keynes City Council "):
+        assert canon(name) == "Milton Keynes Council", name
+    assert canon("SANDWELL MBC") == canon("Sandwell Metropolitan Borough Council") == "Sandwell Metropolitan Borough Council"
+    assert canon("Telford and Wrekin Council") == canon("TELFORD & WREKIN COUNCIL") == "Telford & Wrekin Council"
+    assert canon("Tower Hamlets") == canon("LONDON BOROUGH OF TOWER HAMLETS") == "London Borough of Tower Hamlets"
+    assert canon("Islington") == "London Borough of Islington"
+
+
+def test_successor_councils_and_non_councils_stay_separate():
+    assert canon("North Yorkshire County Council") == "North Yorkshire County Council"
+    assert canon("North Yorkshire Council") != canon("North Yorkshire County Council")
+    assert canon("Buckinghamshire County Council") != canon("Buckinghamshire Council")
+    assert canon("Dorset County Council") != canon("Dorset Council")
+    assert canon("British Council") == "British Council"
+    assert canon("Kent") == "Kent" and canon("Sutton") == "Sutton"
+    assert canon("Kent County Council") == "Kent County Council"

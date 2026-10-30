@@ -1102,6 +1102,10 @@ def search_suppliers():
         suppliers = _order_merged(suppliers, opts, q_key=opts["q_key"], q=q)
         if opts.get("region"):  # a merged card is filtered by its own region, not by the region of one of its records
             suppliers = [sp for sp in suppliers if (sp.get("region") or "").lower() == opts["region"].lower()]
+        # The count is of records, the list is of merged companies: when every matching record fits on this first page, the
+        # count is the number of companies shown ("IBM" said 19 suppliers over 4 cards).
+        if limit is not None and not offset and total_count <= limit and not sme_only:
+            total_count = len(suppliers)
         buyers = _matching_buyers(cursor, conn, q) if q and not request.args.get("widen") else []
         return jsonify({
             "ok": True,
@@ -1501,7 +1505,8 @@ def get_supplier_detail(identifier: str):
             "email":   clean_contact_field(sup_row.get("email"))   if name_match_confident else "",
             "phone":   clean_contact_field(sup_row.get("phone"))   if name_match_confident else "",
             "website": clean_contact_field(sup_row.get("website")) if name_match_confident else "",
-            "region": sup_row.get("region") or "UK",
+            # the same region the list and the filter use (decided by the postcode), not the scraped "UKI - London" label (re-test 2 R11)
+            "region": itl1_region(sup_row.get("region"), sup_row.get("address")) or sup_row.get("region") or "UK",
             "sme_status": sme_st,
             "vcse_status": vcse_st,
             "charity": charity,

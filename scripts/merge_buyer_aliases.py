@@ -31,7 +31,7 @@ def main() -> None:
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(r"""SELECT authority_name, COUNT(*) FROM contract_awards
-                   WHERE authority_name ~* 'nhs\s+commissioning|^\s*nhs\s+england\s*$|council|borough'
+                   WHERE authority_name ~* 'nhs\s+commissioning|^\s*nhs\s+england\s*$|council|borough|city of|mbc|^\s*(tower hamlets|islington)\s*$'
                    GROUP BY 1""")
     changes = [(old, canonical_authority_name(old), n) for old, n in cur.fetchall()]
     changes = [(old, new, n) for old, new, n in changes if new and new != old]

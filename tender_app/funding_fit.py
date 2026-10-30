@@ -171,6 +171,10 @@ def where_label(locations: list[str]) -> str:
 def _project_cost_floor(text: str) -> float | None:
     m = re.search(r"project[s]?\s+(?:costing|costs?|worth|of|with a (?:total )?cost of)\s+(?:at least |over |more than |a minimum of )?([£$€])\s?([\d,.]+)\s?(k|m|million|bn)?\s+or more", text, re.I)
     if not m:
+        # "eligible projects must exceed £100 million in total costs" / "a total cost (including capital) of £100 million or more"
+        m = (re.search(r"(?:exceed|over|above|at least|minimum of)\s+([£$€])\s?([\d,.]+)\s?(k|m|million|bn)?\s+in\s+total\s+costs?", text, re.I)
+             or re.search(r"total\s+costs?\b[^.£$€]{0,120}?(?:of|at least)\s+([£$€])\s?([\d,.]+)\s?(k|m|million|bn)?\s+or\s+(?:more|above|over)", text, re.I))
+    if not m:
         return None
     try:
         return float(m.group(2).replace(",", "")) * _SCALE.get((m.group(3) or "").lower(), 1.0) * _FX.get(m.group(1), 1.0)
@@ -261,7 +265,11 @@ def assess(grant: dict[str, Any], applicant: dict[str, Any], *, kind: str = "", 
         checks.append("Needs 20%+ annual growth in staff or turnover for 3 years: not in your profile")
     funder = str(grant.get("funder") or "")
     research_council = bool(re.search(r"UKRI individual eligibility|research and innovation communities|research organisations? eligible for UKRI|may (?:only )?join as (?:a )?partner", text, re.I))         and not re.match(r"\s*Innovate UK\b", funder)
-    if research_council or re.search(r"led by (?:a |an )?(?:uk )?(?:research|university|academic)|research organisations? (?:to )?lead|research-led", text, re.I):
+    # A grant that says the applicant must BE a research organisation: a company can only be a project partner.
+    must_be_ro = re.search(r"must be based at (?:a |an )?(?:uk )?(?:research|higher education)|eligible for (?:EPSRC|UKRI|BBSRC|MRC|NERC|STFC|AHRC|ESRC)\s+funding|\bresearch organisation \(RO\)|must be (?:a |an )?(?:uk )?research organisation", text, re.I)
+    if must_be_ro:
+        checks.insert(0, "A research organisation must lead: you can be a project partner. Confirm with the funder")
+    elif research_council or re.search(r"led by (?:a |an )?(?:uk )?(?:research|university|academic)|research organisations? (?:to )?lead|research-led", text, re.I):
         checks.append("Usually led by a research organisation or university: a business may be able to join as a partner. Confirm with the funder")
 
     for line in _facts_to_check(text):
