@@ -1356,6 +1356,9 @@ function renderRightmoveFocusFilters() {
         </button>
       `;
     }
+    // "All portals" in one click (re-test T4): the picker used to open on a single portal with no way back but ticking each one.
+    const allSelected = !_selectedPortals || activePortals.every((p) => _selectedPortals.has(p.id));
+    portalHtml = `<button type="button" class="rm-pill ${allSelected ? "active" : ""}" onclick="selectAllRightmovePortals()"><span>All portals</span></button>` + portalHtml;
     portalPillsContainer.innerHTML = portalHtml;
   }
 
@@ -1376,6 +1379,15 @@ function toggleRightmoveCountry(countryName) {
   toggleManagedCountry(countryName);
   renderRightmoveFocusFilters();
   if (typeof renderRows === "function") renderRows();
+}
+
+function selectAllRightmovePortals() {
+  _selectedPortals = null;   // null means ALL
+  savePortalSelection();
+  renderRightmoveFocusFilters();
+  if (typeof renderRows === "function") renderRows();
+  if (typeof updateResultsTotal === "function") updateResultsTotal();
+  if (typeof updateRightmoveResultsCount === "function") updateRightmoveResultsCount();
 }
 
 function toggleRightmovePortal(portalId) {
@@ -4837,6 +4849,14 @@ function formatValue(v, source) {
   return prefix + n.toLocaleString("en-GB", { maximumFractionDigits: 0 });
 }
 
+// One date format in the results table: "29 Oct 2026" whether the portal sends 2026-10-29 or 29/10/2026 (re-test T7).
+function tableDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const d = typeof parseDate === "function" ? parseDate(raw) : null;
+  return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : raw;
+}
+
 // Parse a value string to a number for sorting; returns -1 for blanks (sink to bottom).
 function parseValueNum(row) {
   const raw = String(row.estimated_value_eur || row.estimated_value || "").trim();
@@ -6583,7 +6603,7 @@ function buildResultRow(row) {
 
     let pubDate = row.date_published || "";
     if (pubDate.includes(" ")) pubDate = pubDate.split(" ")[0];
-    tr.appendChild(tdText(pubDate, "col-published td--published"));
+    tr.appendChild(tdText(tableDate(pubDate), "col-published td--published"));
 
     const tdDeadline = document.createElement("td");
     tdDeadline.className = "col-days td--days";
@@ -6591,7 +6611,7 @@ function buildResultRow(row) {
     let cleanDl = rawDl;
     if (cleanDl.includes(" ")) cleanDl = cleanDl.split(" ")[0];
     tdDeadline.innerHTML = formatDaysLeft(row)
-      + (cleanDl ? `<div class="td--deadline-raw">${esc(cleanDl)}</div>` : "");
+      + (cleanDl ? `<div class="td--deadline-raw">${esc(tableDate(cleanDl))}</div>` : "");
     tr.appendChild(tdDeadline);
 
     const tdStatus = tdText(statusLabel(row), "col-status td--status");
@@ -6706,7 +6726,11 @@ function buildResultCard(row) {
   if (authority && authority !== "Not available") {
     bits.push(`<button type="button" class="result-card__meta-item btn-intel-badge btn-intel-badge--buyer" title="View Buyer Profile for ${esc(authority)}" onclick="event.stopPropagation(); window.openBuyerProfileDrawer('${esc(authority)}')">${esc(displayName(authority))}</button>`);
   }
-  if (row.location_not_stated || (typeof isLocationUnstated === "function" && isLocationUnstated(row))) {
+  const _buyerPlace = (/^(?:the\s+)?(?:london borough of\s+|royal borough of\s+|city of\s+)?(.+?)(?:\s+(?:metropolitan|city|borough|county|district|unitary))*\s+council$/i.exec(authority) || [])[1];
+  if ((row.location_not_stated || (typeof isLocationUnstated === "function" && isLocationUnstated(row))) && _buyerPlace && _buyerPlace.length < 40) {
+    // The notice gives no place, but a council's own name does: show it, labelled as the buyer's (re-test T7).
+    bits.push(`<span class="result-card__meta-item badge" style="padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600;" title="The notice does not state where the work is; this is the buyer's area">📍 ${esc(_buyerPlace)} (buyer's area)</span>`);
+  } else if (row.location_not_stated || (typeof isLocationUnstated === "function" && isLocationUnstated(row))) {
     bits.push(`<span class="result-card__meta-item badge badge--unstated-location" style="background:#fff7ed; color:#c2410c; border:1px solid #ffedd5; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600;" title="Notice does not state a specific UK county or region">📍 Location not stated</span>`);
   }
   if (cardSup && cardSup !== "Not available") {
@@ -6798,6 +6822,27 @@ function sourceBadgeEl(row) {
   return container;
 }
 
+// The words a profile uses most, as one-click searches for the empty start page (re-test T8). Pure: no request is made until one is clicked.
+function suggestedSearchTerms(meta, limit = 4) {
+  if (!meta) return [];
+  const counts = new Map();
+  const text = `${meta._text || ""} ${meta._name || ""}`.toLowerCase().replace(/[^a-z0-9\s]/g, " ");
+  for (const w of text.split(/\s+/)) {
+    if (w.length < 5 || STOPWORDS.has(w) || /^\d+$/.test(w)) continue;
+    counts.set(w, (counts.get(w) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length).slice(0, limit).map(([w]) => w);
+}
+
+document.addEventListener("click", (e) => {
+  const chip = e.target.closest && e.target.closest("[data-suggested-search]");
+  if (!chip) return;
+  const box = $("rmSearchKeywordInput") || $("q");
+  if (box) box.value = chip.dataset.suggestedSearch;
+  state.q = chip.dataset.suggestedSearch;
+  search();
+});
+
 function renderEmptyState(container, asCard) {
   const loading = state.searchPhase === "loading";
   const hasQuery = Boolean((state.q || "").trim());
@@ -6841,12 +6886,17 @@ function renderEmptyState(container, asCard) {
   }
 
   const showCreateBtn = !loading && !hasQuery && (!state.companyProfiles || state.companyProfiles.length === 0);
+  const suggested = !loading && !hasQuery && state.activeProfileId ? suggestedSearchTerms(getActiveProfileMeta()) : [];
+  const suggestedHtml = suggested.length
+    ? `<div class="empty-state__suggest" style="margin-top:16px"><div style="font-size:12px;color:var(--muted,#64748b);margin-bottom:8px">Tenders for ${esc((getActiveProfile() || {}).name || "your profile")}: start with</div>${suggested.map((w) => `<button type="button" class="btn btn--sm" style="margin:0 4px 4px 0" data-suggested-search="${esc(w)}">${esc(w)}</button>`).join("")}</div>`
+    : "";
 
   const html = `
     <div class="empty-state">
       <div class="empty-state__icon">${icon}</div>
       <div class="empty-state__title">${esc(title)}</div>
       <div class="empty-state__msg">${msg}</div>
+      ${suggestedHtml}
       ${showCreateBtn ? `
         <button id="btnEmptyStateCreateProfile" class="btn btn--primary" style="margin-top: 20px; padding: 10px 24px; font-size: 14px; display: inline-flex; align-items: center; gap: 8px;">
           ＋ Create Company Profile
@@ -8348,10 +8398,14 @@ function renderDetailsHtml(d, row) {
   html += `<div class="item"><div class="k">Days Left</div><div class="v">${daysHtml}${rawDeadline ? `<span class="detail-deadline-raw"> — ${esc(rawDeadline)}</span>` : ""}</div></div>`;
 
   let nonEmpty = 0;
+  const shownLabelValues = new Set();   // supplier_name and awarded_supplier hold the same name: list it once (re-test T7)
   for (const [k, label] of keys) {
     const v = merged[k] ?? "";
     const vs = String(v).trim();
     if (!vs) continue;   // skip blank rows entirely
+    const dupKey = `${label}|${vs.toLowerCase().replace(/\s+/g, " ")}`;
+    if (shownLabelValues.has(dupKey)) continue;
+    shownLabelValues.add(dupKey);
     nonEmpty += 1;
     let rendered;
     if (k === "description" && isError) {
@@ -8428,6 +8482,14 @@ async function search() {
   state.scope = getScopeValue();
   syncNativeScope();
   pushRecentSearch(q, state.scope);
+  // The query is kept in the address (/?q=...) so a reload or a shared link repeats the search (re-test T6); initAll reads it back.
+  try {
+    if (location.pathname === "/" || /^\/index\.html$/.test(location.pathname)) {
+      const u = new URL(location.href);
+      u.searchParams.set("q", q);
+      history.replaceState(null, "", u.pathname + u.search + u.hash);
+    }
+  } catch (_) { /* no history */ }
   state.activeKey = null;
   state.sort = null;
   setDetailsPanelVisible(false);
@@ -8813,6 +8875,16 @@ async function loadPage(isNewSearch = false, isPoll = false) {
     if (extra.length) shownRows = incomingRows.concat(extra);
   }
   if (incomingPhase === "complete") state._instantRows = null;
+  // While portals are still reporting, rows already on screen keep their place and new rows are added after them, instead of the
+  // whole list being re-ordered on every poll (re-test T3). The final order is taken once the search completes.
+  if (incomingPhase === "loading" && isPoll && state.rows.length && !state.sort) {
+    const place = new Map();
+    state.rows.forEach((r, i) => { const k = rowKey(r); if (k && !place.has(k)) place.set(k, i); });
+    const kept = [], fresh = [];
+    for (const r of shownRows) { const k = rowKey(r); (k && place.has(k) ? kept : fresh).push(r); }
+    kept.sort((a, b) => place.get(rowKey(a)) - place.get(rowKey(b)));
+    shownRows = kept.concat(fresh);
+  }
   if (!holdForTerms && !(incomingPhase === "loading" && (incomingRows.length < _lastSettledRowCount || majorityStillPending))) {
     state.rows = shownRows;
   }
@@ -22719,7 +22791,7 @@ function refreshBuyerIntelligenceView() {
       if (fast.approximate) {
         const full = await getJson(`/api/buyers/opportunity-feed?${qs}`, feedController.signal);
         if (feedController !== _buyerFeedController) return;
-        if (full.ok) { renderOpportunityFeed(full); swrWrite(feedKey, full); }
+        if (full.ok) { keepFirstPaintOrder(full, fast); renderOpportunityFeed(full); swrWrite(feedKey, full); }
       }
     } catch (err) {
       if (err.name === "AbortError") return;
@@ -22801,9 +22873,40 @@ function showBuyerMapLoading(show) {
   if (badge && show) badge.textContent = "Loading…";
 }
 
+// The complete answer replaces the fast one without moving the cards already on screen: those keep their place and the rest follow
+// (re-test BN2: Wandsworth first, then Westminster Foundation first a second later).
+function keepFirstPaintOrder(full, first) {
+  const place = new Map((first.cards || []).map((c, i) => [c.authority_name, i]));
+  if (!place.size) return;
+  const kept = [], rest = [];
+  for (const c of full.cards || []) (place.has(c.authority_name) ? kept : rest).push(c);
+  kept.sort((a, b) => place.get(a.authority_name) - place.get(b.authority_name));
+  full.cards = kept.concat(rest);
+}
+
+// Buyer intelligence follows the selected company profile; with more than one profile it can be switched here (re-test B3).
+function ensureBuyerProfileSwitch(anchor) {
+  const profiles = state.companyProfiles || [];
+  if (!anchor || profiles.length < 2) return;
+  let sel = $("buyerProfileSwitch");
+  if (!sel) {
+    sel = document.createElement("select");
+    sel.id = "buyerProfileSwitch";
+    sel.setAttribute("aria-label", "Company profile for these recommendations");
+    sel.style.cssText = "margin-left:8px;font-size:12px;max-width:200px;";
+    sel.addEventListener("change", () => {
+      handleCompanyProfileSelectionChange(sel.value);
+      setTimeout(() => refreshBuyerIntelligenceView(), 500);   // the profile's postcode is looked up first
+    });
+    anchor.insertAdjacentElement("afterend", sel);
+  }
+  sel.innerHTML = profiles.map((p) => `<option value="${esc(p.id)}" ${String(p.id) === String(state.activeProfileId) ? "selected" : ""}>${esc(p.name || "Profile")}</option>`).join("");
+}
+
 function renderOpportunityFeed(data) {
   const bannerText = $("personalizationBannerText");
   if (bannerText) bannerText.textContent = data.banner_text || "Personalised for your profile";
+  ensureBuyerProfileSwitch(bannerText);
 
   const tierBadge = $("tierBadge");
   if (tierBadge) {
@@ -22848,11 +22951,13 @@ function renderOpportunityFeed(data) {
       ? `No buyers found matching '<strong>${escapeHtml(searchTerm)}</strong>' — try a different buyer name, CPV code, or clear your search.`
       : `No matching buyers found. Try widening the filters above or choose All Recommendations.`;
 
+    const suggestion = data.did_you_mean && data.did_you_mean.name
+      ? `<div style="margin-top:10px;font-size:12px;">Did you mean <a href="#" data-buyer-suggest="${escapeHtml(data.did_you_mean.name)}">${escapeHtml(data.did_you_mean.name)}</a>?</div>` : "";
     cardsList.innerHTML = `
       <div style="padding:32px 20px; text-align:center; background:var(--surface-2,#f8fafc); border-radius:8px; border:1px solid var(--border,#e2e8f0);">
         <i class="ti ti-search-off" style="font-size:32px; color:var(--muted,#94a3b8); margin-bottom:8px; display:inline-block;"></i>
         <div style="font-weight:700; color:var(--text,#0f172a); margin-bottom:6px; font-size:14px;">No matching buyers</div>
-        <div style="font-size:12px; color:var(--muted,#64748b); max-width:460px; margin:0 auto; line-height:1.5;">${emptySubtext}</div>
+        <div style="font-size:12px; color:var(--muted,#64748b); max-width:460px; margin:0 auto; line-height:1.5;">${emptySubtext}</div>${suggestion}
       </div>
     `;
     return;
@@ -23217,6 +23322,14 @@ function initBuyerIntelligenceEvents() {
 
   $("txtBuyerSearchSidebar")?.addEventListener("input", triggerDebouncedRefresh);
   $("txtBuyerSearchSidebar")?.addEventListener("change", refreshBuyerIntelligenceView);
+  $("feedCardsList")?.addEventListener("click", (e) => {
+    const sug = e.target.closest("[data-buyer-suggest]");
+    if (!sug) return;
+    e.preventDefault();
+    const box = $("txtBuyerSearchSidebar");
+    if (box) box.value = sug.getAttribute("data-buyer-suggest");
+    refreshBuyerIntelligenceView();
+  });
   $("selBuyerTypeFilter")?.addEventListener("change", refreshBuyerIntelligenceView);
   $("rngMinSpendFilter")?.addEventListener("input", () => {
     updateSliderLabels();

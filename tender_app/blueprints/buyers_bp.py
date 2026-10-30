@@ -1165,6 +1165,36 @@ def _buyer_items_from_stats(cursor, conn, q: str, buyer_type_filter: str, min_sp
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
+_buyer_names_cache: dict[str, Any] = {"at": 0.0, "names": []}
+
+
+def _buyer_did_you_mean(cursor, conn, q: str) -> dict[str, str] | None:
+    """A near-miss spelling of a buyer name or one of its words ("Mancester" -> "Manchester"), from the buyers that let the most
+    contracts. None when nothing is close. Names are kept for 30 minutes."""
+    import difflib
+    now = time.time()
+    if now - _buyer_names_cache["at"] > 1800 or not _buyer_names_cache["names"]:
+        try:
+            _execute(cursor, conn, "SELECT authority_name FROM buyer_stats WHERE total_contracts >= 10 ORDER BY total_contracts DESC LIMIT 6000", [])
+            _buyer_names_cache["names"] = [r[0] for r in cursor.fetchall() if r[0]]
+            _buyer_names_cache["at"] = now
+        except Exception:
+            return None
+    term = " ".join(q.lower().split())
+    if len(term) < 4:
+        return None
+    words: dict[str, str] = {}
+    for name in _buyer_names_cache["names"]:
+        for w in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", name):
+            words.setdefault(w.lower(), w)
+    hit = difflib.get_close_matches(term, list(words), n=1, cutoff=0.8)
+    if hit and hit[0] != term:
+        return {"name": words[hit[0]].title() if words[hit[0]].isupper() else words[hit[0]]}
+    lowered = {n.lower(): n for n in _buyer_names_cache["names"]}
+    hit = difflib.get_close_matches(term, list(lowered), n=1, cutoff=0.8)
+    return {"name": lowered[hit[0]]} if hit and hit[0] != term else None
+
+
 @buyers_bp.route("/api/buyers/opportunity-feed", methods=["GET"])
 def get_opportunity_feed():
     """
@@ -1649,10 +1679,14 @@ def get_opportunity_feed():
             except Exception as _sup_err:
                 pass
 
+        did_you_mean = None
+        if q and not top_cards:
+            did_you_mean = _buyer_did_you_mean(cursor, conn, q)
         return jsonify({
             "ok": True,
             "tier": tier,
             "banner_text": banner_text,
+            "did_you_mean": did_you_mean,
             "cards": top_cards,
             "total_matches": total_matches,
             "hidden_no_sector": hidden_no_sector,

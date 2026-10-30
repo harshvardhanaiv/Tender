@@ -17,8 +17,8 @@ function cut(first, lastPattern) {
 }
 const CODE = [
   cut("function _calendarDate(", /^}/), cut("function parseDate(", /^}/), cut("function isDeadlinePassed(", /^}/),
-  cut("function isAwardNotice(", /^}/), cut("function isClosedTender(", /^}/), cut("function statusLabel(", /^}/),
-  'this.statusLabel = statusLabel;',
+  cut("function tableDate(", /^}/), cut("function isAwardNotice(", /^}/), cut("function isClosedTender(", /^}/), cut("function statusLabel(", /^}/),
+  'this.statusLabel = statusLabel; this.tableDate = tableDate;',
 ].join("\n");
 const ctx = vm.createContext({});
 vm.runInContext(CODE, ctx);
@@ -76,6 +76,22 @@ test("report 6 T2: opening a tender does not run the paid deep score", () => {
   assert.ok(!/renderRows\(\);\s*loadDeepFit\(/.test(src), "the detail view starts the paid score on open again");
   assert.ok(!/if \(fitActive\(\)\) loadDeepFit\(window\._detailRow, null\)/.test(src), "a profile switch starts the paid score again");
   assert.ok(src.includes("data-run-deep-fit"), "the 'Run AI deep score · 1 credit' button is gone");
+});
+
+test("report 6 T7: the results table shows one date format", () => {
+  const tableDate = ctx.tableDate;
+  assert.equal(tableDate("2026-10-29"), "29 Oct 2026");
+  assert.equal(tableDate("29/10/2026"), "29 Oct 2026");
+  assert.equal(tableDate("25/03/2025 14:30:00".split(" ")[0]), "25 Mar 2025");
+  assert.equal(tableDate(""), "");
+  assert.equal(tableDate("TBC"), "TBC");
+});
+
+test("report 6 T7/T8: duplicate supplier lines, a buyer's area and profile suggestions are wired in", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "web", "app.js"), "utf8");
+  assert.ok(src.includes("shownLabelValues"), "the details list the awarded supplier twice again");
+  assert.ok(src.includes("(buyer's area)"), "a council's own name no longer gives the card a place");
+  assert.ok(src.includes("data-suggested-search") && src.includes("function suggestedSearchTerms"), "the empty start page lost its profile suggestions");
 });
 
 (() => {
