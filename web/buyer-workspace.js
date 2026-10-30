@@ -1114,7 +1114,13 @@
     const main = document.getElementById("bwMain");
     if (!v || v.verified || !main || document.getElementById("bwVerifyNote")) return;
     // The buttons that start a plan are disabled while the account is unverified, with the reason on hover.
-    const lock = () => document.querySelectorAll('[data-action="plan-from"], [data-action="eng-new"], [data-action="eng-create"]').forEach((b) => {
+    // An existing draft is read-only too: every field and every button that changes, publishes or deletes it (the server
+    // refuses the same requests with 403). Copying, downloading the notice and the hand-over pack stay available.
+    const ENG_WRITE = ["plan-from", "eng-new", "eng-create", "eng-add-note", "eng-add-supplier", "eng-close", "eng-confirm-delete", "eng-convert",
+      "eng-delete", "eng-match", "eng-publish", "eng-regenerate", "eng-remove-supplier", "eng-save-notice", "eng-save-scope"]
+      .map((a) => `[data-action="${a}"]`).join(", ");
+    const ENG_FIELDS = "[data-scope], [data-supplier], #noticeText, #manualSupplier, #publishUrl, #logNote";
+    const lock = () => document.querySelectorAll(`${ENG_WRITE}, ${ENG_FIELDS}`).forEach((b) => {
       if (b.disabled) return;
       b.disabled = true;
       b.title = "Verify your public-body account to plan an engagement";

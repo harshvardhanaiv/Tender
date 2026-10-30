@@ -88,6 +88,30 @@ def affinity_reason(grant: dict[str, Any], applicant: dict[str, Any]) -> str:
     return ""
 
 
+_SECTOR_LABEL = {
+    "D": "energy and net zero", "E": "waste, water and the environment", "H": "transport and logistics", "I": "hospitality and tourism",
+    "Q": "health and care", "G": "retail and trade", "K": "finance", "L": "housing and property", "N": "employment and skills",
+    "P": "education and training", "R": "culture, arts and sport", "F": "construction", "A": "agriculture", "C": "manufacturing",
+}
+# Programmes for people and communities, not for a company (matched on the grant's name only, so the call is deliberate).
+_NOT_FOR_COMPANIES = re.compile(r"elected office|\belection|candidates?\b|domestic abuse|refugee|asylum|veterans?\b|bereave|foster|\bcarers?\b|food bank|homeless", re.I)
+
+
+def off_sector_reason(grant: dict[str, Any], applicant: dict[str, Any]) -> str:
+    """Why a grant is about something other than this company's business, or "" when nothing clear says so. Only the grant's
+    name is read, and only a subject typical of another business type counts (Re-test 3 FN4: a "Check" with nothing to check)."""
+    name = grant.get("name") or ""
+    if _NOT_FOR_COMPANIES.search(name):
+        return "Aimed at people and communities, not companies"
+    sector = (applicant.get("sector") or "").upper()
+    if not sector:
+        return ""
+    for letter, rx in _SECTOR_TOPICS.items():
+        if letter != sector and letter in _SECTOR_LABEL and re.search(rx, name, re.I):
+            return "Aimed at " + _SECTOR_LABEL[letter] + ", which is not your sector" + (f" ({sector_title(sector)})" if sector_title(sector) else "")
+    return ""
+
+
 def has_affinity(grant: dict[str, Any], applicant: dict[str, Any]) -> bool:
     return bool(affinity_reason(grant, applicant))
 
@@ -257,7 +281,7 @@ def assess(grant: dict[str, Any], applicant: dict[str, Any], *, kind: str = "", 
     if floor and turnover and floor > 10 * turnover:
         blockers.append("Needs a project costing " + money(floor) + " or more: your turnover is " + money(turnover))
     elif floor and not turnover:
-        checks.append("Needs a project costing " + money(floor) + " or more: add your turnover to your profile")
+        checks.append("Your project must cost " + money(floor) + " or more in total. Confirm before applying.")
 
     if re.search(r"18 to 24|aged 18", text, re.I) and re.search(r"new (?:role|job)|create", text, re.I):
         checks.append("You must create a new role for an 18 to 24 year old")
@@ -284,7 +308,12 @@ def assess(grant: dict[str, Any], applicant: dict[str, Any], *, kind: str = "", 
     if reason and whys:
         return {"verdict": "likely", "why": " · ".join([reason] + whys), "reasons": [reason] + whys, "checks": [], "blockers": []}
     if has_profile:
+        off = off_sector_reason(grant, applicant)
+        if off:
+            return {"verdict": "unlikely", "blocker": off, "blockers": [off], "checks": [], "reasons": whys}
         seen = ("Matched so far: " + " · ".join(whys) + ". ") if whys else ""
-        return {"verdict": "check", "check": seen + "Nothing in your profile rules it out, but nothing in the grant points to your sector either: read the full criteria",
-                "checks": [], "blockers": [], "reasons": whys}
-    return {"verdict": "check", "check": "Add a company profile to check this against your business", "checks": [], "blockers": [], "reasons": whys}
+        line = seen + "Nothing in your profile rules it out, but nothing in the grant points to your sector either: read the full criteria"
+        # a "Check" always carries the thing to check, so the card never shows a verdict with nothing under it
+        return {"verdict": "check", "check": line, "checks": [line], "blockers": [], "reasons": whys}
+    line = "Add a company profile to check this against your business"
+    return {"verdict": "check", "check": line, "checks": [line], "blockers": [], "reasons": whys}

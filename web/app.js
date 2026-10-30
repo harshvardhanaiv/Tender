@@ -4356,6 +4356,15 @@ document.addEventListener("click", (ev) => {
     updateResultsTotal();
     return;
   }
+  const loose = ev.target.closest && ev.target.closest("[data-toggle-loose]");
+  if (loose) {
+    ev.preventDefault();
+    state.showLooseMatches = !state.showLooseMatches;
+    state.currentPage = 1;
+    renderRows();
+    updateResultsTotal();
+    return;
+  }
   const link = ev.target.closest && ev.target.closest("[data-show-all-status]");
   if (!link) return;
   ev.preventDefault();
@@ -4430,8 +4439,27 @@ function updateResultsTotal(rowsNow) {
     }
   }
 
+  // Portal hits whose text lacks the words searched ("Vertical Application Solutions" for "business intelligence") are
+  // left out of the list; say how many, and let the reader see them (Re-test 3 T1/T5 counted them as missing tenders).
+  let looseHint = "";
+  if ((state.q || "").trim()) {
+    const wasShowing = !!state.showLooseMatches;
+    try {
+      state.showLooseMatches = true;
+      const loose = filteredAndSortedRows().filter((r) => r._loose).length;
+      if (loose > 0) {
+        looseHint = wasShowing
+          ? ` · <a href="#" class="results-total__hint" data-toggle-loose="1">${loose.toLocaleString()} loose matches shown — hide them</a>`
+          : ` · <a href="#" class="results-total__hint" data-toggle-loose="1">${loose.toLocaleString()} weaker portal matches hidden — show them</a>`;
+      }
+    } finally {
+      state.showLooseMatches = wasShowing;
+      filteredAndSortedRows(); // restore the per-row match labels for the real filter
+    }
+  }
+
   let html = `<div class="results-total__main">${esc(headline.main)}</div>`;
-  html += `<div class="results-total__sub">${esc(sub)}${hiddenHint}</div>`;
+  html += `<div class="results-total__sub">${esc(sub)}${hiddenHint}${looseHint}</div>`;
 
   // Comma search: one chip per term with how many of the shown tenders it accounts for
   const searchTerms = typeof SearchCache !== "undefined" && (state.q || "").trim()
@@ -5225,7 +5253,12 @@ function isClosedTender(row) {
 
   // A notice with no deadline that was published over a year ago cannot still be open for bids (Find a
   // Tender 2021-2022 notices were listed under Opportunities as "Active" with "No deadline").
-  if (!row.submission_deadline && !row.deadline_date && typeof days !== "number") {
+  // A "deadline" that is a scraped field label ("Notice Type:" from a PCS page) is no deadline. Other text such as
+  // BOAMP's "Voir avis officiel" still means the portal publishes the date elsewhere, so that stays as it was.
+  const sd = String(row.submission_deadline || "").trim();
+  const hasRealDeadline = typeof days === "number" || !!parseDate(sd) || !!parseDate(row.deadline_date)
+    || (!!sd && !/:\s*$/.test(sd)) || !!row.deadline_date;
+  if (!hasRealDeadline) {
     // With no deadline and no open-looking status there is nothing to bid on.
     if (!/^(active|open|live|established)$/.test(status)) return true;
     const pub = typeof parseDate === "function" ? parseDate(row.date_published) : null;
@@ -5962,6 +5995,7 @@ function filteredAndSortedRows() {
   const parsedKeyword = parseKeywordQuery(qStr, state.keywordScope || "all");
   if (parsedKeyword.query && parsedKeyword.query.toLowerCase() !== "all" && parsedKeyword.query !== "*") {
     rows = rows.filter((row) => {
+      row._loose = false;
       if (matchRowToKeyword(row, parsedKeyword.query, parsedKeyword.scope)) return true;
       // The portal returned this row for the search itself, so it is a hit even though the word is not in the fields shown
       // (all-fields searches only: a title / supplier / buyer search is exactly about those fields).
@@ -5982,7 +6016,10 @@ function filteredAndSortedRows() {
           // title-only portals (no description on the row) may have matched on text we cannot see, so a partial
           // word match is tolerated there; a row with a description that lacks the words is simply off-topic.
           const hasDesc = extractTextFromField(row.description || row.abstract || row.summary || row.scope).length > 40;
-          if (level === "none" || (level === "some" && hasDesc)) return false;
+          if (level === "none" || (level === "some" && hasDesc)) {
+            if (!state.showLooseMatches) return false;
+            row._loose = true;   // shown only when asked for, after the real matches
+          }
         }
         row._match_reason = "portal";
         return true;
@@ -6109,6 +6146,7 @@ function filteredAndSortedRows() {
   const shouldGroup = shouldGroupMatchRoles(rows, parsedKeyword.scope, parsedKeyword.query);
   const copy = [...rows];
   copy.sort((a, b) => {
+    if (!!a._loose !== !!b._loose) return a._loose ? 1 : -1;
     if (shouldGroup) {
       const roleA = getRowMatchRole(a);
       const roleB = getRowMatchRole(b);
@@ -6826,9 +6864,11 @@ function sourceBadgeEl(row) {
 function suggestedSearchTerms(meta, limit = 4) {
   if (!meta) return [];
   const counts = new Map();
-  const text = `${meta._text || ""} ${meta._name || ""}`.toLowerCase().replace(/[^a-z0-9\s]/g, " ");
-  for (const w of text.split(/\s+/)) {
-    if (w.length < 5 || STOPWORDS.has(w) || /^\d+$/.test(w)) continue;
+  const clean = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ");
+  // the company's own name is not something it sells ("aivhub" was the first suggestion for AIVHUB LTD, re-test 3 T8)
+  const ownName = new Set(clean(meta._name).split(/\s+/).filter(Boolean));
+  for (const w of clean(meta._text).split(/\s+/)) {
+    if (w.length < 5 || STOPWORDS.has(w) || ownName.has(w) || /^\d+$/.test(w)) continue;
     counts.set(w, (counts.get(w) || 0) + 1);
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length).slice(0, limit).map(([w]) => w);
@@ -7595,8 +7635,17 @@ function bindTrackPanelNotes(row) {
 
 function dashDaysLeft(deadline, now = Date.now()) {
   if (!deadline) return null;
-  let d = new Date(deadline);
-  if (isNaN(d) && typeof parseDate === "function") d = parseDate(deadline) || d; // "18/11/2026 12:00:00" is not a Date string
+  // Portals publish day first ("01/11/2026 12:00" is 1 November): new Date() reads that as 11 January, so only an ISO
+  // string goes to it (it keeps the time of day); everything else is read day first by parseDate, with the time added back.
+  const s = String(deadline).trim();
+  let d = /^\d{4}-\d{2}-\d{2}/.test(s) ? new Date(s) : null;
+  if (!d && typeof parseDate === "function") {
+    d = parseDate(s);
+    const t = d && s.match(/\s(\d{1,2}):(\d{2})/);
+    if (t) d.setHours(+t[1], +t[2], 0, 0);
+  }
+  if (!d) d = new Date(s);
+  if (isNaN(d)) return null;
   return Math.ceil((d - now) / 86400000);
 }
 
@@ -13477,7 +13526,7 @@ function wireBidResultButtons() {
   document.getElementById("btnBuildGantt")?.addEventListener("click", openGanttPanel);
 
   // ── Wire 🖼️ Methodology Studio button ────────────────────────────────
-  document.getElementById("btnMethodologyStudio")?.addEventListener("click", openMethodologyStudio);
+  document.getElementById("btnMethodologyStudio")?.addEventListener("click", () => openMethodologyStudio(true));
 
   // Reset gantt state for this proposal so stale phases from a previous tender don't block a fresh fetch
   _ganttPhases = [];
@@ -13505,16 +13554,10 @@ function wireBidResultButtons() {
     const title = _bidRow ? (_bidRow.title || 'Project Delivery Timeline') : 'Project Delivery Timeline';
     _ganttSvgStr = _buildGanttSvg(_ganttUnit, _ganttPhases, title);
     _renderGanttPanel(_ganttUnit, _ganttPhases, _ganttSvgStr);
-  } else if (_lastProposal?.bid_response?.technical_methodology) {
-    // Missing phases OR stale pre-fix cache — always re-fetch from AI
-    openGanttPanel();
   }
-
-  // Auto-generate the AI methodology diagram if we have methodology text
-  if (_lastProposal?.bid_response?.technical_methodology) {
-    _methodologyData = null; // clear cache so AI is called fresh
-    openMethodologyStudio();
-  }
+  // Opening a saved or finished proposal must not call the AI (History: "Open one to load its saved result"):
+  // the timeline and the methodology diagram are built only from their own buttons, which show the cost.
+  _methodologyData = null;
 
 
   // Wire input change/keyup listeners on resolved input fields
@@ -16204,6 +16247,17 @@ function getExpiryBadgeHtml(expiryDateStr) {
   }
 }
 
+// Certificates, policies and accreditations expire and tenders reject expired ones; other files do not need a date.
+const EXPIRING_DOC_RE = /iso[\s_-]?\d{4,5}|certificat|insurance|liability|indemnity|cyber[\s_-]?essentials|accredit|chas|safecontractor|constructionline|licen[cs]e/i;
+function docNeedsExpiryDate(doc) {
+  return !!doc && !doc.expiry_date && EXPIRING_DOC_RE.test(String(doc.filename || ""));
+}
+
+// The name a stored document is listed under: the server keeps the file name with spaces and odd characters replaced.
+function docNameKey(name) {
+  return String(name || "").toLowerCase().replace(/[^a-z0-9.]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
 function renderDocExpiryAlertsBanner(documents, containerId = "userDocsAlertBanner") {
   const container = document.getElementById(containerId);
   if (!container) return;
@@ -16214,7 +16268,13 @@ function renderDocExpiryAlertsBanner(documents, containerId = "userDocsAlertBann
   const alerts = [];
 
   (documents || []).forEach(doc => {
-    if (!doc.expiry_date) return;
+    if (!doc.expiry_date) {
+      // a certificate or policy with no expiry date cannot be warned about: say so (Re-test 3 DC2)
+      if (docNeedsExpiryDate(doc)) {
+        alerts.push({ level: "notice", icon: "📅", doc, message: `<strong>"${esc(doc.filename)}"</strong> has no expiry date. Set one (calendar icon) so you are warned 60 days before it runs out.` });
+      }
+      return;
+    }
     try {
       const exp = new Date(doc.expiry_date + (doc.expiry_date.includes("T") ? "" : "T00:00:00"));
       if (isNaN(exp.getTime())) return;
@@ -16264,7 +16324,7 @@ function renderDocExpiryAlertsBanner(documents, containerId = "userDocsAlertBann
           doc,
           message: `Warning: <strong>"${esc(doc.filename)}"</strong> expires in <strong>${diffDays} days</strong> (${formatDocDate(doc.expiry_date)}).`
         });
-      } else if (diffDays <= 30) {
+      } else if (diffDays <= 60) {   // two months' notice: renewing an ISO certificate or an insurance policy takes weeks
         alerts.push({
           level: "notice",
           icon: "🟡",
@@ -17726,6 +17786,14 @@ async function loadAnswerBank() {
     const data = await res.json();
     abState.items = data.items || [];
     renderAnswerBank();
+    // the checklist also counts the uploaded documents: read them once if the Documents panel has not (Re-test 3 AB1)
+    if (!state.userDocuments) {
+      try {
+        const dres = await fetch("/api/user-documents");
+        const d = dres.ok ? await dres.json() : null;
+        if (d && d.ok) { state.userDocuments = d.documents || []; if (abState.view === "checklist") renderAnswerBank(); }
+      } catch (_) { /* the checklist then counts the answers only */ }
+    }
   } catch (e) {
     console.warn("loadAnswerBank error:", e);
     abState.items = [];
@@ -17747,15 +17815,18 @@ function abContextText() {
 function abChecklistHtml() {
   const A = window.AnswerBankAssist;
   if (!A) return "";
-  const status = A.checklistStatus(abState.items, { context: abContextText(), now: Date.now() });
+  const status = A.checklistStatus(abState.items, { context: abContextText(), now: Date.now(), documents: state.userDocuments || [] });
   const sum = A.summary(status);
   const pct = Math.round((sum.covered / Math.max(1, sum.total)) * 100);
   const label = { covered: "In your bank", attention: "Needs attention", missing: "Missing" };
   const rows = status.map(e => {
     const flag = e.flags.filter(f => f.code !== "thin" && f.code !== "stale")[0];
+    const fromDoc = String(e.matches[0] || "").startsWith("doc:");
     const action = e.status === "missing"
       ? `<button type="button" class="ab-attention__btn" data-ab-add="${esc(e.id)}">＋ Add</button>`
-      : `<button type="button" class="ab-attention__btn" data-ab-edit="${e.matches[0]}">Open</button>`;
+      : fromDoc
+        ? `<button type="button" class="ab-attention__btn" data-ab-docs="1">In Documents</button>`
+        : `<button type="button" class="ab-attention__btn" data-ab-edit="${e.matches[0]}">Open</button>`;
     return `<div class="ab-check ab-check--${e.status}">
       <span class="ab-check__dot" aria-hidden="true">${e.status === "covered" ? "✓" : e.status === "attention" ? "!" : "○"}</span>
       <div class="ab-check__main">
@@ -17773,12 +17844,15 @@ function abChecklistHtml() {
 
 function abWireChecklist(list) {
   const A = window.AnswerBankAssist;
-  const status = A.checklistStatus(abState.items, { context: abContextText(), now: Date.now() });
+  const status = A.checklistStatus(abState.items, { context: abContextText(), now: Date.now(), documents: state.userDocuments || [] });
   list.querySelectorAll("[data-ab-add]").forEach(btn => btn.addEventListener("click", () => {
     const e = status.find(x => x.id === btn.dataset.abAdd);
     if (!e) return;
     abState.view = "list";
     abShowForm(null, e.category, e.label, "");
+  }));
+  list.querySelectorAll("[data-ab-docs]").forEach(btn => btn.addEventListener("click", () => {
+    if (typeof openUserDocuments === "function") openUserDocuments();
   }));
   list.querySelectorAll("[data-ab-edit]").forEach(btn => btn.addEventListener("click", () => {
     abState.view = "list";
@@ -19404,6 +19478,7 @@ function closeSupplierIntelligenceModal() {
 // The page's state lives in the address (/suppliers?q=serco, /suppliers/<id>) so a reload, a bookmark or a shared link returns to it.
 const SUPPLIERS_TITLE = "Suppliers · TenderFlow";
 let _supplierPrevTitle = "";
+let _supplierAddressQuery = null;
 function setSupplierAddress(query, supplierId) {
   try {
     if (query === null) {  // leaving the page: back to the address and title it was opened from
@@ -19413,8 +19488,12 @@ function setSupplierAddress(query, supplierId) {
     }
     if (document.title !== SUPPLIERS_TITLE) _supplierPrevTitle = document.title;
     document.title = SUPPLIERS_TITLE;
-    const qs = query ? "?q=" + encodeURIComponent(query) : "";
-    history.replaceState(null, "", "/suppliers" + (supplierId ? "/" + supplierId : "") + qs);
+    _supplierAddressQuery = query;
+    // the selected supplier is in the address too (?id=), so one profile can be bookmarked or shared (Re-test 3 SN8)
+    const parts = [];
+    if (query) parts.push("q=" + encodeURIComponent(query));
+    if (supplierId) parts.push("id=" + encodeURIComponent(supplierId));
+    history.replaceState(null, "", "/suppliers" + (parts.length ? "?" + parts.join("&") : ""));
   } catch (_) { /* no history */ }
 }
 
@@ -19423,12 +19502,63 @@ function setSupplierAddress(query, supplierId) {
 (function restoreSupplierPageFromAddress() {
   const m = /^\/suppliers(?:\/(\d+))?\/?$/.exec(location.pathname || "");
   if (!m) return;
-  const q = new URLSearchParams(location.search || "").get("q") || "";
+  const params = new URLSearchParams(location.search || "");
+  const q = params.get("q") || "";
+  if (!m[1] && /^\d+$/.test(params.get("id") || "")) m[1] = params.get("id");
   const open = () => setTimeout(() => {
     openSupplierIntelligenceModal(q, { reset: true });
     if (m[1]) setTimeout(() => { try { loadSupplierDetail(Number(m[1])); } catch (_) {} }, 600);
   }, 400);
   if (document.readyState === "complete") open(); else window.addEventListener("load", open);
+})();
+
+// Growth Studio, Answer Bank, Documents, History and Pipeline have their own address and title too (Re-test 3 G0). Each is a
+// panel over the page: while it is open the address is /growth, /answers, /documents, /history or /pipeline, and a link to
+// that address opens it. An address the app does not know says so inside the app instead of showing a bare server page.
+const SECTION_ROUTES = [
+  { path: "/growth", title: "Growth Studio · TenderFlow", modal: "growthStudioModal", button: "btnGrowthStudio" },
+  { path: "/answers", title: "Answer Bank · TenderFlow", modal: "abModal", button: "btnAnswerBank" },
+  { path: "/documents", title: "Documents · TenderFlow", modal: "userDocumentsModal", button: "btnUserDocuments" },
+  { path: "/history", title: "History · TenderFlow", modal: "historyModal", button: "btnHistory" },
+  { path: "/pipeline", title: "Pipeline · TenderFlow", modal: "dashboardModal", button: "btnDashboard" },
+];
+const KNOWN_APP_PATHS = /^\/(funding|planning|buyers|suppliers|growth|answers|documents|history|pipeline|buyer-workspace)(\/|$)/;
+(function wireSectionRoutes() {
+  let prevTitle = "";
+  const start = () => {
+    for (const r of SECTION_ROUTES) {
+      const modal = document.getElementById(r.modal);
+      if (!modal) continue;
+      const sync = () => {
+        const open = !modal.classList.contains("hidden");
+        try {
+          if (open) {
+            if (document.title !== r.title) prevTitle = document.title;
+            document.title = r.title;
+            if (location.pathname !== r.path) history.replaceState(null, "", r.path);
+          } else if (location.pathname === r.path) {
+            history.replaceState(null, "", "/");
+            if (document.title === r.title) document.title = prevTitle || "Tender search";
+          }
+        } catch (_) { /* no history */ }
+      };
+      new MutationObserver(sync).observe(modal, { attributes: true, attributeFilter: ["class"] });
+    }
+    const here = SECTION_ROUTES.find((r) => location.pathname === r.path || location.pathname === r.path + "/");
+    if (here) {
+      setTimeout(() => {
+        const btn = document.getElementById(here.button);
+        if (btn && !btn.classList.contains("hidden")) btn.click();
+        else if (typeof window.showToast === "function") window.showToast("That section is not available for your account.");
+      }, 700);
+    } else if (location.pathname !== "/" && !KNOWN_APP_PATHS.test(location.pathname)) {
+      setTimeout(() => {
+        if (typeof window.showToast === "function") window.showToast("Page not found: " + location.pathname + ". Showing Tender search.");
+        try { history.replaceState(null, "", "/"); } catch (_) { /* no history */ }
+      }, 700);
+    }
+  };
+  if (document.readyState === "complete") start(); else window.addEventListener("load", start);
 })();
 
 async function updateSupplierScraperStatus() {
@@ -19598,7 +19728,8 @@ async function fetchAndRenderSuppliersList(query = "", options = {}) {
   const container = $("supplierListContainer");
   if (!container) return;
   const token = ++_supplierListToken;
-  setSupplierAddress(query || "", _selectedSupplierId || 0);
+  // a selection belongs to the search it was made in: a new search starts with none
+  setSupplierAddress(query || "", (query || "") === _supplierAddressQuery ? (_selectedSupplierId || 0) : 0);
   if (_supplierListAbort) _supplierListAbort.abort();
   _supplierListAbort = new AbortController();
   const signal = _supplierListAbort.signal;
@@ -20208,6 +20339,7 @@ async function loadSupplierDetail(supplierId) {
   _supplierDetailInflight = _requestKey;
   _supplierDetailMergedKey = _mergedNow;
   _selectedSupplierId = supplierId;
+  if (_supplierAddressQuery !== null && /^\/suppliers(\/|$)/.test(location.pathname)) setSupplierAddress(_supplierAddressQuery, supplierId);
 
   document.querySelectorAll(".supplier-item-card").forEach(el => {
     if (el.getAttribute("data-supplier-id") == supplierId) {
@@ -24354,6 +24486,17 @@ async function uploadUserDocument(file) {
     return;
   }
 
+  // The same file twice (same name and size) is almost always a double click or a second try (Re-test 3 DC1): ask first.
+  const twin = (state.userDocuments || []).find((d) => docNameKey(d.filename) === docNameKey(file.name) && Number(d.file_size) === file.size);
+  if (twin) {
+    const again = await window.showConfirm(
+      `"${file.name}" is already in your documents (same name and size). Upload it again?`,
+      "Already uploaded",
+      { okText: "Upload again", cancelText: "Cancel", danger: false }
+    );
+    if (!again) return;
+  }
+
   const zone = $("profileUploadZone");
 
   const filter = $("userDocsCompanyFilter");
@@ -25435,7 +25578,7 @@ async function _generateMethodologyDiagram() {
   }
 }
 
-function openMethodologyStudio() {
+function openMethodologyStudio(generateNow = false) {
   const panel = document.getElementById('methodologyStudioPanel');
   if (!panel) return;
 
@@ -25445,10 +25588,10 @@ function openMethodologyStudio() {
     return;
   }
   panel.style.display = 'block';
-  _renderMethodologyStudioPicker();
+  _renderMethodologyStudioPicker(generateNow);
 }
 
-function _renderMethodologyStudioPicker() {
+function _renderMethodologyStudioPicker(generateNow = false) {
   const panel = document.getElementById('methodologyStudioPanel');
   if (!panel) return;
 
@@ -25549,7 +25692,7 @@ function _renderMethodologyStudioPicker() {
   // If we already have data, show it
   if (_methodologyData) {
     _renderMethodologyDiagramOutput(_methodologyData);
-  } else {
+  } else if (generateNow) {
     _generateMethodologyDiagram();
   }
 }

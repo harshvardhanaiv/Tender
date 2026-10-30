@@ -4079,6 +4079,26 @@ def create_app() -> Flask:
         # Planning Leads has its own address (/planning); the page reads it when it loads.
         return app.send_static_file("index.html")
 
+    @app.get("/growth")
+    @app.get("/answers")
+    @app.get("/documents")
+    @app.get("/history")
+    @app.get("/pipeline")
+    def section_pages():
+        # Growth Studio, Answer Bank, Documents, History and Pipeline each have an address (Re-test 3 G0); the page opens the panel.
+        return app.send_static_file("index.html")
+
+    @app.errorhandler(404)
+    def not_found_page(error):
+        # A page address the app does not know shows the app with an in-app "Page not found", not a bare server page.
+        # Files (a dot in the last segment) and the API keep the plain 404.
+        path = request.path or "/"
+        if request.method == "GET" and not path.startswith("/api/") and "." not in path.rsplit("/", 1)[-1]:
+            resp = app.send_static_file("index.html")
+            resp.status_code = 404
+            return resp
+        return error
+
     @app.get("/buyers")
     def buyers_page():
         # Buyer intelligence has its own address (/buyers?q=leeds); the page reads it when it loads.

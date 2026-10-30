@@ -206,12 +206,12 @@ test("selected, dismissed, opted-out and already-in-a-campaign signals say so", 
     "Do not contact", "gs-signal__why", "They asked not to be contacted.");
 });
 
-test("a signal that cannot become a target has no checkbox and a disabled button that says why", () => {
+test("a signal that cannot become a target has no checkbox and no start button, and says why", () => {
   const reason = "No developer company is named on this application, so there is nobody to add to a campaign.";
   const html = V.signalCard({ ...renewal(), key: "development:p1", type: "development", buyer: "Developer not named", contracts: undefined, more_contracts: 0,
     target: { name: null, key: null, targetable: false, reason } }, ctx());
-  has(html, "gs-signal--development", "New development", "gs-signal__select--off", `disabled title="${reason}"`, reason, "gs-signal__why");
-  lacks(html, 'type="checkbox"', 'data-action="start-campaign"');
+  has(html, "gs-signal--development", "New development", "gs-signal__select--off", reason, "gs-signal__why");
+  lacks(html, 'type="checkbox"', 'data-action="start-campaign"', "Start campaign");   // Re-test 3 GS5: no button where there is nobody to add
   has(V.signalCard({ ...renewal(), type: "engagement", key: "engagement:3" }, ctx()), "Market engagement open", "Respond to engagement →");
 });
 

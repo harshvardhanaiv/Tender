@@ -149,7 +149,12 @@ def _role_score(email: str) -> int:
     if looks_personal_email(email):
         return 2
     parts = re.split(r"[._\-]", local)
-    return 1 if any(p in ROLE_WORDS for p in parts) or local in sc.ROLE_LOCALPARTS else 2
+    if any(p in ROLE_WORDS for p in parts) or local in sc.ROLE_LOCALPARTS:
+        return 1
+    # a short run of letters with no vowel ("ppcs@parliament.uk") is a team's initials, not somebody's name (Re-test 3 GS4)
+    if re.fullmatch(r"[a-z]{3,6}", local) and not re.search(r"[aeiou]", local):
+        return 1
+    return 2
 
 
 def pick_best(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:

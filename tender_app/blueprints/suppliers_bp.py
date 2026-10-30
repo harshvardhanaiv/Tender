@@ -607,12 +607,17 @@ def _value_note(ceiling_copy: bool, over_ceiling: bool, is_framework: bool, noti
 
 def _drop_inside_word_matches(suppliers: list[dict[str, Any]], q: str) -> list[dict[str, Any]]:
     """A search of three letters or fewer ("IBM") matches inside longer words ("Gibmaroc", "Leib Medical"). Keep a supplier only when
-    the letters start a word of its name (or match its company number); longer searches are left alone."""
+    the letters are a whole word of its name (Re-test 3: "IBM" must not return "IBMG LTD"); longer searches are left alone."""
     text = (q or "").strip().lower()
     if not text or len(text) > 3 or not re.fullmatch(r"[a-z]+", text):
         return suppliers
-    word_start = re.compile(r"(^|[^a-z0-9])" + re.escape(text))
+    word_start = re.compile(r"(^|[^a-z0-9])" + re.escape(text) + r"($|[^a-z0-9])")
     return [s for s in suppliers if word_start.search((s.get("name") or "").lower())]
+
+
+def _contracts_won(s: dict[str, Any]) -> int:
+    """The "won" number on a card: awards less framework places (Re-test 3 N2: the wins sort used the larger all-in count)."""
+    return max(0, int(s.get("total_awards") or 0) - int(s.get("framework_appointments_count") or 0))
 
 
 def _order_merged(suppliers: list[dict[str, Any]], opts: dict | None, q_key: str = "", q: str = "") -> list[dict[str, Any]]:
@@ -622,7 +627,7 @@ def _order_merged(suppliers: list[dict[str, Any]], opts: dict | None, q_key: str
     if sort == "recent" or len(suppliers) < 2:
         return suppliers
     key_fn = {"value": lambda s: (-(s.get("total_value") or 0), -(s.get("total_awards") or 0)),
-              "wins": lambda s: (-(s.get("total_awards") or 0), -(s.get("total_value") or 0)),
+              "wins": lambda s: (-_contracts_won(s), -(s.get("total_value") or 0)),
               "name": lambda s: ((s.get("name") or "").lower(),)}.get(sort)
     if not key_fn:
         return suppliers
@@ -667,7 +672,8 @@ def _refine_conditions(opts: dict | None, value_expr: str) -> tuple[list[str], l
     return conds, vals
 
 
-def _order_clause(opts: dict | None, exact_q: str | None, q_key: str, value: str, wins: str, recent: str, entity: str | None) -> tuple[str, list[Any]]:
+def _order_clause(opts: dict | None, exact_q: str | None, q_key: str, value: str, wins: str, recent: str, entity: str | None,
+                  framework: str | None = None) -> tuple[str, list[Any]]:
     """ORDER BY text and its parameters.
 
     A typed search ranks the supplier actually named first (same name, or the same name once case, punctuation and Ltd/Limited
@@ -677,7 +683,7 @@ def _order_clause(opts: dict | None, exact_q: str | None, q_key: str, value: str
     sort = (opts or {}).get("sort") or "value"
     base = {
         "value": f"{value} DESC, {wins} DESC",
-        "wins": f"{wins} DESC, {value} DESC",
+        "wins": f"({wins} - {framework}) DESC, {value} DESC" if framework else f"{wins} DESC, {value} DESC",
         "recent": f"{recent} DESC NULLS LAST, {value} DESC",
         "name": "LOWER(s.name) ASC",
     }.get(sort, f"{value} DESC, {wins} DESC")
@@ -796,7 +802,7 @@ def _supplier_page_from_stats(cursor, conn, q_patterns, sme_only, vcse_only, onl
     # pure value/award-count ranking so deep links (and typed searches) resolve to the supplier
     # actually being looked up, not whichever match happens to have the biggest contracts.
     order_sql, order_params = _order_clause(opts, exact_q, (opts or {}).get("q_key") or "", "st.total_value", "st.total_awards",
-                                            "st.latest_award_date", "st.entity_key")
+                                            "st.latest_award_date", "st.entity_key", framework="st.framework_appointments_count")
     params += order_params
 
     sql = f"""
@@ -941,7 +947,8 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
     # from a buyer or tender whose name contains the search text, outranks or buries the supplier
     # actually being looked up (e.g. "GRAHAM", or "Ian Williams Limited" for a search of "ian").
     order_sql, order_params = _order_clause(opts, exact_q, (opts or {}).get("q_key") or "", "COALESCE(g.total_value, 0)",
-                                            "COALESCE(g.total_awards, 0)", "g.latest", "st.entity_key" if use_listable else None)
+                                            "COALESCE(g.total_awards, 0)", "g.latest", "st.entity_key" if use_listable else None,
+                                            framework="COALESCE(g.framework_appointments_count, 0)")
     params += order_params
 
     sql = f"""

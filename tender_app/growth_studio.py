@@ -327,8 +327,42 @@ def category_strength(cat: mr.Category, title: str | None, cpv_code: str | None,
     return "cpv" if cat.cpv else "keyword"
 
 
-def score_renewal(contract: Mapping[str, Any], cat: mr.Category, keywords: frozenset[str]) -> dict[str, Any]:
-    """Timing 35, category 30, profile words 20, evidence 15."""
+# A firm is a plumber or an electrician, not both: a contract for the other trade is not a fit however many CPV codes the chosen
+# service shares (Re-test 3 GS1: a plumbing SME scored 94% for electrical testing). Stems, matched by prefix on both sides.
+TRADES = {
+    "plumbing and heating": ("plumb", "heating", "boiler", "gas ", "pipework", "hvac"),
+    "electrical": ("electric", "eicr", "wiring", "lighting", "fire alarm"),
+    "roofing": ("roof",),
+    "grounds and trees": ("landscap", "tree", "grounds maint", "grass"),
+    "cleaning": ("cleaning", "janitor"),
+    "security": ("security guard", "cctv", "manned guard"),
+}
+OVERSIZE_CAP = 45   # a contract far above the firm's size is a subcontract lead at best: it cannot rank as a high fit
+
+
+def _trades_in(text: str) -> set[str]:
+    low = (text or "").lower() + " "
+    return {name for name, words in TRADES.items() if any(w in low for w in words)}
+
+
+def _profile_trades(keywords: frozenset[str]) -> set[str]:
+    return {name for name, words in TRADES.items() if any(k.startswith(w.strip()) for k in keywords for w in words if len(w.strip()) >= 4)}
+
+
+def bid_ceiling(meta: Mapping[str, Any] | None) -> float | None:
+    """The largest contract a firm could take on alone: ten times its turnover, else a default for its size band
+    (micro £1m, small £5m, medium £25m); None when the profile says neither."""
+    meta = meta or {}
+    from tender_app import funding_fit as ff
+    turnover = ff.parse_money(meta.get("turnover")) if meta.get("turnover") else None
+    if turnover:
+        return 10 * turnover
+    return {"micro": 1e6, "small": 5e6, "medium": 25e6}.get(str(meta.get("enterprise_type") or "").strip().lower())
+
+
+def score_renewal(contract: Mapping[str, Any], cat: mr.Category, keywords: frozenset[str], ceiling: float | None = None) -> dict[str, Any]:
+    """Timing 35, category 30, profile words 20, evidence 15. A contract in another trade, or far above the firm's size
+    (`ceiling`), is capped at a low fit and says why."""
     days_left = contract.get("days_left")
     if days_left is None or days_left < 0:
         timing, timing_note = 0, "End date unknown or already passed"
@@ -374,12 +408,27 @@ def score_renewal(contract: Mapping[str, Any], cat: mr.Category, keywords: froze
     evidence_note = ("The notice gives " + ", ".join(have) if have else "The notice gives little detail") + (
         f" ({', '.join(lack)})" if lack and have else "")
 
-    return _finish([
+    cap_note = None
+    mine = _profile_trades(keywords)
+    theirs = _trades_in(f"{contract.get('title') or ''} {contract.get('cpv_description') or ''}")
+    if mine and theirs and not (mine & theirs):
+        profile = 0
+        cap_note = f"The contract is for {', '.join(sorted(theirs))}; your profile is {', '.join(sorted(mine))}"
+        profile_note = cap_note
+    value = contract.get("value")
+    if ceiling and isinstance(value, (int, float)) and value > ceiling:
+        cap_note = (cap_note + ". " if cap_note else "") + f"At {gbp(value)} it is far above your size: a subcontract opportunity, not one to bid for alone"
+    result = _finish([
         _part("timing", "Timing", timing, 35, timing_note),
         _part("category", "Category", category, 30, category_note),
         _part("profile", "Your profile", profile, 20, profile_note),
         _part("evidence", "Evidence", evidence_points, 15, evidence_note),
     ])
+    if cap_note and result["score"] > OVERSIZE_CAP:
+        result["score"] = OVERSIZE_CAP
+        result["band"] = fit_band(OVERSIZE_CAP)
+        result["parts"].append(_part("limit", "Limit", 0, 0, cap_note + f": the fit is capped at {OVERSIZE_CAP}"))
+    return result
 
 
 # Planning approvals only matter to firms that build, fit out or service buildings. Presets that do,
@@ -420,6 +469,9 @@ def is_screening_opinion(description: str | None) -> bool:
     return bool(_SCREENING_RE.search(description or ""))
 
 
+NO_DEVELOPER_CAP = 40   # research, not a target (Re-test 3 GS5: 70% for a scheme with nobody to add to a campaign)
+
+
 def score_development(row: Mapping[str, Any], strength: str, today: date) -> dict[str, Any]:
     """Scheme 35 (the Planning Leads lead score, scaled), timing 20, category 10, someone to approach 35.
 
@@ -452,13 +504,18 @@ def score_development(row: Mapping[str, Any], strength: str, today: date) -> dic
     approach_note = ("The register names " + ", ".join(named)) if named else "The register names no developer, dwelling count or address"
     if named and not developer:
         approach_note += ", but no developer to approach"
-    return _finish([
+    result = _finish([
         _part("scheme", "Scheme", potential, 35, f"Planning Leads rates this scheme {planning} out of 100 for size, decision, stage and recency"),
         _part("timing", "Timing", timing, 20, timing_note),
         _part("category", "Category", category, 10,
               "Approvals are relevant to " + ("your category" if strength != "keyword" else "the words in your search")),
         _part("approach", "Someone to approach", approach, 35, approach_note),
     ])
+    if not developer and result["score"] > NO_DEVELOPER_CAP:
+        result["score"] = NO_DEVELOPER_CAP
+        result["band"] = fit_band(NO_DEVELOPER_CAP)
+        result["parts"].append(_part("limit", "Limit", 0, 0, f"No developer is named, so there is nobody to approach: the fit is capped at {NO_DEVELOPER_CAP}"))
+    return result
 
 
 def category_relation(a: mr.Category, b: mr.Category) -> str | None:
@@ -574,7 +631,7 @@ def matched_services(cat: mr.Category, entries: Iterable[Mapping[str, Any]]) -> 
 
 
 def renewal_signals(rows: Iterable[Mapping[str, Any]], cat: mr.Category, keywords: frozenset[str], today: date,
-                    authority: str = "all") -> list[dict[str, Any]]:
+                    authority: str = "all", ceiling: float | None = None) -> list[dict[str, Any]]:
     """One signal per buyer from prepared award rows (mr.prepare_row output plus cpv_description)."""
     by_buyer: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for r in rows:
@@ -586,7 +643,7 @@ def renewal_signals(rows: Iterable[Mapping[str, Any]], cat: mr.Category, keyword
         if not entries:
             continue
         for e in entries:
-            e["fit"] = score_renewal(e, cat, keywords)
+            e["fit"] = score_renewal(e, cat, keywords, ceiling)
         entries.sort(key=lambda e: (-e["fit"]["score"], e["days_left"], e["title"]))
         top = entries[0]
         name = Counter(r["buyer"] for r in members).most_common(1)[0][0]
@@ -664,6 +721,9 @@ def development_signals(rows: Iterable[Mapping[str, Any]], strength: str, today:
             },
             "target": (
                 {"name": developer, "key": "dev:" + (mr.canonical_supplier_key(developer) or developer.upper()), "targetable": True, "reason": None}
+                if developer and not is_public_body(developer) else
+                {"name": None, "key": None, "targetable": False,
+                 "reason": "This is a council's own scheme: it will tender it. Watch for the contract notice instead of approaching it as a developer."}
                 if developer else
                 {"name": None, "key": None, "targetable": False,
                  "reason": "No developer company is named on this application, so there is nobody to add to a campaign."}
@@ -1031,6 +1091,7 @@ def build_signals(
     keywords: frozenset[str],
     username: str,
     today: date | None = None,
+    ceiling: float | None = None,
 ) -> dict[str, Any]:
     """Every signal for these filters, best fit first, before the user's own state (dismissed, opted
     out, already in a campaign) is applied. The award and planning queries are cached per filter set."""
@@ -1052,7 +1113,7 @@ def build_signals(
 
         rows, truncated = CACHE.get_or_compute(key, load_renewals)
         notes["truncated"] = truncated
-        signals += renewal_signals(rows, cat, keywords, today, f.authority)
+        signals += renewal_signals(rows, cat, keywords, today, f.authority, ceiling)
 
     if "development" in f.types:
         strength = build_strength(cat)
@@ -1219,6 +1280,29 @@ def message_warnings(subject: str | None, body: str | None) -> list[dict[str, st
     return out
 
 
+_TITLE_TAIL_RE = re.compile(r"\s*[-–—:]\s*(award(ed)?( notice)?|contract award|notice of award|ref\.?[^-–—]*)\s*$", re.IGNORECASE)
+_TITLE_REF_RE = re.compile(r"^\s*[A-Z0-9][A-Z0-9/._-]{3,}\s*[-–—:]\s+")
+
+
+def clean_notice_title(title: str | None) -> str:
+    """A notice title as a person would say it: no "- AWARD" tail and no leading reference number
+    ("PPCS/2024/12 - Works Services - AWARD" becomes "Works Services")."""
+    text = re.sub(r"\s+", " ", str(title or "")).strip()
+    for _ in range(2):
+        text = _TITLE_TAIL_RE.sub("", text).strip()
+    text = _TITLE_REF_RE.sub("", text).strip() if re.search(r"[a-z]{3}", _TITLE_REF_RE.sub("", text)) else text
+    return text.strip(" -–—:")
+
+
+def cut_at_word(text: str, limit: int) -> str:
+    """`text` shortened to at most `limit` characters without cutting a word in two."""
+    if len(text) <= limit:
+        return text
+    if " " not in text[:limit]:
+        return text[:limit]
+    return text[:limit].rsplit(" ", 1)[0].rstrip(",;:-– ") + "…"
+
+
 def sender_fields(profile_name: str | None, profile_text: str | None, meta: Mapping[str, Any] | None, category_label: str) -> dict[str, str]:
     """What a message says about the sender, taken from the company profile as the user wrote it."""
     meta = meta or {}
@@ -1229,7 +1313,7 @@ def sender_fields(profile_name: str | None, profile_text: str | None, meta: Mapp
         "sender_name": str(meta.get("contact_name") or "").strip(),
         "sender_email": str(meta.get("email") or "").strip(),
         "sender_phone": str(meta.get("phone") or "").strip(),
-        "summary": first[:260],
+        "summary": cut_at_word(first, 260),
         "category": category_label,
     }
 
@@ -1282,7 +1366,7 @@ def fields_for_target(target: Mapping[str, Any], sender: Mapping[str, str]) -> d
         contract = (snap.get("contracts") or [{}])[0]
         ends = mr.parse_iso_date(contract.get("ends") or snap.get("date"))
         values.update(
-            contract_title=contract.get("title") or "",
+            contract_title=clean_notice_title(contract.get("title")),
             renewal_date=long_date(ends) or "",
             incumbent=(contract.get("suppliers") or [""])[0] if not contract.get("framework") else "",
             last_award_value=gbp(contract.get("value")) or "",

@@ -198,6 +198,9 @@
       (parts || [])
         .map((p) => {
           const pct = p.max ? Math.round((100 * p.points) / p.max) : 0;
+          if (!p.max) {   // a limit on the score (wrong trade, far above the firm's size, nobody to approach), not a part of it
+            return `<li class="gs-parts__limit"><span class="gs-parts__label">${esc(p.label)}</span><span class="gs-parts__note">${esc(p.note)}</span></li>`;
+          }
           return (
             `<li><span class="gs-parts__label">${esc(p.label)}</span>` +
             `<span class="gs-parts__bar" aria-hidden="true"><i style="width:${pct}%"></i></span>` +
@@ -265,7 +268,7 @@
       : `<span class="gs-signal__select gs-signal__select--off" aria-hidden="true"></span>`;
     const cta = target.targetable
       ? `<button type="button" class="gs-btn gs-btn--primary gs-btn--sm" data-action="start-campaign" data-key="${esc(s.key)}">${esc(t.cta)} →</button>`
-      : `<button type="button" class="gs-btn gs-btn--primary gs-btn--sm" disabled title="${esc(target.reason || "")}">${esc(t.cta)} →</button>`;
+      : "";   // nobody to add to a campaign: no button, the reason is printed on the card
     const restore = state.dismissed
       ? `<button type="button" class="gs-btn gs-btn--ghost gs-btn--sm" data-action="restore" data-key="${esc(s.key)}">Restore</button>`
       : `<button type="button" class="gs-btn gs-btn--ghost gs-btn--sm" data-action="dismiss" data-key="${esc(s.key)}">Dismiss</button>`;

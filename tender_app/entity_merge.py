@@ -25,7 +25,12 @@ _BRACKETED_TRADING_NAME_RE = re.compile(r"\b(LTD|LIMITED|PLC|LLP|LLC|INC)\.?\s*\
 
 
 def entity_name_key(name: str | None) -> str:
-    text = str(name or "").replace("&", " and ").upper().replace("UNITED KINGDOM", "UK")
+    raw = str(name or "")
+    # "Serco Limited; Serco House, Guildford" is Serco Limited with its address pasted into the name field (Re-test 3 SN7)
+    head = raw.split(";", 1)[0].strip()
+    if head and ";" in raw and re.search(r"\b(ltd|limited|plc|llp|inc|llc|group|services)\b", head, re.I):
+        raw = head
+    text = raw.replace("&", " and ").upper().replace("UNITED KINGDOM", "UK")
     text = _LOT_PREFIX_RE.sub("", text.strip())
     text = _TRADING_AS_RE.sub("", _LOT_SUFFIX_RE.sub("", text))
     text = _BRACKETED_TRADING_NAME_RE.sub(r"\1", text)

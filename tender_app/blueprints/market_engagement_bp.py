@@ -69,9 +69,9 @@ def _username() -> str:
 
 @market_engagement_bp.before_request
 def _only_verified_may_plan():
-    """Drafting, inviting and handing over a market engagement is for people who work for the public body (QA W1). Reading and
-    deleting your own plans stays open."""
-    if request.method in ("GET", "HEAD", "OPTIONS", "DELETE") or not _username():
+    """Drafting, inviting, publishing, handing over and deleting a market engagement is for people who work for the public
+    body (QA W1, Re-test 3). Reading stays open."""
+    if request.method in ("GET", "HEAD", "OPTIONS") or not _username():
         return None
     from tender_app import org_verify
     conn = _connect()

@@ -130,8 +130,8 @@
     { id: "qms", label: "Quality management policy or ISO 9001", category: "Quality", level: "common", why: "Evidence for the quality section.", keywords: ["iso 9001", "quality management", "quality policy", "quality assurance"] },
     { id: "bcp", label: "Business continuity plan", category: "Policies & Compliance", level: "common", why: "Buyers ask how service continues if something goes wrong.", keywords: ["business continuity", "disaster recovery"] },
     { id: "fin", label: "Financial standing: last 2 to 3 years' accounts", category: "Financial Standing", level: "essential", why: "Used to test turnover against contract value.", keywords: ["annual accounts", "financial statements", "audited accounts", "balance sheet", "financial standing", "turnover"] },
-    { id: "ref", label: "Case studies and client references", category: "Experience", level: "essential", why: "Past performance is scored in nearly every tender.", keywords: ["case study", "case studies", "reference letter", "testimonial", "client reference", "similar projects"] },
-    { id: "sv", label: "Social value commitments", category: "Social Value", level: "common", why: "Public bodies must weigh social value; a ready answer saves hours.", keywords: ["social value", "community benefit", "apprenticeship"] },
+    { id: "ref", label: "Case studies and client references", category: "Experience", byCategory: true, level: "essential", why: "Past performance is scored in nearly every tender.", keywords: ["case study", "case studies", "reference letter", "testimonial", "client reference", "similar projects"] },
+    { id: "sv", label: "Social value commitments", category: "Social Value", byCategory: true, level: "common", why: "Public bodies must weigh social value; a ready answer saves hours.", keywords: ["social value", "community benefit", "apprenticeship"] },
     { id: "abc", label: "Anti-bribery & corruption policy", category: "Policies & Compliance", level: "common", why: "A standard integrity declaration.", keywords: ["bribery", "corruption", "code of conduct"] },
     { id: "team", label: "Organisation chart and key staff CVs", category: "Team", level: "common", why: "Shows who will deliver the work.", keywords: ["organisation chart", "organization chart", "key personnel", "curriculum vitae", " cv "] },
     { id: "ce", label: "Cyber Essentials certificate", category: "Insurance & Certificates", level: "common", why: "Required by central government for contracts handling personal or sensitive data.", keywords: ["cyber essentials"] },
@@ -177,13 +177,25 @@
   }
 
   // Each checklist entry with a status: "covered", "attention" (covered, but a matching answer is flagged) or "missing".
+  // A file name runs words together ("AIVHUB_LTD_QMS_ISO9001.pdf"): a keyword with a number in it ("iso 9001") is also looked for with
+  // the spaces and punctuation taken out.
+  const squash = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  function keywordHit(item, h, k) {
+    if (has(h, k)) return true;
+    const key = squash(k);
+    return (/\d/.test(k) || (item.isDocument && key.length >= 6)) && squash(h).includes(key);
+  }
+
+  // The documents the user has uploaded count too (Re-test 3 AB1: ISO 9001 was "Missing" with the certificate in Documents), as
+  // do answers filed under the entry's own category when the entry says that is enough (case studies live under Experience).
   function checklistStatus(items, opts) {
     opts = opts || {};
     const sectors = detectSectors(opts.context || "");
     const entries = CHECKLIST.concat(...sectors.map((s) => s.items.map((i) => ({ ...i, sector: s.sector }))));
-    const hay = (items || []).map((it) => ({ it, h: itemHaystack(it) }));
+    const docs = (opts.documents || []).map((d) => ({ id: "doc:" + d.id, file_name: d.filename || d.file_name || "", category: "", question: "", answer: "", isDocument: true }));
+    const hay = (items || []).concat(docs).map((it) => ({ it, h: itemHaystack(it) }));
     return entries.map((e) => {
-      const matches = hay.filter(({ h }) => e.keywords.some((k) => has(h, k)));
+      const matches = hay.filter(({ it, h }) => e.keywords.some((k) => keywordHit(it, h, k)) || (e.byCategory && !it.isDocument && it.category === e.category && String(it.answer || "").trim().length >= 40));
       const flags = matches.flatMap(({ it }) => attentionFlags(it, opts.now).map((f) => ({ ...f, itemId: it.id })));
       const real = flags.filter((f) => f.code !== "thin" && f.code !== "stale");
       const status = !matches.length ? "missing" : real.length ? "attention" : "covered";

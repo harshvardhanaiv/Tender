@@ -88,6 +88,18 @@ test("every checklist entry is well formed", () => {
   }
 });
 
+test("re-test 3 AB1: an uploaded document and an Experience answer both count towards the checklist", () => {
+  const status = (items, documents) => Object.fromEntries(A.checklistStatus(items, { documents, now: NOW.getTime() }).map((e) => [e.id, e.status]));
+  assert.equal(status([], [{ id: 7, filename: "AIVHUB_LTD_QMS_ISO9001.pdf" }]).qms, "covered", "ISO 9001 is in Documents");
+  assert.equal(status([], []).qms, "missing");
+  assert.equal(status([], [{ id: 8, filename: "AIVHUB_LTD_-_ISMS_ISO27001.pdf" }]).iso27 || "n/a", "n/a", "ISO 27001 is only asked of IT firms, so it is not in the base list");
+  const experience = { id: 3, category: "Experience", question: "Describe a similar project", answer: "We delivered a data platform for a county council, cutting reporting time from days to minutes for 40 users." };
+  assert.equal(status([experience], []).ref, "covered", "an Experience answer with a real example is a case study");
+  assert.equal(status([{ ...experience, answer: "Yes." }], []).ref, "missing", "a one-word answer is not");
+  const ids = A.checklistStatus([], { documents: [{ id: 7, filename: "Public_Liability_Insurance.pdf" }], now: NOW.getTime() }).find((e) => e.id === "pli");
+  assert.deepEqual(ids.matches, ["doc:7"]);
+});
+
 (async () => {
   let failed = 0;
   for (const [n, f] of tests) {

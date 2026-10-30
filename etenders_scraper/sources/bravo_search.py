@@ -654,7 +654,12 @@ def _apply_label_text(row: dict[str, Any], text: str) -> None:
         label = lines[i].rstrip(":").lower()
         key = _LABEL_MAP.get(label)
         if key:
-            row[key] = lines[i + 1]
+            nxt = lines[i + 1]
+            # a label with no value is followed straight by the next label ("Deadline:" then "Notice Type:"): that is not its value
+            if nxt.endswith(":") or nxt.rstrip(":").lower() in _LABEL_MAP:
+                i += 1
+                continue
+            row[key] = nxt
             i += 2
             continue
         i += 1
@@ -742,6 +747,8 @@ def fetch_bravo_details(
         title = h1.get_text(" ", strip=True)
     elif soup.title and soup.title.string:
         title = soup.title.string.strip()
+    if _is_generic_title(title):
+        title = ""   # "View Notice" is the page chrome, not the notice: the title already held from the list row stays
 
     def get_section(label_pattern: str, max_chars: int = 4000) -> str:
         m = re.search(label_pattern, full_text, re.I)
@@ -819,6 +826,9 @@ def fetch_bravo_details(
         if dl_m2:
             sub_deadline = dl_m2.group(1).strip()
 
+    if sub_deadline.endswith(":"):
+        sub_deadline = ""   # "Deadline date:" with no value is followed by the next label ("Notice Type:")
+
     enq_deadline = ""
     enq_m = re.search(r"Enquiry deadline\s*\n?([^\n]+)", full_text, re.I)
     if enq_m:
@@ -861,7 +871,10 @@ def fetch_bravo_details(
         "resource_id": resource_id,
         "detail_url": detail_url,
         "title": title,
-        "description": description or full_text[:2000],
+        # never the first lines of the page: that is the cookie banner and the site menu. With no abstract the
+        # description the list row already holds stays (the caller fills empty fields from it); full_text below is
+        # still there for the analysis.
+        "description": description,
         "abstract": abstract,
         "procurement_description": proc_desc,
         "contracting_authority": auth_name,

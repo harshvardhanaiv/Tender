@@ -85,6 +85,29 @@ def test_a_three_letter_search_matches_word_starts_only():
     assert sb._drop_inside_word_matches(rows, "ibm ltd") == rows and sb._drop_inside_word_matches(rows, "") == rows
 
 
+def test_a_three_letter_search_is_a_whole_word_not_a_longer_word():
+    """Re-test 3 N4: 'IBM' returned 'IBMG LTD trading as Grant & Stone'."""
+    rows = [{"name": "IBM United Kingdom Limited"}, {"name": "IBMG LTD trading as Grant & Stone Ltd"}, {"name": "UK IBM Services"}]
+    assert [r["name"] for r in sb._drop_inside_word_matches(rows, "IBM")] == ["IBM United Kingdom Limited", "UK IBM Services"]
+
+
+def test_wins_sort_uses_the_contracts_won_on_the_card():
+    """Re-test 3 N2: engineering sorted by wins read 18 above 20 and 24 because framework places were counted in the sort."""
+    cards = [{"name": "Jackson Civil Engineering", "total_awards": 60, "framework_appointments_count": 42, "total_value": 1},
+             {"name": "Farid Hillend", "total_awards": 24, "framework_appointments_count": 4, "total_value": 1},
+             {"name": "Balfour Beatty", "total_awards": 30, "framework_appointments_count": 6, "total_value": 1}]
+    ordered = sb._order_merged(cards, {"sort": "wins"})
+    won = [c["total_awards"] - c["framework_appointments_count"] for c in ordered]
+    assert won == sorted(won, reverse=True) and ordered[0]["name"] == "Balfour Beatty", [c["name"] for c in ordered]
+
+
+def test_an_address_pasted_into_a_name_does_not_make_a_second_supplier():
+    """Re-test 3 SN7: 'Serco Limited; Serco House,' was listed as its own supplier."""
+    from tender_app.entity_merge import entity_name_key
+    assert entity_name_key("Serco Limited; Serco House,") == entity_name_key("Serco Limited")
+    assert entity_name_key("Smith; Jones") != entity_name_key("Smith"), "a name that is not a company with an address is left alone"
+
+
 def test_merged_cards_are_ordered_by_the_figures_they_show():
     """QA N2: 'sort by wins' put 694 awards above 1,628 because the order was set before records were merged."""
     cards = [{"name": "Specialist Computer Centres PLC", "total_awards": 694, "total_value": 5e8}, {"name": "Softcat PLC", "total_awards": 1628, "total_value": 9e8},

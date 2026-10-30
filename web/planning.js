@@ -363,6 +363,8 @@
       if (controller !== view.searchController) return;
       Object.assign(view, { rows: data.results, total: data.total, page: data.page, pages: data.pages });
       renderResults();
+      // the lead open in the detail panel is not in a new list: clear it rather than show a scheme the search does not contain (PN2)
+      if (page === 1 && view.selectedId && !view.rows.some((r) => r.id === view.selectedId)) clearDetail();
       list.scrollTop = 0;
       if (view.mode === "map" && page === 1) loadMap();
       if (page === 1 && filtered && view.creditCost > 0 && typeof window.refreshCredits === "function") {
@@ -486,6 +488,15 @@
 
       <p class="planning-source">Source: UK PlanIt, from the council's public planning register. Planning registers do not publish contract values, so none is shown or estimated. Check the council portal before relying on any detail.</p>`;
     byId("planningDetail").scrollTop = 0;
+  }
+
+  function clearDetail() {
+    view.selectedId = null;
+    view.detailController?.abort();
+    const panel = byId("planningDetail");
+    if (view.emptyDetailHtml) panel.innerHTML = view.emptyDetailHtml;
+    panel.removeAttribute("aria-busy");
+    profileNote();
   }
 
   async function showDetail(id) {
@@ -941,7 +952,10 @@
 
   // Planning leads are schemes that will need builders and trades. For a company whose profile mentions none of that, say who the
   // list is for instead of ranking housing schemes as if they were its leads (re-test P5); for one that does, name the trades.
-  const BUILD_WORDS = /\b(construction|building|builder|civil|groundwork|scaffold|roofing|plumbing|electrical|mechanical|m&e|drainage|surfacing|driveway|paving|landscap|fit[- ]?out|joinery|plastering|demolition|facilities management|architect|surveyor|engineering|developer|housebuilder)\w*/gi;
+  const BUILD_WORDS = /\b(construction|building|builder|civil|groundwork|scaffold|roofing|plumbing|electrical|mechanical|m&e|drainage|surfacing|driveway|paving|landscap|fit[- ]?out|joinery|plastering|demolition|facilities management|architectural|surveyor|civil engineering|structural engineering|property developer|housing developer|housebuilder)\w*/gi;
+  // "developer" in a software profile is not a property developer (re-test 3 PN1): only building words count, and an IT profile is
+  // pointed at the schemes that really need it.
+  const IT_WORDS = /\b(software|cloud|cyber|digital|data|analytics|saas|it services|technology)\b/i;
   function profileNote() {
     const el = byId("planningProfileNote");
     if (!el) return;
@@ -953,7 +967,7 @@
     el.classList.remove("hidden");
     el.textContent = found.length
       ? `Matched to your profile (${meta._name || "selected profile"}): your services mention ${found.join(", ")}, so large schemes here are likely to need them.`
-      : `These leads suit construction, trades and property services. Your profile (${meta._name || "selected profile"}) does not mention any, so treat this list as market context, not as leads for your business.`;
+      : `These leads suit construction, trades and property services. Your profile (${meta._name || "selected profile"}) does not mention any, so treat this list as market context, not as leads for your business.${IT_WORDS.test(text) ? " For an IT business the useful schemes are those that need technology: try a search for “data centre”." : ""}`;
   }
 
   // The section has its own address and title (re-test P7: it stayed on "/" and "Tender search").
@@ -967,6 +981,7 @@
     try { if (location.pathname !== "/planning") history.replaceState(null, "", "/planning"); } catch (_) { /* no history */ }
     if (view.initialised) return;
     view.initialised = true;
+    view.emptyDetailHtml = byId("planningDetail").innerHTML;
     loadStats();
     loadAuthorities();
     search(1);

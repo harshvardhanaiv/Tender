@@ -298,7 +298,7 @@ def _campaigns_by_buyer(conn, username: str, pid: int) -> dict[str, list[dict[st
 
 
 def _signals_for(conn, username: str, profile: dict[str, Any] | None, f: gs.Filters) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    built = gs.build_signals(_connect, f, _keywords(profile), username)
+    built = gs.build_signals(_connect, f, _keywords(profile), username, ceiling=gs.bid_ceiling(profile["meta"] if profile else None))
     pid = profile["id"] if profile else 0
     signals = gs.apply_user_state(
         built["signals"], _dismissed(conn, username, pid), _opted_out(conn, username), _campaigns_by_buyer(conn, username, pid)

@@ -476,7 +476,8 @@ def test_development_signals_follow_the_fixtures():
     assert keys == ["development:zz_growth_test_1", "development:zz_growth_test_8", "development:zz_growth_test_2"], \
         "screening opinion, undecided, minor works, small and stale schemes are all left out"
     one, personal, unnamed = r["signals"]
-    assert (one["fit"], personal["fit"], unnamed["fit"]) == (93, 63, 63)
+    # a scheme with no developer company is research, not a target: capped at gs.NO_DEVELOPER_CAP (Re-test 3 GS5; it was 63)
+    assert (one["fit"], personal["fit"], unnamed["fit"]) == (93, 40, 40)
     assert one["buyer"] == "ZZ Growth Test Homes Ltd" and one["target"] == {"name": "ZZ Growth Test Homes Ltd", "key": "dev:ZZ GROWTH TEST HOMES", "targetable": True, "reason": None}
     assert one["headline"] == "150 dwellings at Land at Test Lane 1 approved 4 weeks ago" and one["authority"] == "Planning authority: ZZ Growth Test Authority"
     assert "Planning agent: ZZ Growth Agent LLP." in one["detail"] and one["links"] == [{"label": "Planning record", "url": "https://example.org/zz-plan/1"}]
