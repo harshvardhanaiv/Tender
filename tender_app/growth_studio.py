@@ -358,7 +358,15 @@ TRADES = {
     "cleaning": ("cleaning", "janitor"),
     "security": ("security guard", "cctv", "manned guard"),
 }
-OVERSIZE_CAP = 45   # a contract far above the firm's size is a subcontract lead at best: it cannot rank as a high fit
+TRADE_CPV = {
+    "plumbing and heating": ("45330", "45331000", "45331100", "45332", "50720", "42160", "44621"),
+    "electrical": ("4531", "5071", "3151"),
+    "roofing": ("4526",),
+    "grounds and trees": ("7731", "0310"),
+    "cleaning": ("9091",),
+    "security": ("7961", "7971"),
+}
+OVERSIZE_CAP = 45  # a contract far above the firm's size is a subcontract lead at best: it cannot rank as a high fit
 
 
 def _trades_in(text: str) -> set[str]:
@@ -436,6 +444,15 @@ def score_renewal(contract: Mapping[str, Any], cat: mr.Category, keywords: froze
         profile = 0
         cap_note = f"The contract is for {', '.join(sorted(theirs))}; your profile is {', '.join(sorted(mine))}"
         profile_note = cap_note
+    elif mine and not theirs:
+        # The contract names no trade, so a shared word such as "works" proves nothing: category and profile points are earned only
+        # by a CPV code in one of the firm's trades (Re-test 4 GS1: a plumber at 88% for ventilation and decarbonisation works).
+        code = str(contract.get("cpv") or "")
+        if not any(code.startswith(p) for t in mine for p in TRADE_CPV.get(t, ())):
+            category, category_note = 0, "The contract names none of your trades and its CPV code is outside them"
+            profile, profile_note = 0, "No trade of yours is named in the contract"
+        else:
+            profile = min(profile, 8)
     value = contract.get("value")
     if ceiling and isinstance(value, (int, float)) and value > ceiling:
         cap_note = (cap_note + ". " if cap_note else "") + f"At {gbp(value)} it is far above your size: a subcontract opportunity, not one to bid for alone"
@@ -493,7 +510,11 @@ def is_screening_opinion(description: str | None) -> bool:
 NO_DEVELOPER_CAP = 40   # research, not a target (Re-test 3 GS5: 70% for a scheme with nobody to add to a campaign)
 
 
-def score_development(row: Mapping[str, Any], strength: str, today: date) -> dict[str, Any]:
+COUNCIL_SCHEME_CAP = 35
+DEVELOPMENT_CAP = 80
+
+
+def score_development(row: Mapping[str, Any], strength: str, today: date, public_body: bool = False) -> dict[str, Any]:
     """Scheme 35 (the Planning Leads lead score, scaled), timing 20, category 10, someone to approach 35.
 
     Growth Studio is for outreach, so a scheme with no developer named can never rank like one with a
@@ -536,6 +557,15 @@ def score_development(row: Mapping[str, Any], strength: str, today: date) -> dic
         result["score"] = NO_DEVELOPER_CAP
         result["band"] = fit_band(NO_DEVELOPER_CAP)
         result["parts"].append(_part("limit", "Limit", 0, 0, f"No developer is named, so there is nobody to approach: the fit is capped at {NO_DEVELOPER_CAP}"))
+    elif developer and public_body and result["score"] > COUNCIL_SCHEME_CAP:
+        result["score"] = COUNCIL_SCHEME_CAP
+        result["band"] = fit_band(COUNCIL_SCHEME_CAP)
+        result["parts"].append(_part("limit", "Limit", 0, 0, f"The applicant is a public body, the planning authority rather than a client to approach: the fit is capped at {COUNCIL_SCHEME_CAP}"))
+    elif developer and result["score"] > DEVELOPMENT_CAP:
+        # an approval does not say which package a trade would win, so it cannot rank with a named contract (Re-test 4 GS2: 95-97%)
+        result["score"] = DEVELOPMENT_CAP
+        result["band"] = fit_band(DEVELOPMENT_CAP)
+        result["parts"].append(_part("limit", "Limit", 0, 0, f"The package your trade would win is not known until the developer tenders: the fit is capped at {DEVELOPMENT_CAP}"))
     return result
 
 
@@ -695,7 +725,8 @@ def renewal_signals(rows: Iterable[Mapping[str, Any]], cat: mr.Category, keyword
 
 def _applicant(row: Mapping[str, Any]) -> str | None:
     """The developer company named on the application, never an individual."""
-    company = re.sub(r"\s+", " ", str(row.get("applicant_company") or "")).strip()
+    from etenders_scraper.planning import applicant as _app
+    company = _app.resolve(row)[0] or ""
     if not company or (_PERSONAL_TITLE_RE.match(company) and not _COMPANY_FORM_RE.search(company)):
         return None
     return company
@@ -707,8 +738,8 @@ def development_signals(rows: Iterable[Mapping[str, Any]], strength: str, today:
         decided = row.get("decided_date")
         if not isinstance(decided, date) or decided > today or is_screening_opinion(row.get("description")):
             continue
-        fit = score_development(row, strength, today)
         developer = _applicant(row)
+        fit = score_development(row, strength, today, public_body=bool(developer and is_public_body(developer)))
         dwellings = row.get("n_dwellings") or 0
         scheme = (f"{dwellings:,} dwellings" if dwellings > 1 else "a major scheme" if row.get("app_size") == "Large" else "a scheme")
         scheme_text = f"{scheme} at {row['address'].strip()}" if (row.get("address") or "").strip() else f"{scheme} in {row.get('authority')}"
@@ -1310,11 +1341,25 @@ def cut_at_word(text: str, limit: int) -> str:
     return text[:limit].rsplit(" ", 1)[0].rstrip(",;:-– ") + "…"
 
 
+def services_phrase(profile_text: str | None, meta: Mapping[str, Any] | None) -> str:
+    """What the firm does, in its own trade words ("Plumbing and heating"), for a message subject; "" when the profile names no trade (the subject then keeps the {{category}} merge field)."""
+    trades = sorted(_profile_trades(profile_keywords(profile_text, meta)))
+    if not trades:
+        return ""
+    text = " and ".join(trades[:2]) if len(trades) > 1 else trades[0]
+    return text[:1].upper() + text[1:]
+
+
 def sender_fields(profile_name: str | None, profile_text: str | None, meta: Mapping[str, Any] | None, category_label: str) -> dict[str, str]:
     """What a message says about the sender, taken from the company profile as the user wrote it."""
     meta = meta or {}
     text = re.sub(r"\s+", " ", str(profile_text or "")).strip()
     first = re.split(r"(?<=[.!?])\s", text, maxsplit=1)[0] if text else ""
+    if len(first) > 260 and " " in first[:260]:
+        # a long first sentence is ended at its last comma or word inside the limit with a full stop, never mid-word (Re-test 4 GS3)
+        head = first[:260]
+        head = head.rsplit(",", 1)[0] if "," in head[120:] else head.rsplit(" ", 1)[0]
+        first = head.rstrip(",;:-– ") + "."
     return {
         "company_name": str(meta.get("org_name") or profile_name or "").strip(),
         "sender_name": str(meta.get("contact_name") or "").strip(),
@@ -1322,6 +1367,7 @@ def sender_fields(profile_name: str | None, profile_text: str | None, meta: Mapp
         "sender_phone": str(meta.get("phone") or "").strip(),
         "summary": cut_at_word(first, 260),
         "category": category_label,
+        "services": services_phrase(profile_text, meta),
     }
 
 
@@ -1330,10 +1376,11 @@ def default_message(signal_type: str, sender: Mapping[str, str]) -> dict[str, st
     says about itself is written in, from the company profile, so nothing is invented."""
     company = sender.get("company_name") or "our company"
     about = sender.get("summary") or ""
+    services = sender.get("services") or "{{category}}"
     sign_off = "\n".join(x for x in ("Kind regards,", sender.get("sender_name"), company if sender.get("sender_name") else None,
                                       sender.get("sender_phone"), sender.get("sender_email")) if x)
     if signal_type == "development":
-        subject = "{{category}} for {{scheme_summary}}"
+        subject = f"{services} for {{{{scheme_summary}}}}"
         opening = ("We noticed that planning permission was granted on {{approval_date}} for {{scheme_summary}} "
                    "({{planning_authority}}).")
         ask = ("We would welcome the chance to be considered for {{category}} packages as the project moves towards "
@@ -1350,7 +1397,7 @@ def default_message(signal_type: str, sender: Mapping[str, str]) -> dict[str, st
         ask = ("We would like to take part and share what we have learned delivering {{category}} for public sector "
                "buyers. Please let us know the best way to respond.")
     else:
-        subject = "{{category}} support ahead of your contract renewal"
+        subject = f"{services} support ahead of your contract renewal"
         opening = "We noticed that {{buyer_name}}'s contract “{{contract_title}}” is due to end on {{renewal_date}}."
         ask = ("We would welcome the chance to be considered when this goes back to market, and are happy to share "
                "references and accreditations or to answer any questions you have before then.")

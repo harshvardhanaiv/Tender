@@ -115,7 +115,70 @@ def _fetch_buyer_contact_info(cursor, conn, authority_name: str) -> dict[str, st
                     break
         if contact_info["email"] != "Not available" and contact_info["phone"] != "Not available":
             break
+    if "Not available" in contact_info.values():
+        # Re-test 4 B8: Leeds City Council showed all four fields empty. The contact block of its Find a Tender and Contracts Finder
+        # notices (kept in tender_notices) and an inbox found earlier for the buyer fill what the searched notices did not.
+        for fill in (_contact_from_indexed_notices, _contact_from_lookup_cache):
+            try:
+                fill(cursor, conn, authority_name, contact_info)
+            except Exception:
+                conn.rollback()
+            if "Not available" not in contact_info.values():
+                break
     return contact_info
+
+
+def _unset(value: Any) -> bool:
+    return not value or value == "Not available"
+
+
+def _contact_from_indexed_notices(cursor, conn, authority_name: str, info: dict[str, str]) -> None:
+    """The buyer's own contact point (email, telephone, website, address) as the OCDS notices in tender_notices publish it. Only what a
+    notice states is used."""
+    _execute(cursor, conn, f"""
+        SELECT raw FROM tender_notices
+        WHERE source IN ('find_tender', 'contracts_finder') AND {_norm_auth_sql("contracting_authority")} = {_norm_auth_sql("?")}
+        ORDER BY published_at DESC NULLS LAST LIMIT 40
+    """, [authority_name])
+    target = _norm_key_py(authority_name)
+    for (raw,) in cursor.fetchall():
+        release = raw if isinstance(raw, dict) else json.loads(raw)
+        for party in release.get("parties") or []:
+            if "buyer" not in (party.get("roles") or []) or _norm_key_py(party.get("name") or "") != target:
+                continue
+            point = party.get("contactPoint") or {}
+            if _unset(info["email"]) and point.get("email"):
+                info["email"] = str(point["email"]).strip()
+            if _unset(info["phone"]) and point.get("telephone"):
+                info["phone"] = str(point["telephone"]).strip()
+            site = point.get("url") or (party.get("details") or {}).get("url")
+            if _unset(info["website"]) and site:
+                info["website"] = str(site).strip()
+            addr = party.get("address") or {}
+            line = ", ".join(str(addr[k]).strip() for k in ("streetAddress", "locality", "postalCode") if addr.get(k))
+            if _unset(info["address"]) and line:
+                info["address"] = line
+        if "Not available" not in info.values():
+            return
+
+
+def _norm_key_py(name: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", " ", re.sub(r"^THE\s+", "", (name or "").upper().replace("&", " AND "))).strip()
+
+
+def _contact_from_lookup_cache(cursor, conn, authority_name: str, info: dict[str, str]) -> None:
+    """An inbox or website Growth Studio's contact lookup already found for this buyer."""
+    from tender_app import market_radar as mr
+    key = mr.canonical_buyer_key(authority_name)
+    if not key:
+        return
+    _execute(cursor, conn, "SELECT email, website FROM buyer_contact_cache WHERE buyer_key = ? AND status = 'found'", [key])
+    row = cursor.fetchone()
+    if row:
+        if _unset(info["email"]) and row[0]:
+            info["email"] = str(row[0])
+        if _unset(info["website"]) and row[1]:
+            info["website"] = str(row[1])
 
 
 def _fetch_open_opportunities(cursor, conn, authority_name: str, limit: int = 25) -> list[dict[str, Any]]:
@@ -312,6 +375,31 @@ def _buyer_locations() -> dict[str, tuple[float, float, str]]:
     return loaded
 
 
+_PLACES_TTL_S = 3600
+_places_cache: dict[str, Any] = {"at": 0.0, "index": {}}
+
+
+def _place_index() -> dict[str, Any]:
+    """Place words (planning authorities) -> centre, for a buyer whose own name carries the place (Re-test 4 B6); kept an hour."""
+    now = time.time()
+    if now - _places_cache["at"] < _PLACES_TTL_S:
+        return _places_cache["index"]
+    index = _places_cache["index"]
+    try:
+        from tender_app import buyer_places
+        conn = _get_connection()
+        try:
+            cur = conn.cursor()
+            index = buyer_places.place_index(cur)
+            cur.close()
+        finally:
+            conn.close()
+    except Exception:
+        pass   # keep the last good copy; a failed read is tried again in an hour
+    _places_cache.update(at=now, index=index)
+    return index
+
+
 def resolve_authority_coords(auth_name: str, existing_lat: float | None, existing_lon: float | None) -> tuple[float, float, bool]:
     """Resolves buyer coordinates using existing DB lat/lon or falling back to authority
     name keyword matching. Returns (lat, lon, is_approximate) — is_approximate is True
@@ -345,6 +433,10 @@ def resolve_authority_coords(auth_name: str, existing_lat: float | None, existin
     match = best_match(LONDON_BOROUGH_COORDS) or best_match(UK_CITY_COORDS)
     if match:
         return (match[0], match[1], True)
+    from tender_app import buyer_places
+    placed = buyer_places.locate_by_place(auth_name, _place_index())
+    if placed:
+        return (placed[0], placed[1], True)   # the centre of the area it names: approximate
     return (0.0, 0.0, True)
 
 
@@ -1183,6 +1275,29 @@ def _buyer_items_from_stats(cursor, conn, q: str, buyer_type_filter: str, min_sp
     """Feed rows from buyer_stats: the same fields the live aggregate returns, without
     aggregating every award. Searching matches the buyer's name only; text on the awards (CPV
     descriptions) is what the exact path adds."""
+    # The same rows are read for every user and every sort, and buyer_stats only changes on a rebuild: keep them a few minutes
+    # (Re-test 4 B7: reading them took 0.5 to 2 s of every request).
+    cache_key = ("stats", q, buyer_type_filter, float(min_spend or 0), division) if keys is None else None
+    if cache_key is not None:
+        hit = _FEED_ITEMS_CACHE.get(cache_key)
+        if hit and time.time() - hit[0] < _FEED_ITEMS_TTL_S:
+            return hit[1]
+    items = _buyer_items_from_stats_uncached(cursor, conn, q, buyer_type_filter, min_spend, keys, division)
+    if cache_key is not None:
+        if len(_FEED_ITEMS_CACHE) >= 40:
+            _FEED_ITEMS_CACHE.clear()
+        _FEED_ITEMS_CACHE[cache_key] = (time.time(), items)
+    return items
+
+
+_FEED_ITEMS_CACHE: dict[Any, tuple[float, Any]] = {}
+_FEED_ITEMS_TTL_S = 300.0
+_FEED_RESPONSE_CACHE: dict[Any, tuple[float, Any]] = {}
+_FEED_RESPONSE_TTL_S = 120.0
+
+
+def _buyer_items_from_stats_uncached(cursor, conn, q: str, buyer_type_filter: str, min_spend: float, keys: list[str] | None = None,
+                                     division: str | None = None):
     where = ["total_spend >= ?"]
     params: list[Any] = [min_spend]
     if keys is not None:  # the exact search picked these buyers; their figures still come from buyer_stats
@@ -1199,13 +1314,22 @@ def _buyer_items_from_stats(cursor, conn, q: str, buyer_type_filter: str, min_sp
     if buyer_type_filter and buyer_type_filter != "all":
         where.append("LOWER(TRIM(buyer_type)) = LOWER(TRIM(?))")
         params.append(buyer_type_filter)
-    _execute(cursor, conn, f"""
-        SELECT authority_name, buyer_type, total_contracts, total_spend, unique_suppliers,
-               next_renewal_date, latitude, longitude, cpv_divisions, cpv_shares, next_renewal_actionable,
-               to_jsonb(buyer_stats) -> 'renewals_by_division' AS renewals_by_division,  -- null until the first rebuild adds the column
-               to_jsonb(buyer_stats) -> 'cpv_spend' AS cpv_spend, to_jsonb(buyer_stats) ->> 'next_renewal_title' AS next_renewal_title
-        FROM buyer_stats WHERE {" AND ".join(where)}
-    """, params)
+    # The three late columns are read directly (to_jsonb(buyer_stats) turned every whole row into JSON for each of them); an older
+    # table without them takes the slower form.
+    for late in ("renewals_by_division, cpv_spend, next_renewal_title",
+                 "to_jsonb(buyer_stats) -> 'renewals_by_division' AS renewals_by_division, to_jsonb(buyer_stats) -> 'cpv_spend' AS cpv_spend, "
+                 "to_jsonb(buyer_stats) ->> 'next_renewal_title' AS next_renewal_title"):
+        try:
+            _execute(cursor, conn, f"""
+                SELECT authority_name, buyer_type, total_contracts, total_spend, unique_suppliers,
+                       next_renewal_date, latitude, longitude, cpv_divisions, cpv_shares, next_renewal_actionable, {late}
+                FROM buyer_stats WHERE {" AND ".join(where)}
+            """, params)
+            break
+        except Exception:
+            conn.rollback()
+    else:
+        return []
     cols = [d[0] for d in cursor.description]
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
@@ -1238,6 +1362,113 @@ def _buyer_did_you_mean(cursor, conn, q: str) -> dict[str, str] | None:
     lowered = {n.lower(): n for n in _buyer_names_cache["names"]}
     hit = difflib.get_close_matches(term, list(lowered), n=1, cutoff=0.8)
     return {"name": lowered[hit[0]]} if hit and hit[0] != term else None
+
+
+_TOP_SUPPLIERS_TABLE_READY = False
+_TOP_SUPPLIERS_KEEP_DAYS = 7
+
+
+def _top_suppliers_table(cursor, conn) -> bool:
+    """The small table holding each buyer's two main suppliers, created on first use (not at start-up, where schema work can deadlock)."""
+    global _TOP_SUPPLIERS_TABLE_READY
+    if _TOP_SUPPLIERS_TABLE_READY:
+        return True
+    try:
+        cursor.execute("CREATE TABLE IF NOT EXISTS buyer_top_suppliers (authority_name TEXT PRIMARY KEY, suppliers JSONB NOT NULL, "
+                       "computed_at TIMESTAMPTZ NOT NULL DEFAULT now())")
+        conn.commit()
+        _TOP_SUPPLIERS_TABLE_READY = True
+    except Exception:
+        conn.rollback()
+    return _TOP_SUPPLIERS_TABLE_READY
+
+
+def _stored_top_suppliers(cursor, conn, names: list[str]) -> dict[str, list[str]]:
+    if not names or not _top_suppliers_table(cursor, conn):
+        return {}
+    try:
+        _execute(cursor, conn, f"SELECT authority_name, suppliers FROM buyer_top_suppliers WHERE authority_name = ANY(?) "
+                               f"AND computed_at > now() - interval '{_TOP_SUPPLIERS_KEEP_DAYS} days'", [list(names)])
+        return {r[0]: [str(s) for s in (r[1] or [])] for r in cursor.fetchall()}
+    except Exception:
+        conn.rollback()
+        return {}
+
+
+def _store_top_suppliers(cursor, conn, found: dict[str, list[str]]) -> None:
+    if not found or not _top_suppliers_table(cursor, conn):
+        return
+    try:
+        for name, suppliers in found.items():
+            _execute(cursor, conn, "INSERT INTO buyer_top_suppliers (authority_name, suppliers, computed_at) VALUES (?, ?::jsonb, now()) "
+                                   "ON CONFLICT (authority_name) DO UPDATE SET suppliers = EXCLUDED.suppliers, computed_at = now()",
+                     [name, json.dumps(list(suppliers))])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+
+
+def _top_suppliers_for(cursor, conn, names: list[str]) -> dict[str, list[str]]:
+    """The two main suppliers of each named buyer, from the same de-duplicated awards and tidy-up as the buyer profile (QA B8).
+    Matched on the normalised key (see _norm_auth_sql), not an exact string: `names` are one casing variant of each buyer, and which
+    variant a card carries must not change who is listed. Framework ceilings are left out of the ranking value, as in get_buyer_detail."""
+    from tender_app import stats as _stats
+    _execute(cursor, conn, f"SELECT t.n, {_norm_auth_sql('t.n')} FROM UNNEST(?::text[]) AS t(n)", [names])
+    norm_to_auth = {norm: n for n, norm in cursor.fetchall()}
+    placeholders = ",".join([_norm_auth_sql("?")] * len(names))
+    sup_sql = f"""
+        WITH {_stats.deduped_cte(cursor)}
+        SELECT {_norm_auth_sql("authority_name")} as an_norm, supplier_name,
+               COUNT(DISTINCT id) as contracts_won,
+               SUM(CASE WHEN is_framework = 1 OR contract_value < 0 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE contract_value END) as total_value,
+               SUM(CASE WHEN is_framework = 1 THEN contract_value ELSE 0 END) as framework_total_ceiling,
+               COUNT(CASE WHEN is_framework = 1 THEN 1 END) as framework_appointments,
+               MAX(date_signed) as last_award_date
+        FROM deduped_awards
+        WHERE {_norm_auth_sql("authority_name")} IN ({placeholders}) AND supplier_name IS NOT NULL AND supplier_name != ''
+        GROUP BY {_norm_auth_sql("authority_name")}, supplier_name
+    """
+    _execute(cursor, conn, sup_sql, names)
+    by_buyer: dict[str, list[dict[str, Any]]] = {}
+    for row in cursor.fetchall():
+        rec = _row_to_dict(cursor, row)
+        by_buyer.setdefault(norm_to_auth.get(rec["an_norm"], rec["an_norm"]), []).append(rec)
+    return {an: [r["supplier_name"] for r in _tidy_top_suppliers(rows, limit=2)] for an, rows in by_buyer.items()}
+
+
+_TOP_SUPPLIERS_FILLING = False
+
+
+def _fill_top_suppliers_in_background(names: list[str]) -> None:
+    global _TOP_SUPPLIERS_FILLING
+    if _TOP_SUPPLIERS_FILLING:
+        return
+    _TOP_SUPPLIERS_FILLING = True
+
+    def work() -> None:
+        global _TOP_SUPPLIERS_FILLING
+        conn = None
+        try:
+            from tender_app import stats as _stats
+            conn = _get_connection()
+            cur = conn.cursor()
+            if _stats.award_values_ready(cur):
+                cur.execute(_stats.BUYER_NORM_INDEX_SQL)
+                conn.commit()
+            found = _top_suppliers_for(cur, conn, names)
+            _store_top_suppliers(cur, conn, {n: found.get(n, []) for n in names})
+        except Exception:
+            pass
+        finally:
+            _TOP_SUPPLIERS_FILLING = False
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+
+    import threading
+    threading.Thread(target=work, daemon=True, name="buyer-top-suppliers").start()
 
 
 @buyers_bp.route("/api/buyers/opportunity-feed", methods=["GET"])
@@ -1380,6 +1611,14 @@ def get_opportunity_feed():
             tier = 0  # No personalization - show all buyers
             banner_text = "All Buyers — No company profile selected"
 
+        # Scoring every buyer for one profile takes about half a second of Python; the same profile asking the same question within
+        # two minutes is answered from the last result (Re-test 4 B7). The key holds everything the answer depends on.
+        _resp_key = ("feed", tuple(sorted(won_cpvs)), tuple(company_divisions), tier, company_name, user_region, user_lat, user_lon,
+                     tuple(sorted((k, v) for k, v in request.args.items() if k not in ("username", "profile_id"))), _uk_today().isoformat())
+        _resp_hit = _FEED_RESPONSE_CACHE.get(_resp_key)
+        if _resp_hit and time.time() - _resp_hit[0] < _FEED_RESPONSE_TTL_S:
+            return jsonify(_resp_hit[1])
+
         # 2. Query Buyers with Aggregates
         today_str = _uk_today().strftime("%Y-%m-%d")
         actionable_str = (_uk_today() + timedelta(days=60)).strftime("%Y-%m-%d")  # the first renewal a company can still act on
@@ -1422,10 +1661,16 @@ def get_opportunity_feed():
             # buyer's search result and profile show. (This path used to aggregate raw rows: 55 awards and a 10.9%
             # repeat rate on the card against 53 and 7.5% on the profile.)
             if q and not search_division and not frameworks_only and _stats.is_ready(cursor, "buyer_stats"):
-                _execute(cursor, conn, f"SELECT DISTINCT {_norm_auth_sql('ca.authority_name')} FROM contract_awards ca WHERE {where_sql}", params)
-                matched_keys = [r[0] for r in cursor.fetchall()]
-                buyer_items = _buyer_items_from_stats(cursor, conn, "", buyer_type_filter, min_spend, keys=matched_keys)
-                rows_from_stats = True
+                # A word that is in buyers' NAMES ("leeds", "kent", "MOD") is answered from buyer_stats alone: scanning every award's
+                # CPV text for it took 3 to 16 seconds (Re-test 4 B7). Only a word no buyer is called goes on to the CPV-text scan.
+                buyer_items = _buyer_items_from_stats(cursor, conn, q, buyer_type_filter, min_spend)
+                if buyer_items:
+                    rows_from_stats = True
+                else:
+                    _execute(cursor, conn, f"SELECT DISTINCT {_norm_auth_sql('ca.authority_name')} FROM contract_awards ca WHERE {where_sql}", params)
+                    matched_keys = [r[0] for r in cursor.fetchall()]
+                    buyer_items = _buyer_items_from_stats(cursor, conn, "", buyer_type_filter, min_spend, keys=matched_keys)
+                    rows_from_stats = True
 
         if buyer_items is None:
             # A framework/call-off's contract_value is a shared ceiling across every supplier
@@ -1467,10 +1712,18 @@ def get_opportunity_feed():
             """
             params.append(min_spend)
 
-            _execute(cursor, conn, query, params)
-            rows = cursor.fetchall()
-            cols = [desc[0] for desc in cursor.description] if cursor.description else []
-            buyer_items = [dict(zip(cols, row)) if not hasattr(row, "keys") else dict(row) for row in rows]
+            live_key = ("live", q, buyer_type_filter, bool(frameworks_only), float(min_spend or 0), today_str)
+            live_hit = _FEED_ITEMS_CACHE.get(live_key)
+            if live_hit and time.time() - live_hit[0] < _FEED_ITEMS_TTL_S:
+                buyer_items = live_hit[1]
+            else:
+                _execute(cursor, conn, query, params)
+                rows = cursor.fetchall()
+                cols = [desc[0] for desc in cursor.description] if cursor.description else []
+                buyer_items = [dict(zip(cols, row)) if not hasattr(row, "keys") else dict(row) for row in rows]
+                if len(_FEED_ITEMS_CACHE) >= 40:
+                    _FEED_ITEMS_CACHE.clear()
+                _FEED_ITEMS_CACHE[live_key] = (time.time(), buyer_items)
 
         cards = []
         now = datetime.now()
@@ -1696,56 +1949,38 @@ def get_opportunity_feed():
             _hit = _top_vendor_cache.get(c["authority_name"])
             if _hit and _now - _hit[0] < _TOP_VENDOR_TTL_S:
                 c["top_suppliers"] = list(_hit[1])
+        # Names kept from an earlier request, by any worker, are read back from a small table instead of re-aggregating every award
+        # (2 to 4 seconds for 50 cards, Re-test 4 B7).
+        _stored = _stored_top_suppliers(cursor, conn, [c["authority_name"] for c in top_cards if c["total_contracts"] > 0 and not c["top_suppliers"]])
+        for c in top_cards:
+            if c["authority_name"] in _stored:
+                c["top_suppliers"] = list(_stored[c["authority_name"]])
+                _top_vendor_cache[c["authority_name"]] = (_now, list(c["top_suppliers"]))
         auth_names_for_sup = [c["authority_name"] for c in top_cards if c["total_contracts"] > 0
+                              and c["authority_name"] not in _stored
                               and not (_top_vendor_cache.get(c["authority_name"]) and _now - _top_vendor_cache[c["authority_name"]][0] < _TOP_VENDOR_TTL_S)]
         if auth_names_for_sup:
-            # Match on the normalized key (see _norm_auth_sql), not an exact TRIM() string —
-            # `authority_name` above is just one casing/whitespace variant the ARRAY_AGG
-            # happened to pick as this buyer's representative label, so an exact match here
-            # silently dropped every award recorded under a different-cased variant of the
-            # same buyer, and which variant got picked (and so which suppliers surfaced)
-            # could differ request to request. `ORDER BY sv DESC, supplier_name ASC` makes
-            # ties between equal-value suppliers deterministic too.
-            _execute(cursor, conn, f"SELECT t.n, {_norm_auth_sql('t.n')} FROM UNNEST(?::text[]) AS t(n)", [auth_names_for_sup])
-            norm_to_auth = {norm: n for n, norm in cursor.fetchall()}
-            placeholders = ",".join([_norm_auth_sql("?")] * len(auth_names_for_sup))
-            # Exclude framework ceilings from the ranking value for the same reason as
-            # top_suppliers_query in get_buyer_detail() above — that figure is duplicated
-            # identically across every co-appointed supplier, so ranking by it just surfaces
-            # whichever framework co-appointees happen to be in the query results first.
-            # The same de-duplicated awards and the same tidy-up as the buyer profile, so the card and the profile name the same vendors (QA B8).
-            sup_sql = f"""
-                WITH {_stats.deduped_cte(cursor)}
-                SELECT {_norm_auth_sql("authority_name")} as an_norm, supplier_name,
-                       COUNT(DISTINCT id) as contracts_won,
-                       SUM(CASE WHEN is_framework = 1 OR contract_value < 0 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN 0 ELSE contract_value END) as total_value,
-                       SUM(CASE WHEN is_framework = 1 THEN contract_value ELSE 0 END) as framework_total_ceiling,
-                       COUNT(CASE WHEN is_framework = 1 THEN 1 END) as framework_appointments,
-                       MAX(date_signed) as last_award_date
-                FROM deduped_awards
-                WHERE {_norm_auth_sql("authority_name")} IN ({placeholders}) AND supplier_name IS NOT NULL AND supplier_name != ''
-                GROUP BY {_norm_auth_sql("authority_name")}, supplier_name
-            """
-            try:
-                _execute(cursor, conn, sup_sql, auth_names_for_sup)
-                by_buyer = {}
-                for row in cursor.fetchall():
-                    rec = _row_to_dict(cursor, row)
-                    by_buyer.setdefault(norm_to_auth.get(rec["an_norm"], rec["an_norm"]), []).append(rec)
-                top_sup_map = {an: [r["supplier_name"] for r in _tidy_top_suppliers(rows, limit=2)] for an, rows in by_buyer.items()}
-                for c in top_cards:
-                    if c["authority_name"] in auth_names_for_sup:
-                        c["top_suppliers"] = top_sup_map.get(c["authority_name"], [])
-                        _top_vendor_cache[c["authority_name"]] = (_now, list(c["top_suppliers"]))
-                if len(_top_vendor_cache) > 5000:
-                    _top_vendor_cache.clear()
-            except Exception as _sup_err:
-                pass
+            if _stats.buyer_norm_index_ready(cursor):
+                try:
+                    top_sup_map = _top_suppliers_for(cursor, conn, auth_names_for_sup)
+                    for c in top_cards:
+                        if c["authority_name"] in auth_names_for_sup:
+                            c["top_suppliers"] = top_sup_map.get(c["authority_name"], [])
+                            _top_vendor_cache[c["authority_name"]] = (_now, list(c["top_suppliers"]))
+                    _store_top_suppliers(cursor, conn, {c["authority_name"]: c["top_suppliers"] for c in top_cards if c["authority_name"] in auth_names_for_sup})
+                    if len(_top_vendor_cache) > 5000:
+                        _top_vendor_cache.clear()
+                except Exception as _sup_err:
+                    conn.rollback()
+            else:
+                # The index that makes this lookup instant is missing (it is built with the award tables): build it and fill the
+                # names in the background so this request is not held up; the cards show them from the next load.
+                _fill_top_suppliers_in_background(list(auth_names_for_sup))
 
         did_you_mean = None
         if q and not top_cards:
             did_you_mean = _buyer_did_you_mean(cursor, conn, q)
-        return jsonify({
+        _payload = {
             "ok": True,
             "tier": tier,
             "banner_text": banner_text,
@@ -1758,7 +1993,11 @@ def get_opportunity_feed():
             "searched_for": q if q != typed else "",
             "fast": bool(use_stats),
             "approximate": approximate,
-        })
+        }
+        if len(_FEED_RESPONSE_CACHE) >= 60:
+            _FEED_RESPONSE_CACHE.clear()
+        _FEED_RESPONSE_CACHE[_resp_key] = (time.time(), _payload)
+        return jsonify(_payload)
 
     except Exception as e:
         import traceback

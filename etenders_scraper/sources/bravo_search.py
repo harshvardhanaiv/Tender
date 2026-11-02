@@ -227,6 +227,53 @@ def _fill_missing_from_details(rows: list[dict[str, Any]], site_root: str) -> No
 _PCS_CONTRACT_RESULTS = "2"  # the portal's "Contract Results" notice type
 
 
+def iter_newest_pcs_pages(site_root: str, source_id: str = "pcs", source_label: str = "Public Contracts Scotland",
+                          max_pages: int = 8, timeout: int = 60, pause: float = 1.5):
+    """The newest notices of Public Contracts Scotland, one list of rows per result page, for the scheduled index.
+
+    One request at a time with a pause between pages, so the scan is far lighter than a user's search (which asks for several pages at
+    once). A page that fails ends the scan: the caller keeps what it has already read. Rows are shaped like the ones a live search returns.
+    """
+    import time
+
+    site_root = site_root.rstrip("/")
+    search_url = f"{site_root}/Search/Search_MainPage.aspx"
+    session = requests.Session()
+    session.headers.update(DEFAULT_HEADERS)
+    html = _pcs_initial_search(session, search_url, "", timeout)
+    total_pages = _total_pages(html) or 1
+    seen: set[str] = set()
+    page = 1
+    while True:
+        rows: list[dict[str, Any]] = []
+        for row in _parse_results_html(html, site_root):
+            title = (row.get("title") or "").strip()
+            if len(title) < 8 or _is_generic_title(title):
+                continue
+            if not row.get("resource_id") and row.get("detail_url"):
+                m = re.search(r"ID=([^&]+)", row["detail_url"], re.I)
+                if m:
+                    row["resource_id"] = m.group(1)
+            rid = row.get("resource_id") or row.get("detail_url")
+            if not rid or rid in seen:
+                continue
+            seen.add(rid)
+            row["source"] = source_id
+            row["source_label"] = source_label
+            if row.get("awarded_supplier") and not row.get("supplier_name"):
+                row["supplier_name"] = row["awarded_supplier"]
+            rows.append(row)
+        yield rows
+        if page >= min(total_pages, max_pages):
+            return
+        page += 1
+        time.sleep(pause)
+        form = {**_essential_asp_fields(html), "__EVENTTARGET": _PCS_PAGE_TARGET, "__EVENTARGUMENT": "", _PCS_PAGE_SELECT: str(page)}
+        response = session.post(search_url, data=form, timeout=max(timeout, 35))
+        response.raise_for_status()
+        html = response.text
+
+
 def search_pcs_contract_results(
     site_root: str, start_page: int = 1, max_pages: int = 10, timeout: int = 60
 ) -> tuple[list[dict[str, Any]], int]:
@@ -365,6 +412,32 @@ def _wales_collect_all_pages(
 _WALES_CONTRACT_RESULTS_CHECKBOX = "ctl00$MainBody$pickerNoticeType$rptLocations$ctl03$chkBox"
 
 
+def _wales_contract_result_pages(session: requests.Session, search_url: str, first_html: str, site_root: str, timeout: int,
+                                 max_pages: int, pause: float = 1.0) -> list[dict[str, Any]]:
+    """Result pages 2 to `max_pages` of the Contract Results list, read in turn (each page's form state carries the next request). A page
+    that fails or comes back empty ends the read with what was found."""
+    import time
+
+    rows: list[dict[str, Any]] = []
+    total_pages = min(_total_pages(first_html) or 1, max_pages)
+    html = first_html
+    for page in range(2, total_pages + 1):
+        time.sleep(pause)
+        data = {**_essential_asp_fields(html), _WALES_CONTRACT_RESULTS_CHECKBOX: "on", "__EVENTTARGET": _WALES_PAGER, "__EVENTARGUMENT": str(page)}
+        try:
+            response = session.post(search_url, data=data, timeout=max(timeout, 35))
+            response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[sell2wales contract results page {page}]: {exc}")
+            break
+        got = _parse_results_html(response.text, site_root)
+        if not got:
+            break
+        rows.extend(got)
+        html = response.text
+    return rows
+
+
 def search_sell2wales_contract_results(
     *,
     source_id: str = "sell2wales",
@@ -372,6 +445,7 @@ def search_sell2wales_contract_results(
     site_root: str = "https://www.sell2wales.gov.wales",
     max_results: int = 30,
     timeout: int = 35,
+    pause: float = 1.0,
 ) -> list[dict[str, Any]]:
     """Fetches Sell2Wales notices filtered to the "Contract Results" category —
     Sell2Wales exposes this as a checkbox-picker widget rather than a query
@@ -414,6 +488,11 @@ def search_sell2wales_contract_results(
         post_resp = session.post(search_url, data=data, timeout=timeout)
         post_resp.raise_for_status()
         rows = _parse_results_html(post_resp.text, site_root)
+        # The first page holds about ten notices, so a run asking for more read only that (Re-test 4 R9: 84 Sell2Wales awards held).
+        # The following pages are read one at a time, each from the page before it, with the same notice type kept ticked.
+        wanted_pages = max(1, -(-(max_results or 10) // 10))
+        if wanted_pages > 1:
+            rows.extend(_wales_contract_result_pages(session, search_url, post_resp.text, site_root, timeout, wanted_pages, pause=pause))
 
         return _finalize_bravo_rows(
             rows,

@@ -4352,6 +4352,17 @@ document.addEventListener("click", (ev) => {
     updateResultsTotal();
     return;
   }
+  const showNew = ev.target.closest && ev.target.closest("[data-show-new]");
+  if (showNew) {
+    ev.preventDefault();
+    state._releaseNew = true;
+    state.rows = state.rows.concat(state._pendingNew || []);
+    state._pendingNew = [];
+    state.currentPage = 1;
+    renderRows();
+    updateResultsTotal();
+    return;
+  }
   const loose = ev.target.closest && ev.target.closest("[data-toggle-loose]");
   if (loose) {
     ev.preventDefault();
@@ -4434,15 +4445,22 @@ function updateResultsTotal(rowsNow) {
   let hiddenHint = "";
   const tabFilter = state.statusFilter;
   if ((tabFilter === "opportunities" || tabFilter === "awards") && (state.q || "").trim()) {
+    const looseWas = state.showLooseMatches;
     try {
+      // Counted over the same set whether or not the weaker matches are shown, so the figure does not change when they are toggled
+      // (re-test 4 TN3: 114, 80, then 183 closed hidden during one search).
+      state.showLooseMatches = true;
+      state.statusFilter = tabFilter;
+      const tabCount = filteredAndSortedRows().length;
       state.statusFilter = "all";
       const withAll = filteredAndSortedRows().length;
-      const hidden = withAll - filteredCount;
+      const hidden = withAll - tabCount;
       if (hidden > 0) {
         hiddenHint = ` · <a href="#" class="results-total__hint" data-show-all-status="1">${hidden.toLocaleString()} ${tabFilter === "opportunities" ? "closed" : "open"} hidden — see ${tabFilter === "opportunities" ? "Awarded / All" : "Opportunities / All"}</a>`;
       }
     } finally {
       state.statusFilter = tabFilter;
+      state.showLooseMatches = looseWas;
       filteredAndSortedRows(); // restore the per-row match labels for the real filter
     }
   }
@@ -4462,8 +4480,30 @@ function updateResultsTotal(rowsNow) {
     }
   }
 
+  // A portal whose stored list is in the results while it is still being searched live says how old that list is (never passed off as live).
+  let indexHint = "";
+  const idx = state.meta && state.meta.index_freshness;
+  const stillLoading = (state.meta && state.meta.loading_sources) || [];
+  if (idx && state.searchPhase === "loading") {
+    const parts = Object.keys(idx).filter((id) => stillLoading.includes(id) && idx[id].stored_rows).map((id) => {
+      const at = idx[id].finished_at ? new Date(idx[id].finished_at).getTime() : NaN;
+      const mins = Number.isFinite(at) ? Math.max(0, Math.round((Date.now() - at) / 60000)) : null;
+      const age = mins == null ? "earlier" : mins < 60 ? `${mins} min ago` : mins < 2880 ? `${Math.round(mins / 60)} h ago` : `${Math.round(mins / 1440)} days ago`;
+      return `${SOURCES_LABEL[id] || id}: stored list from ${age}, live search still running`;
+    });
+    if (parts.length) indexHint = ` · <span class="results-total__hint">${esc(parts.join("; "))}</span>`;
+  }
+  const pendingNew = Array.isArray(state._pendingNew) ? state._pendingNew.length : 0;
+  const newHint = pendingNew
+    ? ` · <a href="#" class="results-total__hint" data-show-new="1" title="Found by the portals since your saved results were stored. They are held back so the list does not move while you read it.">${pendingNew.toLocaleString()} new result${pendingNew === 1 ? "" : "s"} — show</a>`
+    : "";
+  const partialCount = filteredRows.filter((r) => r && r._partial).length;
+  const partialHint = partialCount
+    ? ` · <span class="results-total__hint" title="These notices contain some, not all, of your words. They are listed after the full matches.">${partialCount.toLocaleString()} partial match${partialCount === 1 ? "" : "es"}, listed last</span>`
+    : "";
+
   let html = `<div class="results-total__main">${esc(headline.main)}</div>`;
-  html += `<div class="results-total__sub">${esc(sub)}${hiddenHint}${looseHint}</div>`;
+  html += `<div class="results-total__sub">${esc(sub)}${indexHint}${newHint}${partialHint}${hiddenHint}${looseHint}</div>`;
 
   // Comma search: one chip per term with how many of the shown tenders it accounts for
   const searchTerms = typeof SearchCache !== "undefined" && (state.q || "").trim()
@@ -4771,7 +4811,10 @@ function formatDaysLeft(row) {
     const pubDate = parseDate(row.date_published);
     const pubYear = pubDate ? pubDate.getFullYear() : null;
     const pubText = pubYear && pubYear < new Date().getFullYear() ? ` (published ${pubYear})` : "";
-    return `<span class="days-badge days-badge--unknown" title="${esc((deadline || "No deadline stated") + pubText)}">No deadline</span>`;
+    // A framework or agreement that is still active has no closing date by nature: say so instead of "No deadline" (re-test 4)
+    const isOpenFramework = /framework|dynamic purchasing|agreement/i.test(`${row.title || ""} ${row.notice_type || ""} ${row.procedure || ""}`)
+      && /^(active|open)$/i.test(String(row.status || "").trim());
+    return `<span class="days-badge days-badge--unknown" title="${esc((deadline || "No deadline stated") + pubText)}">${isOpenFramework ? "Open framework, no deadline published" : "No deadline"}</span>`;
   }
   if (urgency === "past") {
     return `<span class="days-badge days-badge--past" title="Deadline: ${esc(deadline)}">Closed</span>`;
@@ -4872,7 +4915,10 @@ const CURRENCY_BY_SOURCE = {
 // and a bare "100,000" from Contracts Finder both used to be shown as they came). Anything with words in it
 // ("TBC", "£1m - £2m") is left exactly as published.
 function formatValue(v, source) {
-  const s = String(v).trim();
+  let s = String(v).trim();
+  // Public Contracts Scotland quotes "200 000.00 GBP": the code becomes the symbol (re-test 4 T7)
+  const withCode = s.match(/^([\d][\d.,\s]*?)\s*(GBP|EUR|USD)$/i);
+  if (withCode) s = ({ GBP: "£", EUR: "€", USD: "$" })[withCode[2].toUpperCase()] + withCode[1].trim();
   const withSymbol = s.match(/^([£€$])\s*([\d.,\s]+)$/);
   if (!withSymbol && /[^\d.,\s]/.test(s)) return s;
   const n = parseFloat((withSymbol ? withSymbol[2] : s).replace(/[,\s]/g, ""));
@@ -6010,6 +6056,7 @@ function filteredAndSortedRows() {
   if (parsedKeyword.query && parsedKeyword.query.toLowerCase() !== "all" && parsedKeyword.query !== "*") {
     rows = rows.filter((row) => {
       row._loose = false;
+      row._partial = false;
       if (matchRowToKeyword(row, parsedKeyword.query, parsedKeyword.scope)) return true;
       // The portal returned this row for the search itself, so it is a hit even though the word is not in the fields shown
       // (all-fields searches only: a title / supplier / buyer search is exactly about those fields).
@@ -6030,7 +6077,10 @@ function filteredAndSortedRows() {
           // title-only portals (no description on the row) may have matched on text we cannot see, so a partial
           // word match is tolerated there; a row with a description that lacks the words is simply off-topic.
           const hasDesc = extractTextFromField(row.description || row.abstract || row.summary || row.scope).length > 40;
-          if (level === "none" || (level === "some" && hasDesc)) {
+          // A row with some of the words is a partial match: it stays in the list, ranked after the full matches
+          // (Re-test 4 TN2: 37 of 38 open tenders sat behind "weaker matches"). Only a row with none of them is collapsed.
+          if (level === "some" && hasDesc) row._partial = true;
+          else if (level === "none") {
             if (!state.showLooseMatches) return false;
             row._loose = true;   // shown only when asked for, after the real matches
           }
@@ -6161,6 +6211,7 @@ function filteredAndSortedRows() {
   const copy = [...rows];
   copy.sort((a, b) => {
     if (!!a._loose !== !!b._loose) return a._loose ? 1 : -1;
+    if (!!a._partial !== !!b._partial) return a._partial ? 1 : -1;
     if (shouldGroup) {
       const roleA = getRowMatchRole(a);
       const roleB = getRowMatchRole(b);
@@ -6877,6 +6928,8 @@ function sourceBadgeEl(row) {
 }
 
 // The words a profile uses most, as one-click searches for the empty start page (re-test T8). Pure: no request is made until one is clicked.
+// Words from the company's legal details, not from what it sells ("registered" came from "registered company": re-test 4 T8)
+const NOT_SOLD_WORDS = new Set(["registered", "registration", "limited", "company", "incorporated", "england", "wales", "scotland", "ireland", "number", "address", "office", "private", "public", "director", "directors"]);
 function suggestedSearchTerms(meta, limit = 4) {
   if (!meta) return [];
   const counts = new Map();
@@ -6884,7 +6937,7 @@ function suggestedSearchTerms(meta, limit = 4) {
   // the company's own name is not something it sells ("aivhub" was the first suggestion for AIVHUB LTD, re-test 3 T8)
   const ownName = new Set(clean(meta._name).split(/\s+/).filter(Boolean));
   for (const w of clean(meta._text).split(/\s+/)) {
-    if (w.length < 5 || STOPWORDS.has(w) || ownName.has(w) || /^\d+$/.test(w)) continue;
+    if (w.length < 5 || STOPWORDS.has(w) || ownName.has(w) || NOT_SOLD_WORDS.has(w) || /^\d+$/.test(w)) continue;
     counts.set(w, (counts.get(w) || 0) + 1);
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || b[0].length - a[0].length).slice(0, limit).map(([w]) => w);
@@ -8855,6 +8908,9 @@ async function loadPage(isNewSearch = false, isPoll = false) {
   if (isNewSearch) {
     document.body.classList.remove("search-quiet");
     state.termFilter = null;
+    state._pendingNew = [];
+    state._releaseNew = false;
+    state.termFilter = null;
     // Searched before: show those results at once and keep searching the portals underneath.
     const hit = typeof SearchCache !== "undefined" ? SearchCache.lookup(engQ, scope, cacheCountiesKey) : null;
     if (hit) {
@@ -8963,8 +9019,20 @@ async function loadPage(isNewSearch = false, isPoll = false) {
     kept.sort((a, b) => place.get(rowKey(a)) - place.get(rowKey(b)));
     shownRows = kept.concat(fresh);
   }
+  // A list painted from saved results is the one the reader is already looking at: rows the portals add are held behind a
+  // "12 new results: show" bar instead of being slotted into it while they read (Re-test 4 T3).
+  let displayRows = shownRows;
+  if (state.instantFrom && state.rows.length && !state._releaseNew && typeof rowKey === "function") {
+    const onScreen = new Map();
+    state.rows.forEach((r, i) => { const k = rowKey(r); if (k && !onScreen.has(k)) onScreen.set(k, i); });
+    const keptNow = [], fresh = [];
+    for (const r of shownRows) { const k = rowKey(r); (k && onScreen.has(k) ? keptNow : fresh).push(r); }
+    keptNow.sort((a, b) => onScreen.get(rowKey(a)) - onScreen.get(rowKey(b)));
+    displayRows = keptNow;
+    state._pendingNew = fresh;
+  }
   if (!holdForTerms && !(incomingPhase === "loading" && (incomingRows.length < _lastSettledRowCount || majorityStillPending))) {
-    state.rows = shownRows;
+    state.rows = displayRows;
   }
   state.total = data.total != null ? data.total + (shownRows.length - incomingRows.length) : null;
   state.totalExact = data.totalExact !== false;
@@ -16287,9 +16355,23 @@ function docNameKey(name) {
   return String(name || "").toLowerCase().replace(/[^a-z0-9.]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
+// The ids of documents that repeat an earlier one (same name and size): listed with a "Duplicate" flag, and warned about once
+// (Re-test 4 DC1: two ISO files listed twice doubled the expiry alerts).
+function duplicateDocIds(documents) {
+  const seen = new Set();
+  const dups = new Set();
+  (documents || []).forEach((d) => {
+    const key = `${docNameKey(d.filename)}|${Number(d.file_size) || 0}`;
+    if (seen.has(key)) dups.add(String(d.id)); else seen.add(key);
+  });
+  return dups;
+}
+
 function renderDocExpiryAlertsBanner(documents, containerId = "userDocsAlertBanner") {
   const container = document.getElementById(containerId);
   if (!container) return;
+  const dups = duplicateDocIds(documents);
+  documents = (documents || []).filter((d) => !dups.has(String(d.id)));
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -16300,7 +16382,7 @@ function renderDocExpiryAlertsBanner(documents, containerId = "userDocsAlertBann
     if (!doc.expiry_date) {
       // a certificate or policy with no expiry date cannot be warned about: say so (Re-test 3 DC2)
       if (docNeedsExpiryDate(doc)) {
-        alerts.push({ level: "notice", icon: "📅", doc, message: `<strong>"${esc(doc.filename)}"</strong> has no expiry date. Set one (calendar icon) so you are warned 60 days before it runs out.` });
+        alerts.push({ level: "notice", icon: "📅", doc, message: `<strong>"${esc(doc.filename)}"</strong> has no expiry date. Click 📅 on its row to add one, so you are warned 60 days before it runs out.` });
       }
       return;
     }
@@ -16998,7 +17080,10 @@ function groupHistoryRuns(items) {
   const groups = [];
   const byKey = new Map();
   (items || []).forEach(item => {
-    const key = item.source && item.resource_id ? [item.source, item.resource_id, item.type, (item.company || "").toLowerCase().trim()].join("|") : null;
+    // A run with no portal id (a pasted notice, an older save) is grouped by its title instead, so the same tender is one entry (Re-test 4 HS3)
+    const titleKey = String(item.title || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const key = item.source && item.resource_id ? [item.source, item.resource_id, item.type, (item.company || "").toLowerCase().trim()].join("|")
+      : titleKey.length >= 12 ? ["title", titleKey, item.type, (item.company || "").toLowerCase().trim()].join("|") : null;
     if (key && byKey.has(key)) { byKey.get(key).runs.push(item); return; }
     const g = { latest: item, runs: [item] };
     if (key) byKey.set(key, g);
@@ -19605,13 +19690,28 @@ const KNOWN_APP_PATHS = /^\/(funding|planning|buyers|suppliers|growth|answers|do
             document.title = r.title;
             if (location.pathname !== r.path) history.replaceState(null, "", r.path);
           } else if (location.pathname === r.path) {
-            history.replaceState(null, "", "/");
-            if (document.title === r.title) document.title = prevTitle || "Tender search";
+            // "View" on a saved item closes this panel and opens the result on top: stay on /history until nothing is open
+            // (Re-test 4). The address is released by the settle() check below.
+            setTimeout(settle, 120);
           }
         } catch (_) { /* no history */ }
       };
       new MutationObserver(sync).observe(modal, { attributes: true, attributeFilter: ["class"] });
     }
+    const settle = () => {
+      const r = SECTION_ROUTES.find((x) => location.pathname === x.path);
+      if (!r) return;
+      const modal = document.getElementById(r.modal);
+      if (modal && !modal.classList.contains("hidden")) return;
+      if (document.querySelector(".modal-overlay:not(.hidden)")) return;
+      try {
+        history.replaceState(null, "", "/");
+        if (document.title === r.title) document.title = prevTitle || "Tender search";
+      } catch (_) { /* no history */ }
+    };
+    document.querySelectorAll(".modal-overlay").forEach((el) => {
+      new MutationObserver(() => setTimeout(settle, 120)).observe(el, { attributes: true, attributeFilter: ["class"] });
+    });
     const here = SECTION_ROUTES.find((r) => location.pathname === r.path || location.pathname === r.path + "/");
     if (here) {
       setTimeout(() => {
@@ -24488,16 +24588,23 @@ function renderUserDocuments(docs) {
   }
 
   list.innerHTML = "";
+  const dupIds = duplicateDocIds(docs);
   docs.forEach(doc => {
     const row = document.createElement("div");
     row.className = "profile-doc-row";
 
-    let badgeHtml = '';
+    let badgeHtml = dupIds.has(String(doc.id))
+      ? '<span title="This file is already listed above. Delete one copy." style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:500; margin-left:8px; border:1px solid #fde68a; vertical-align:middle;">Duplicate</span>'
+      : '';
+    const duplicateBadge = badgeHtml;
+    badgeHtml = '';
     if (doc.type === 'profile' && doc.company_name) {
       badgeHtml = `<span style="background-color: var(--primary-light, #e0e7ff); color: var(--primary, #4f46e5); padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500; margin-left: 8px; border: 1px solid var(--primary-border, #c7d2fe); vertical-align: middle;">Company: ${esc(doc.company_name)}</span>`;
     } else {
       badgeHtml = `<span style="background-color: #f3f4f6; color: #4b5563; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500; margin-left: 8px; border: 1px solid #e5e7eb; vertical-align: middle;">Global Document</span>`;
     }
+
+    badgeHtml += duplicateBadge;
 
     const downloadUrl = doc.type === 'profile'
       ? `/api/company-profiles/${doc.profile_id}/documents/${doc.id}/download`

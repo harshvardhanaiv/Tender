@@ -228,6 +228,21 @@ def _facts_to_check(text: str) -> list[str]:
     return out
 
 
+_RULE_SENTENCE = re.compile(r"[^.!?]*\b(?:must|only|eligible|open to|applicants? (?:can|should|need)|you (?:can|must|need)|projects? (?:must|should))\b[^.!?]*[.!?]?", re.I)
+
+
+def _stated_rule(grant: dict[str, Any]) -> str:
+    """The first sentence of the grant's eligibility (else its summary) that states a condition, trimmed to a line; "" when none does."""
+    for field in ("eligibility", "summary"):
+        text = re.sub(r"\s+", " ", str(grant.get(field) or "")).strip()
+        m = _RULE_SENTENCE.search(text[:1200])
+        if m:
+            sentence = m.group(0).strip()
+            if 25 <= len(sentence):
+                return sentence if len(sentence) <= 170 else sentence[:167].rsplit(" ", 1)[0] + "…"
+    return ""
+
+
 def assess(grant: dict[str, Any], applicant: dict[str, Any], *, kind: str = "", where: str = "", has_profile: bool = False) -> dict[str, str]:
     """{'verdict': likely|check|unlikely, 'why'|'check'|'blocker': one line}. `kind` and `where` are the page filters."""
     kind = kind or applicant.get("kind") or ""
@@ -317,7 +332,12 @@ def assess(grant: dict[str, Any], applicant: dict[str, Any], *, kind: str = "", 
         if off:
             return {"verdict": "unlikely", "blocker": off, "blockers": [off], "checks": [], "reasons": whys}
         seen = ("Matched so far: " + " · ".join(whys) + ". ") if whys else ""
-        line = seen + "Nothing in your profile rules it out, but nothing in the grant points to your sector either: read the full criteria"
+        rule = _stated_rule(grant)
+        if rule:
+            # the grant's own first condition, so the line says what to check rather than "read the full criteria" (Re-test 4 R3)
+            line = seen + "Nothing in your profile rules it out. The grant says: " + rule
+        else:
+            line = seen + "Nothing in your profile rules it out, but nothing in the grant points to your sector either: read the full criteria"
         # a "Check" always carries the thing to check, so the card never shows a verdict with nothing under it
         return {"verdict": "check", "check": line, "checks": [line], "blockers": [], "reasons": whys}
     line = "Add a company profile to check this against your business"

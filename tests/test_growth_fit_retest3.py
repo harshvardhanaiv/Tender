@@ -75,6 +75,45 @@ def test_a_team_mailbox_of_initials_is_a_role_inbox_not_a_named_person():
     assert bc.pick_best([{"email": "tim@parliament.uk", "source": "notice"}])[0]["role"] is False
 
 
+def test_a_development_never_ranks_with_a_named_contract_and_a_council_scheme_ranks_low():
+    """Re-test 4 GS2: developments at 95-97%, councils listed as targets."""
+    private = gs.score_development(planning(applicant_company="Chestnut Homes Ltd", lead_score=100, n_dwellings=500), "preset", TODAY)
+    assert private["score"] <= gs.DEVELOPMENT_CAP, private
+    council = gs.score_development(planning(applicant_company="Bromsgrove District Council", lead_score=100, n_dwellings=500), "preset", TODAY, public_body=True)
+    assert council["score"] <= gs.COUNCIL_SCHEME_CAP, council
+
+
+def test_a_contract_that_names_none_of_the_firms_trades_earns_no_category_or_profile_points():
+    """Re-test 4 GS1: a plumber at 88% for 'Radiology Ventilation Replacement Works'."""
+    cat = gs.mr.resolve_category("housing-repairs-gas", None, None)
+    kw = frozenset({"plumbing", "heating", "works", "maintenance"})
+    other = {"title": "Radiology Ventilation Replacement Works", "cpv": "45331200", "cpv_description": "Ventilation installation work",
+             "days_left": 120, "value": 400000, "suppliers": ["X"], "term_years": 1}
+    own = dict(other, title="Boiler replacement works", cpv="45331100")
+    low = gs.score_renewal(other, cat, kw)
+    high = gs.score_renewal(own, cat, kw)
+    assert low["score"] < 60 and high["score"] > low["score"], (low["score"], high["score"])
+
+
+def test_a_long_first_sentence_of_the_profile_ends_at_a_word_with_a_full_stop():
+    """Re-test 4 GS3: the description was cut mid-word ('Milton Key')."""
+    text = ("Priority Plumbing Services provides domestic and commercial plumbing, heating and gas servicing to housing associations, "
+            "councils and private landlords across Leighton Buzzard, Milton Keynes, Bedfordshire and Buckinghamshire and Hertfordshire, Oxfordshire and Northamptonshire without any break whatsoever in service")
+    out = gs.sender_fields("Priority", text, None, "Boilers")["summary"]
+    assert out.endswith(".") and len(out) <= 262 and not out.endswith("Key."), out
+
+
+def test_the_subject_is_written_from_the_firms_trades():
+    """Re-test 4 GS3: the subject was the category name."""
+    plumber = gs.sender_fields("Priority Plumbing", "We install boilers and heating systems and plumbing for housing providers.", None, "Housing repairs & gas servicing")
+    assert plumber["services"] == "Plumbing and heating"
+    dev = gs.default_message("development", plumber)
+    assert dev["subject"] == "Plumbing and heating for {{scheme_summary}}", dev["subject"]
+    assert gs.default_message("renewal", plumber)["subject"] == "Plumbing and heating support ahead of your contract renewal"
+    nameless = gs.sender_fields("Acme", "We make things.", None, "Boilers")
+    assert gs.default_message("renewal", nameless)["subject"] == "{{category}} support ahead of your contract renewal", "no trade named: the merge field stays"
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in sorted(globals().items()):

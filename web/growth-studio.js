@@ -199,6 +199,7 @@
     keepFocus(() => {
       byId(PANES.campaigns).innerHTML = V.campaignsPane({
         status: c.status, error: c.error, list: c.list, suppressions: c.suppressions, suppressionsOpen: c.suppressionsOpen,
+        duplicateDrafts: c.duplicateDrafts,
       });
     });
     updateTabCounts();
@@ -473,6 +474,7 @@
     try {
       const [list, sup] = await Promise.all([api("GET", "/api/growth/campaigns"), api("GET", "/api/growth/suppressions")]);
       c.list = list.campaigns;
+      c.duplicateDrafts = list.duplicate_drafts || 0;
       c.suppressions = sup.suppressions;
       c.status = "ok";
       c.error = null;
@@ -991,6 +993,15 @@
     "goto-signals": () => setTab("signals"),
     "apply-custom": () => applyCustomCategory(),
     "reset-filters": () => resetFilters(),
+    "tidy-drafts": () =>
+      run(async () => {
+        const n = state.campaigns.duplicateDrafts || 0;
+        if (!(await confirmDialog(`Remove ${n} duplicate draft${n === 1 ? "" : "s"}? Each is a copy of an earlier draft that nothing has been sent from. The earliest of each set is kept.`))) return;
+        const res = await api("POST", "/api/growth/campaigns/tidy-drafts");
+        state.campaigns.list = null;
+        await loadCampaigns();
+        toast(`${res.removed} duplicate draft${res.removed === 1 ? "" : "s"} removed.`);
+      }),
     "remove-suppression": (a) =>
       run(async () => {
         if (!(await confirmDialog("Remove this buyer from your do-not-contact list? Only do this if they have told you they are happy to hear from you."))) return;

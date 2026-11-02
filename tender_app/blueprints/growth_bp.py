@@ -686,6 +686,49 @@ def _touch(cur, cid: int) -> None:
     cur.execute("UPDATE growth_campaigns SET updated_at = NOW(), last_activity_at = NOW() WHERE id = %s", (cid,))
 
 
+def _duplicate_draft_ids(conn, username: str) -> list[int]:
+    """Drafts that repeat an earlier untouched draft (same service, channel, profile and signals; nothing sent, switched off or drafted in
+    Outreach). The oldest of each set is kept (Re-test 4 GS6: 20 auto-numbered drafts, none sent)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT c.id, c.profile_id, c.category_label, c.channel,
+                      COALESCE(ARRAY_AGG(t.signal_key ORDER BY t.signal_key) FILTER (WHERE t.id IS NOT NULL), '{}'),
+                      c.subject, c.body, COALESCE(c.body_html, ''),
+                      BOOL_OR(t.id IS NOT NULL AND (t.status <> 'not_sent' OR NOT t.included OR t.sent_at IS NOT NULL))
+                 FROM growth_campaigns c LEFT JOIN growth_campaign_targets t ON t.campaign_id = c.id
+                WHERE c.username = %s AND c.status = 'draft'
+                  AND NOT EXISTS (SELECT 1 FROM growth_outreach_drafts d WHERE d.campaign_id = c.id)
+                GROUP BY c.id ORDER BY c.id""",
+            (username,),
+        )
+        seen: set[tuple] = set()
+        dupes: list[int] = []
+        for cid, pid, label, channel, keys, subject, text, html, touched in cur.fetchall():
+            if touched or not keys:
+                continue
+            ident = (pid, label, channel, tuple(keys), subject, text, html)   # an edited message is the user's work, not a copy
+            if ident in seen:
+                dupes.append(cid)
+            else:
+                seen.add(ident)
+        return dupes
+
+
+@growth_bp.post("/api/growth/campaigns/tidy-drafts")
+def growth_tidy_drafts():
+    username = _username()
+    conn = _connect()
+    try:
+        ids = _duplicate_draft_ids(conn, username)
+        if ids:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM growth_campaigns WHERE username = %s AND id = ANY(%s)", (username, ids))
+            conn.commit()
+        return jsonify({"removed": len(ids)})
+    finally:
+        conn.close()
+
+
 @growth_bp.get("/api/growth/campaigns")
 def growth_campaigns():
     profile_id = _optional_id(request.args.get("profile_id"))
@@ -701,6 +744,7 @@ def growth_campaigns():
                 (_username(), profile_id) if profile_id else (_username(),),
             )
             rows = cur.fetchall()
+        duplicates = len(_duplicate_draft_ids(conn, _username()))
     finally:
         conn.close()
     n = len(CAMPAIGN_COLUMNS.split(", "))
@@ -710,7 +754,7 @@ def growth_campaigns():
         c["counts"] = {"targets": row[n], "sent": row[n + 1], "replied": row[n + 2], "meetings": row[n + 3]}
         del c["subject"], c["body"], c["body_html"]
         out.append(c)
-    return jsonify({"campaigns": out})
+    return jsonify({"campaigns": out, "duplicate_drafts": duplicates})
 
 
 @growth_bp.get("/api/growth/campaigns/<int:cid>")
@@ -1011,7 +1055,7 @@ def growth_update_target(cid: int, tid: int):
 
 # ── find a buyer's contact inbox instead of sending the user to the notice ───────────────────────
 _CONTACT_FRESH_DAYS = {"found": 30, "not_found": 7}
-_CONTACT_LOOKUP_VERSION = 2  # 2: notice read with a browser agent, notice website and council domains tried (1 missed most councils)
+_CONTACT_LOOKUP_VERSION = 3  # 3: initials such as ppcs@ count as a role inbox (cached lookups kept the old "named person" role); 2: notice read with a browser agent, notice website and council domains tried (1 missed most councils)
 
 
 def _contact_search(query: str) -> list[dict]:

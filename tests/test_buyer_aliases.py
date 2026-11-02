@@ -53,3 +53,18 @@ def test_successor_councils_and_non_councils_stay_separate():
     assert canon("British Council") == "British Council"
     assert canon("Kent") == "Kent" and canon("Sutton") == "Sutton"
     assert canon("Kent County Council") == "Kent County Council"
+
+
+def test_retest4_b5_variants_of_one_body_are_one_buyer():
+    for name in ("BRITISH COUNCIL(THE)", "British Council", "British Council ", "The British Council"):
+        assert canon(name.strip()) == "British Council", name
+    for name in ("Kent County Council (t/a KCS)", "Kent County Council (T/A Procurement Services)", "Kent County Council (t/a LASER Energy)",
+                 "Kent County Council (t/a KCS Procurement Services)", "COMMERCIAL SERVICES KENT LIMITED", "Commercial Services Kent Limited"):
+        assert canon(name) == "Kent County Council", name
+    for name in ("Ministry of Defence", "MINISTRY OF DEFENCE", "Ministry of Defence, C&C, C&C", "Ministry of Defence : Ministry of Defence",
+                 "Ministry of Defence, DIO, Defence Infrastructure Organisation (DIO)"):
+        assert canon(name) == "Ministry of Defence", name
+    # bodies that only share a word stay apart
+    assert canon("Leicestershire County Council, trading as ESPO") == "Leicestershire County Council, trading as ESPO", "ESPO is a purchasing body in its own right"
+    assert canon("Police and Crime Commissioner for Kent") == "Police and Crime Commissioner for Kent"
+    assert canon("Defence Equipment and Support") == "Defence Equipment and Support"

@@ -316,8 +316,8 @@ def test_development_signals_skip_unusable_rows_and_describe_the_scheme():
 
 def test_development_fit_parts():
     base = gs.score_development(planning(lead_score=100), "preset", TODAY)
-    assert parts(base) == {"scheme": 35, "timing": 20, "category": 10, "approach": 35} and base["score"] == 100
-    assert [p["max"] for p in base["parts"]] == [35, 20, 10, 35]
+    assert {k: v for k, v in parts(base).items() if k != "limit"} == {"scheme": 35, "timing": 20, "category": 10, "approach": 35} and base["score"] == gs.DEVELOPMENT_CAP   # the parts add to 100; an approval is capped (Re-test 4 GS2)
+    assert [p["max"] for p in base["parts"] if p["key"] != "limit"] == [35, 20, 10, 35]
     assert parts(gs.score_development(planning(lead_score=80), "preset", TODAY))["scheme"] == 28
     for age, points in ((0, 20), (120, 20), (121, 14), (240, 14), (241, 8), (365, 8), (366, 0)):
         got = parts(gs.score_development(planning(decided_date=TODAY - timedelta(days=age)), "preset", TODAY))["timing"]
@@ -338,7 +338,7 @@ def test_a_scheme_with_a_developer_to_approach_outranks_a_bigger_one_without():
     huge_unnamed = gs.score_development(planning(lead_score=100, applicant_company=None, n_dwellings=900), "preset", TODAY)["score"]
     assert small_named > huge_unnamed, "an outreach tool ranks who you can approach above how big the scheme is"
     assert huge_unnamed <= 70, "an unnamed scheme can never look like a top lead"
-    assert gs.score_development(planning(lead_score=100), "preset", TODAY)["score"] > 90
+    assert gs.score_development(planning(lead_score=100), "preset", TODAY)["score"] == gs.DEVELOPMENT_CAP
 
 
 # ───────────────────────────────────────── engagement signals ─────────────────────────────────────

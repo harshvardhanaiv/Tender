@@ -359,6 +359,159 @@ def ingest_find_tender(get_conn: Callable[[], Any], days: int = 2, max_pages: in
     return _ingest(get_conn, "find_tender", batches, to_notice, scan_is_full=False)
 
 
+_UK_DATE = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?")
+
+
+def _parse_uk_ts(value: Any) -> datetime | None:
+    """A day-first date a scraped portal shows ("30/10/2026", "30/10/2026 12:00") as an aware datetime; ISO dates are accepted too."""
+    text = str(value or "").strip()
+    m = _UK_DATE.search(text)
+    if m:
+        d, mo, y, hh, mm = m.groups()
+        try:
+            return datetime(int(y), int(mo), int(d), int(hh or 0), int(mm or 0), tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    # Public Contracts Scotland shows its deadline as "24-Nov-26"; other portals use "24 Nov 2026" or "24-Nov-2026"
+    m = re.match(r"(\d{1,2})[-\s]([A-Za-z]{3})[a-z]*[-\s,]+(\d{4}|\d{2})(?:\s+(\d{1,2}):(\d{2}))?", text)
+    if m:
+        d, mon, y, hh, mm = m.groups()
+        try:
+            return datetime(int(y) + (2000 if len(y) == 2 else 0), datetime.strptime(mon.title(), "%b").month, int(d), int(hh or 0), int(mm or 0), tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return _parse_ts(text) if re.match(r"\d{4}-\d{2}-\d{2}", text) else None
+
+
+def normalise_scraped_row(row: dict[str, Any], source: str, label: str, now: datetime | None = None) -> dict[str, Any] | None:
+    """One row a scraped portal's result page gave, as an index row. The row itself is kept as `raw` in the shape a live search returns,
+    so a search can hand it back unchanged."""
+    rid = str(row.get("resource_id") or "").strip()
+    title = str(row.get("title") or "").strip()
+    if not rid or not title:
+        return None
+    now = now or datetime.now(timezone.utc)
+    deadline = _parse_uk_ts(row.get("submission_deadline"))
+    published = _parse_uk_ts(row.get("date_published"))
+    kind = str(row.get("notice_type") or "").lower()
+    if "award" in kind or "result" in kind or row.get("awarded_supplier") or _AWARD_TITLE.match(title):
+        notice_type, status = "award", "awarded"
+    elif "cancel" in kind or "withdrawn" in str(row.get("status") or "").lower():
+        notice_type, status = "tender", "cancelled"
+    elif "prior" in kind or "planning" in kind:
+        notice_type, status = "planning", "planned"
+    else:
+        notice_type, status = classify(["tender"], "active", title, deadline, now)
+    location = str(row.get("location") or "").strip()
+    return {
+        "source": source,
+        "resource_id": rid,
+        "title": title,
+        "description": str(row.get("description") or "").strip(),
+        "contracting_authority": str(row.get("contracting_authority") or "").strip(),
+        "notice_type": notice_type,
+        "status": status,
+        "published_at": published,
+        "deadline_at": deadline,
+        "value": None,
+        "currency": "GBP",
+        "cpv_codes": str(row.get("cpv_codes") or ""),
+        "location_text": location,
+        "region": "",
+        "postcode": "",
+        "detail_url": str(row.get("detail_url") or ""),
+        "raw": {**row, "source": source, "source_label": label},
+        "source_label": label,
+    }
+
+
+def ingest_pcs(get_conn: Callable[[], Any], max_pages: int = 8, stop_at_known: bool = True, pause: float = 1.5) -> dict[str, Any]:
+    """The newest Public Contracts Scotland notices, written to tender_notices. An ordinary run reads pages from the newest backwards and
+    stops at the first page whose notices are all stored already, so it is a few requests; a backfill passes `stop_at_known=False` and a
+    larger `max_pages`. Pages are read one at a time with a pause (see bravo_search.iter_newest_pcs_pages)."""
+    from etenders_scraper.sources import bravo_search as bs
+    from etenders_scraper.sources.registry import SOURCES
+
+    cfg = SOURCES["pcs"]
+
+    def batches(state):
+        known_conn = get_conn()
+        try:
+            for rows in bs.iter_newest_pcs_pages(cfg["site_root"], "pcs", cfg["label"], max_pages=max_pages, pause=pause):
+                ids = [str(r.get("resource_id")) for r in rows if r.get("resource_id")]
+                if stop_at_known and ids:
+                    cur = known_conn.cursor()
+                    cur.execute("SELECT count(*) FROM tender_notices WHERE source = 'pcs' AND resource_id = ANY(%s)", (ids,))
+                    if cur.fetchone()[0] >= len(ids):
+                        state["reason"] = "reached notices already stored"
+                        state["complete"] = True
+                        return
+                yield rows
+            state["reason"] = f"read {max_pages} pages" if stop_at_known else "read every page asked for"
+        finally:
+            known_conn.close()
+
+    return _ingest(get_conn, "pcs", batches, lambda row: normalise_scraped_row(row, "pcs", cfg["label"]), scan_is_full=False)
+
+
+def _tsquery_for(terms: list[str]) -> tuple[str, list[str]]:
+    """OR across the comma terms, AND across the words of one term."""
+    return " OR ".join(["search_tsv @@ plainto_tsquery('english', %s)"] * len(terms)), list(terms)
+
+
+def search_notices(cursor, terms: list[str], sources: list[str] | None = None, limit: int = 300) -> list[dict[str, Any]]:
+    """Stored notices of the scraped portals that match the words searched, newest first, each as the row a live search returns plus
+    `indexed_at`. OCDS-fed sources (Contracts Finder, Find a Tender) are not returned here: their live search is already fast."""
+    terms = [t for t in (terms or []) if t and t.strip()]
+    if not terms:
+        return []
+    where, params = _tsquery_for(terms)
+    wanted = [s for s in (sources or SCRAPED_SOURCES) if s in SCRAPED_SOURCES]
+    if not wanted:
+        return []
+    cursor.execute(
+        f"SELECT raw, last_seen_at FROM tender_notices WHERE source = ANY(%s) AND ({where}) "
+        f"ORDER BY published_at DESC NULLS LAST, last_seen_at DESC LIMIT %s",
+        [wanted, *params, int(limit)])
+    out = []
+    for raw, seen_at in cursor.fetchall():
+        row = raw if isinstance(raw, dict) else json.loads(raw)
+        row["indexed_at"] = seen_at.isoformat() if seen_at else None
+        out.append(row)
+    return out
+
+
+SCRAPED_SOURCES = ("pcs",)
+
+
+def freshness(cursor) -> dict[str, dict[str, Any]]:
+    """Per scraped source: when its index last finished a run, and whether that run succeeded (for the freshness line)."""
+    cursor.execute("SELECT DISTINCT ON (source) source, finished_at, ok FROM index_runs WHERE source = ANY(%s) "
+                   "ORDER BY source, started_at DESC", (list(SCRAPED_SOURCES),))
+    return {s: {"finished_at": f.isoformat() if f else None, "ok": bool(ok)} for s, f, ok in cursor.fetchall()}
+
+
+def start_scheduler(get_conn: Callable[[], Any], every_s: float = 2 * 3600, first_delay_s: float = 300) -> None:
+    """Keep the Public Contracts Scotland index fresh: an incremental run every `every_s` seconds. A failed run is logged and tried again
+    next time; it never stops the loop. `INDEX_PCS_ENABLED=0` switches it off."""
+    import os
+    import threading
+
+    if os.environ.get("INDEX_PCS_ENABLED", "1") == "0":
+        return
+
+    def loop() -> None:
+        time.sleep(first_delay_s)
+        while True:
+            try:
+                print("[Index] PCS:", ingest_pcs(get_conn), flush=True)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[Index] PCS run failed: {type(exc).__name__}: {exc}", flush=True)
+            time.sleep(every_s)
+
+    threading.Thread(target=loop, daemon=True, name="PcsIndex").start()
+
+
 def index_status(cursor) -> list[dict[str, Any]]:
     """The latest run of each source, for an admin to see a portal that has stopped updating."""
     cursor.execute("""SELECT DISTINCT ON (source) source, started_at, finished_at, ok, complete, rows_seen, rows_new, error

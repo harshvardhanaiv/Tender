@@ -417,7 +417,12 @@
         suppressionsBlock(m.suppressions, m.suppressionsOpen)
       );
     }
+    const tidy = m.duplicateDrafts
+      ? `<div class="gs-hint" style="margin:0 0 8px">${esc(m.duplicateDrafts)} of these ${m.duplicateDrafts === 1 ? "is a copy" : "are copies"} of an earlier draft that nothing was sent from. ` +
+        `<button type="button" class="gs-link" data-action="tidy-drafts">Remove the ${m.duplicateDrafts === 1 ? "copy" : "copies"}</button></div>`
+      : "";
     return (
+      tidy +
       '<div class="gs-card"><div class="gs-tablewrap"><table class="gs-table"><thead><tr><th>Campaign</th><th>Status</th><th>Channel</th><th class="gs-num">Buyers</th><th>Funnel</th><th>Last activity</th><th><span class="visually-hidden">Open</span></th></tr></thead><tbody>' +
       list
         .map(

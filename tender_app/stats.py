@@ -101,6 +101,21 @@ _AWARD_VALUES_INDEXES = (("supplier_id", "supplier_id"), ("company_number", "com
 _MATERIALISED_CTE = f"deduped_awards AS NOT MATERIALIZED (SELECT * FROM {AWARD_VALUES_TABLE})"
 
 
+# Lets a lookup of a few buyers by their normalised name read just their awards instead of normalising every row
+# (a card's main suppliers took 2 to 4 seconds without it: Re-test 4 B7).
+BUYER_NORM_INDEX_NAME = f"idx_{AWARD_VALUES_TABLE}_buyer_norm"
+BUYER_NORM_INDEX_SQL = f"CREATE INDEX IF NOT EXISTS {BUYER_NORM_INDEX_NAME} ON {AWARD_VALUES_TABLE} (({_norm_auth_sql('authority_name')}))"
+
+
+def buyer_norm_index_ready(cursor) -> bool:
+    try:
+        cursor.execute("SELECT to_regclass(%s) IS NOT NULL", (f"public.{BUYER_NORM_INDEX_NAME}",))
+        return bool(cursor.fetchone()[0])
+    except Exception:
+        cursor.connection.rollback()
+        return False
+
+
 def award_values_ready(cursor) -> bool:
     try:
         cursor.execute(f"SELECT to_regclass('public.{AWARD_VALUES_TABLE}') IS NOT NULL")
@@ -129,6 +144,7 @@ def refresh_award_values(conn) -> int:
     cur.execute(f"ALTER TABLE {AWARD_VALUES_TABLE}_new RENAME TO {AWARD_VALUES_TABLE}")
     for name, _ in _AWARD_VALUES_INDEXES:
         cur.execute(f"ALTER INDEX idx_{AWARD_VALUES_TABLE}_{name}_new RENAME TO idx_{AWARD_VALUES_TABLE}_{name}")
+    cur.execute(BUYER_NORM_INDEX_SQL)
     conn.commit()
     return rows
 

@@ -104,3 +104,13 @@ def test_every_reason_is_listed_and_numbers_become_checks():
     assert out["verdict"] == "unlikely"
     assert "Project costs must be between £150k and £250k" in out["checks"]
     assert "Project must last 1 to 3 months" in out["checks"]
+
+
+def test_a_grant_with_no_other_signal_quotes_its_own_first_condition():
+    """Re-test 4 R3: 24 grants said only "read the full criteria"."""
+    out = ff.assess(grant(name="Community garden fund", summary="Funds local planting.", eligibility="Applicants must be registered in Wales. Projects start within a year."),
+                    SOFTWARE, has_profile=True)
+    text = out.get("check") or out.get("blocker") or ""
+    assert "The grant says: Applicants must be registered in Wales." in text or out["verdict"] == "unlikely", out
+    assert ff._stated_rule({"eligibility": "Some background only."}) == ""
+    assert ff._stated_rule({"summary": "Open to charities across the UK and delivering community projects."}).startswith("Open to charities")

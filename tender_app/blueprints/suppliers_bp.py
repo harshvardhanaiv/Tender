@@ -982,13 +982,52 @@ def _supplier_page_exact(cursor, conn, q_patterns, sme_only, vcse_only, only_awa
 
 # The same search typed again (a filter toggled back, a refresh, two people looking at "Capita") is answered from memory for two minutes:
 # the answer does not depend on who asks, and the cold query on the live database took 4 to 5 s (re-test R8).
-_SUPPLIER_SEARCH_TTL_S = 120
+_SUPPLIER_SEARCH_TTL_S = 600
 _supplier_search_cache: dict[str, tuple[float, Any]] = {}
+
+# Searches people make all the time. They are asked for in the background (see warm_supplier_search_cache) so the first person to type one
+# is served from the cache and the database's own cache stays warm, instead of paying for a cold query (Re-test 4 R8: 2.6 to 4.4 s).
+WARM_SEARCHES = ("software", "engineering", "construction", "consultancy", "cleaning", "security", "training", "catering", "maintenance",
+                 "IBM", "Capita", "Capita plc", "Serco", "Mitie", "Kier", "Balfour Beatty", "Atos", "Fujitsu", "Accenture", "Deloitte")
+
+
+def _search_cache_key() -> str:
+    """The request's arguments in a fixed order, so '?q=IBM&page=1' and '?page=1&q=IBM' (or a space written '+' or '%20') share one entry."""
+    return "&".join(f"{k}={v}" for k, v in sorted(request.args.items(multi=True)) if v != "")
+
+
+def warm_supplier_search_once(app, terms=WARM_SEARCHES, pause: float = 0.2) -> int:
+    """Ask for each term's first page (the arguments the page sends, and its fast preview); returns how many answers were kept."""
+    kept = 0
+    for term in terms:
+        for extra in ({}, {"fast": "1"}):
+            try:
+                with app.test_request_context("/api/suppliers/search", query_string={"q": term, "page": "1", "per_page": "25", **extra}):
+                    search_suppliers()
+                    kept += 1 if _search_cache_key() in _supplier_search_cache else 0
+            except Exception:   # a failed warm-up costs nothing but the warm-up
+                pass
+            if pause:
+                time.sleep(pause)
+    return kept
+
+
+def warm_supplier_search_cache(app, every_s: float = 540.0, first_delay_s: float = 180.0, terms=WARM_SEARCHES) -> None:
+    """Keep the common first-page searches warm: asked for now and every `every_s` seconds, on a background thread."""
+    import threading
+
+    def loop() -> None:
+        time.sleep(first_delay_s)
+        while True:
+            warm_supplier_search_once(app, terms)
+            time.sleep(every_s)
+
+    threading.Thread(target=loop, daemon=True, name="SupplierSearchWarm").start()
 
 
 @suppliers_bp.route("/api/suppliers/search", methods=["GET"])
 def search_suppliers():
-    _key = request.full_path
+    _key = _search_cache_key()
     _hit = _supplier_search_cache.get(_key)
     if _hit and time.time() - _hit[0] < _SUPPLIER_SEARCH_TTL_S:
         return jsonify(_hit[1])

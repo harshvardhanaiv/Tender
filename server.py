@@ -3498,6 +3498,16 @@ def create_app() -> Flask:
         except Exception as _fg_err:
             print("Warning: Could not start the Funding refresh:", _fg_err)
         try:
+            from tender_app.blueprints.suppliers_bp import warm_supplier_search_cache
+            warm_supplier_search_cache(app)
+        except Exception as _wm_err:
+            print("Warning: Could not start the supplier search warm-up:", _wm_err)
+        try:
+            from tender_app.tender_index import start_scheduler as start_pcs_index
+            start_pcs_index(get_db_connection)
+        except Exception as _ix_err:
+            print("Warning: Could not start the Public Contracts Scotland index:", _ix_err)
+        try:
             # Contracts Finder has no keyword filter, so every search scans its whole feed
             # (minutes). Warm that cache at startup and keep it warm, otherwise the first search
             # after a deploy or a quiet spell sits at "1 of 3 portals finished" while it scans.
@@ -4745,6 +4755,25 @@ def create_app() -> Flask:
         if db_rows:
             db_rows = translate_row_list(db_rows)
             db_rows = [r for r in db_rows if not _is_invalid_tender_row(r, q)]
+        # The scheduled index of the slow scraped portals (Public Contracts Scotland): its stored notices are in the first page of results,
+        # and the live search tops them up (docs/PORTAL_INDEX_DESIGN.md step 3). SEARCH_USE_INDEX=0 returns to live-only.
+        index_rows: list = []
+        index_fresh: dict = {}
+        if os.environ.get("SEARCH_USE_INDEX", "1") != "0":
+            try:
+                from tender_app import tender_index as _ti
+                _ic = get_db_connection()
+                try:
+                    _icur = _ic.cursor()
+                    index_rows = _ti.search_notices(_icur, split_terms(q), None if scope == "all" else [s.strip() for s in scope.split(",")])
+                    index_fresh = _ti.freshness(_icur) if index_rows else {}
+                finally:
+                    _ic.close()
+                index_rows = [r for r in translate_row_list(index_rows) if not _is_invalid_tender_row(r, q)]
+            except Exception as exc:  # the index is a shortcut: a failure must never cost the search its rows
+                print(f"[Search] index read skipped: {exc}", flush=True)
+                index_rows, index_fresh = [], {}
+        db_rows = list(index_rows) + list(db_rows or [])
         _d = count_by_source(db_rows or [])
 
         # Combine live results + stored DB results (de-duplicating by tender ID)
@@ -4924,6 +4953,9 @@ def create_app() -> Flask:
             meta["county_filter"] = county_filter_info
         else:
             meta.pop("county_filter", None)
+        if index_fresh:
+            # how old the stored list of each scraped portal is, so it is never presented as live
+            meta["index_freshness"] = {s: {**f, "stored_rows": sum(1 for r in index_rows if r.get("source") == s)} for s, f in index_fresh.items()}
 
         # Say, per portal, what it returned to this search and how that relates to what is on screen:
         # `count` is what the portal answered with, `shown` the rows in the list now, `stored` those of

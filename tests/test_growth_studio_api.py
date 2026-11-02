@@ -484,7 +484,7 @@ def test_development_signals_follow_the_fixtures():
         "screening opinion, undecided, minor works, small and stale schemes are all left out"
     one, personal, unnamed = r["signals"]
     # a scheme with no developer company is research, not a target: capped at gs.NO_DEVELOPER_CAP (Re-test 3 GS5; it was 63)
-    assert (one["fit"], personal["fit"], unnamed["fit"]) == (93, 40, 40)
+    assert (one["fit"], personal["fit"], unnamed["fit"]) == (80, 40, 40)   # 80: a development is capped (Re-test 4 GS2)
     assert one["buyer"] == "ZZ Growth Test Homes Ltd" and one["target"] == {"name": "ZZ Growth Test Homes Ltd", "key": "dev:ZZ GROWTH TEST HOMES", "targetable": True, "reason": None}
     assert one["headline"] == "150 dwellings at Land at Test Lane 1 approved 4 weeks ago" and one["authority"] == "Planning authority: ZZ Growth Test Authority"
     assert "Planning agent: ZZ Growth Agent LLP." in one["detail"] and one["links"] == [{"label": "Planning record", "url": "https://example.org/zz-plan/1"}]
@@ -492,7 +492,7 @@ def test_development_signals_follow_the_fixtures():
     for s in (personal, unnamed):
         assert s["buyer"] == "Developer not named" and s["target"]["targetable"] is False and s["target"]["key"] is None and s["target"]["reason"]
     assert "Mr J Smith" not in json.dumps(r), "an individual's name is never passed on"
-    assert one["fit"] == sum(p["points"] for p in one["fit_parts"])
+    assert one["fit"] == min(80, sum(p["points"] for p in one["fit_parts"]))
 
     stale = get_signals(c, types="development", days=730)[1]
     assert stale["counts"]["development"] == 4
@@ -640,7 +640,7 @@ def test_campaign_from_signals_and_its_targets():
     assert camp["name"].startswith("Housing repairs & gas servicing: renewals, ") and camp["category_label"] == "Housing repairs & gas servicing"
     assert camp["filters"]["preset"] == "housing-repairs-gas" and camp["filters"]["where"] == WHERE
     assert [t["buyer_name"] for t in targets] == [ALPHA, "ZZ Growth Test Homes Ltd", BETA], "best fit first; duplicates and unusable signals dropped"
-    assert [t["signal_type"] for t in targets] == ["renewal", "development", "renewal"] and [t["fit"] for t in targets] == [94, 93, 75]
+    assert [t["signal_type"] for t in targets] == ["renewal", "development", "renewal"] and [t["fit"] for t in targets] == [94, 80, 75]
     assert all(t["status"] == "not_sent" and t["included"] and t["contact_email"] is None and not t["opted_out"] for t in targets)
     reasons = {s["key"]: s["reason"] for s in body["skipped"]}
     assert set(reasons) == {dev_none, "renewal:NO SUCH BUYER"} and "No developer" in reasons[dev_none] and "no longer in the list" in reasons["renewal:NO SUCH BUYER"]
@@ -687,6 +687,27 @@ def test_starting_the_same_campaign_again_reopens_the_untouched_draft():
     assert call(a, "patch", f"/api/growth/campaigns/{first['campaign']['id']}", {"subject": "Edited subject"})[0] == 200
     st, third = call(a, "post", "/api/growth/campaigns", {"keys": keys, "filters": FILTERS})
     assert st == 201 and third["campaign"]["id"] != first["campaign"]["id"] and third["campaign"]["name"].endswith(")"), third["campaign"]["name"]
+
+
+def test_duplicate_untouched_drafts_are_counted_and_can_be_removed():
+    """Re-test 4 GS6: 20 draft campaigns, mostly copies of each other, none sent."""
+    reset_limits()
+    a = client(USER_A)
+    keys = signal_keys(a, ALPHA)
+    keep = make_campaign(a, keys)
+    copy = make_campaign(a, keys)
+    edited = make_campaign(a, keys)
+    assert call(a, "patch", f"/api/growth/campaigns/{edited['campaign']['id']}", {"subject": "My own subject"})[0] == 200
+    st, listing = call(a, "get", "/api/growth/campaigns")
+    assert st == 200 and listing["duplicate_drafts"] >= 1, listing.get("duplicate_drafts")
+    st, res = call(a, "post", "/api/growth/campaigns/tidy-drafts")
+    assert st == 200 and res["removed"] >= 1, res
+    ids = {c["id"] for c in call(a, "get", "/api/growth/campaigns")[1]["campaigns"]}
+    assert copy["campaign"]["id"] not in ids, "a copy nothing was done to is removed"
+    assert edited["campaign"]["id"] in ids, "a draft the user edited is their work and is kept"
+    assert (keep["campaign"]["id"] in ids) or any(c["category_label"] == keep["campaign"]["category_label"] for c in call(a, "get", "/api/growth/campaigns")[1]["campaigns"]), "one draft of the set is kept"
+    assert call(a, "post", "/api/growth/campaigns/tidy-drafts")[1]["removed"] == 0
+    assert call(a, "get", "/api/growth/campaigns")[1]["duplicate_drafts"] == 0
 
 
 def test_a_saved_signals_days_to_go_are_counted_from_today():

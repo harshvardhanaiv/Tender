@@ -18,7 +18,11 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
   // how a buyer or supplier name is shown (web/name-format.js); stored names and search keys are untouched
-  function displayName(name) { return typeof NameFormat !== "undefined" ? NameFormat.display(name) : String(name ?? ""); }
+  // A trailing colon or comma is left over from the notice ("Gristwood and Toms:"); it is dropped for display (Re-test 4 W2).
+  function displayName(name) {
+    const shown = typeof NameFormat !== "undefined" ? NameFormat.display(name) : String(name ?? "");
+    return typeof shown === "string" ? shown.replace(/\s*[:;,]+\s*$/, "") : shown;
+  }
   function trimNum(x, digits) { return x.toFixed(digits).replace(/\.0+$/, ""); }
   function fmtInt(n) { return n == null ? "–" : Number(n).toLocaleString("en-GB"); }
   function fmtMoney(n) {

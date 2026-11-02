@@ -1,6 +1,10 @@
 # Scheduled portal index for Tender Search (re-test T3)
 
-Status: design only, nothing built. Written 2026-10-30.
+Status: steps 1 and 2 built (Contracts Finder and Find a Tender feeds). Step 3 and the Public Contracts Scotland part of step 4 built 2026-11-02:
+`tender_index.ingest_pcs` (scheduled every 2 hours by `start_scheduler`, `INDEX_PCS_ENABLED=0` switches it off), and `/api/search` reads
+the stored PCS notices into its first page and reports `meta.index_freshness` (`SEARCH_USE_INDEX=0` returns to live-only). Not built: the other
+scraped portals, the admin view of `index_runs`, stale-portal alerts. First fill: `python scripts/index_portals.py pcs --max-pages 60 --backfill`
+(about 15 s a page, one page at a time). Written 2026-10-30.
 
 ## The problem
 

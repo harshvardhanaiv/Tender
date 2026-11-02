@@ -440,6 +440,14 @@ _BUYER_ALIAS_RULES = (
     (re.compile(r"^\s*(?:the\s+)?nhs\s+commissioning\s+board(?:\s*\(?\s*(?:operating\s+(?:under\s+the\s+name\s+of|as)\s+nhs\s+england)\s*\)?)?\s*$"
                 r"|^\s*nhs\s+england\s*\(\s*nhs\s+commissioning\s+board\s*\)\s*$|^\s*nhs\s+england\s*$", re.IGNORECASE), lambda m: "NHS England"),
     (re.compile(r"^\s*(.+?\bcouncil)\s*[-–]\s*PACS\s*$", re.IGNORECASE), lambda m: m.group(1).strip()),
+    # Re-test 4 B5: "BRITISH COUNCIL(THE)" is the British Council
+    (re.compile(r"^\s*(?:the\s+)?british\s+council\s*(?:\(\s*the\s*\))?\s*$", re.IGNORECASE), lambda m: "British Council"),
+    # a council's own trading arms ("Kent County Council (t/a KCS Procurement Services)", "(t/a LASER Energy)") and its company
+    # ("Commercial Services Kent Limited") publish for the council
+    (re.compile(r"^\s*(.+?\bcouncil)\s*\(\s*t\s*/\s*a\b[^)]*\)\s*$", re.IGNORECASE), lambda m: m.group(1).strip()),
+    (re.compile(r"^\s*commercial\s+services\s+kent(?:\s+(?:limited|ltd))?\s*$", re.IGNORECASE), lambda m: "Kent County Council"),
+    # the Ministry of Defence publishes each project team and agency as "Ministry of Defence, Ships, Maritime Platform Systems (MPS)"
+    (re.compile(r"^\s*(?:the\s+)?ministry\s+of\s+defence\s*(?:[,:].*)?$", re.IGNORECASE), lambda m: "Ministry of Defence"),
 )
 
 
@@ -513,7 +521,8 @@ def canonical_authority_name(name: str | None) -> str | None:
     for rx, repl in _BUYER_ALIAS_RULES:
         m = rx.match(name)
         if m:
-            return repl(m)
+            out = repl(m)
+            return _council_name(out) or out
     return _council_name(name) or name
 
 

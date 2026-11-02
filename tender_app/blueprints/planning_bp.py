@@ -19,7 +19,7 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request, session
 
-from etenders_scraper.planning import harvester
+from etenders_scraper.planning import applicant, harvester
 from etenders_scraper.planning.scoring import explain_lead_score
 from tender_app.config import (
     ADMIN_EMAILS,
@@ -87,6 +87,13 @@ def _serialize(row: dict[str, Any]) -> dict[str, Any]:
     out = {}
     for k, v in row.items():
         out[k] = v.isoformat() if hasattr(v, "isoformat") else v
+    if "applicant_company" in row:
+        # a register's placeholder ("C/O Agent") is not an applicant; a company the description names is, and says so (Re-test 4 P2)
+        company, source = applicant.resolve(row)
+        out["applicant_company"] = company
+        out["applicant_source"] = source
+        if applicant.clean_party(row.get("applicant_name")) is None:
+            out["applicant_name"] = None
     return out
 
 
@@ -612,6 +619,38 @@ def planning_application(app_id: str):
     result = _mark_consultation(_with_breakdown(app))
     result["nearby"] = nearby
     return jsonify(result)
+
+
+@planning_bp.route("/api/planning/application/<path:app_id>/find-applicant", methods=["POST"])
+@csrf_required
+@rate_limit(RATE_LIMIT_SEARCH)
+def planning_find_applicant(app_id: str):
+    """Ask the council's own page who the applicant is (one request). A company found is kept on the application, so it is asked once."""
+    gate = _plan_gate()
+    if gate:
+        return gate
+    conn = _get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT detail_url, applicant_company, description FROM planning_applications WHERE id = %s", (app_id,))
+            row = cur.fetchone()
+            if not row:
+                return jsonify({"error": "Not found"}), 404
+            detail_url, stored, description = row
+            known, source = applicant.resolve({"applicant_company": stored, "description": description})
+            if known:
+                return jsonify({"applicant": known, "source": source, "reason": None})
+            found = applicant.fetch_council_applicant(detail_url)
+            if found.get("applicant") and found.get("company"):
+                cur.execute("UPDATE planning_applications SET applicant_company = %s WHERE id = %s AND COALESCE(applicant_company, '') = ''",
+                            (found["applicant"][:255], app_id))
+                conn.commit()
+                return jsonify({"applicant": found["applicant"], "source": "council", "reason": None})
+            if found.get("applicant"):   # a private individual: shown to nobody, and not stored
+                return jsonify({"applicant": None, "source": None, "reason": "The applicant is a private individual, so the name is not shown."})
+            return jsonify({"applicant": None, "source": None, "reason": found.get("reason")})
+    finally:
+        conn.close()
 
 
 @planning_bp.route("/api/planning/track/<path:app_id>", methods=["GET", "POST", "DELETE"])

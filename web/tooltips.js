@@ -154,6 +154,7 @@
     "reload-campaigns": "Try loading the campaigns again.",
     "reload-performance": "Try loading the figures again.",
     "reload-signals": "Try loading the signals again.",
+    "tidy-drafts": "Delete the draft campaigns that copy an earlier draft nothing was sent from. The earliest of each set is kept.",
     "remove-suppression": "Take this buyer off your do-not-contact list. Only do this if they have said it is fine.",
     "remove-target": "Remove this buyer from the campaign.",
     "reset-filters": "Clear every filter.",

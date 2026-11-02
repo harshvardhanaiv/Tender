@@ -433,7 +433,9 @@
       fact("Agent", app.agent_company),
       fact("Agent contact", app.agent_name),
       fact("Agent address", app.agent_address),
-      fact("Applicant", app.applicant_company || app.applicant_name || (app.agent_company || app.agent_name ? "Not published: only the agent is named" : "")),
+      fact("Applicant", app.applicant_company
+        ? app.applicant_company + (app.applicant_source === "description" ? " (named in the application's description)" : "")
+        : app.applicant_name || (app.agent_company || app.agent_name ? "Not published: only the agent is named" : "")),
       fact("Case officer", app.case_officer),
     ].join("");
 
@@ -484,7 +486,9 @@
         </dl>
       </section>
 
-      ${people ? `<section class="planning-section"><h4>Who is involved</h4><dl class="planning-facts">${people}</dl></section>` : ""}
+      ${people ? `<section class="planning-section"><h4>Who is involved</h4><dl class="planning-facts">${people}</dl>${
+        app.applicant_company || app.applicant_name ? "" :
+        `<p class="planning-track-note"><button type="button" class="planning-link" data-planning-action="find-applicant" data-id="${esc(app.id)}">Find the applicant</button> <span id="planningFindNote">Asks the council's own page who the applicant is. Many councils show only the agent.</span></p>`}</section>` : ""}
       ${renderScore(app)}
       ${nearby ? `<section class="planning-section"><h4>Other schemes within 1.2 mi</h4><ul class="planning-nearby">${nearby}</ul></section>` : ""}
 
@@ -493,6 +497,29 @@
   }
 
   // ── Track lead: into Pipeline, with an alert at each later stage (re-test 3 PN3) ─────────────────
+  // Asks the server to read the council's own page for the applicant (one request); a company found is kept, so it is asked once.
+  async function findApplicant(btn) {
+    if (!btn || btn.disabled) return;
+    const id = btn.dataset.id;
+    const note = byId("planningFindNote");
+    btn.disabled = true;
+    if (note) note.textContent = "Asking the council's page…";
+    try {
+      const res = await fetch(`/api/planning/application/${id.split("/").map(encodeURIComponent).join("/")}/find-applicant`, { method: "POST" });
+      const data = res.ok ? await res.json() : null;
+      if (!data) { if (note) note.textContent = "Could not look this up just now. Open the council's record from the link above."; btn.disabled = false; return; }
+      if (data.applicant) {
+        if (note) note.textContent = "";
+        if (view.selectedId === id) showDetail(id);
+      } else if (note) {
+        note.textContent = data.reason || "No applicant is published.";
+      }
+    } catch (err) {
+      if (note) note.textContent = "Could not look this up just now. Open the council's record from the link above.";
+      btn.disabled = false;
+    }
+  }
+
   const trackPath = (id) => `/api/planning/track/${id.split("/").map(encodeURIComponent).join("/")}`;
   const TRACK_NOTE = "In your Pipeline. You will be alerted when it is decided, when its conditions are discharged and when work starts on site (the last two are read from other applications at the same address, as the register has no field for them).";
 
@@ -901,6 +928,7 @@
       const action = event.target.closest("[data-planning-action]")?.dataset.planningAction;
       if (action === "retry") search(view.page || 1);
       if (action === "track") toggleTrack(event.target.closest("[data-planning-action]"));
+      if (action === "find-applicant") findApplicant(event.target.closest("[data-planning-action]"));
       if (action === "upgrade") window.openPricingModal?.();
     });
 
