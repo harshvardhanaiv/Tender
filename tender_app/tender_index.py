@@ -497,19 +497,25 @@ def start_scheduler(get_conn: Callable[[], Any], every_s: float = 2 * 3600, firs
     import os
     import threading
 
-    if os.environ.get("INDEX_PCS_ENABLED", "1") == "0":
-        return
+    def keep_fresh(label: str, run: Callable[[], Any], delay_s: float) -> None:
+        def loop() -> None:
+            time.sleep(delay_s)
+            while True:
+                try:
+                    print(f"[Index] {label}:", run(), flush=True)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[Index] {label} run failed: {type(exc).__name__}: {exc}", flush=True)
+                time.sleep(every_s)
 
-    def loop() -> None:
-        time.sleep(first_delay_s)
-        while True:
-            try:
-                print("[Index] PCS:", ingest_pcs(get_conn), flush=True)
-            except Exception as exc:  # noqa: BLE001
-                print(f"[Index] PCS run failed: {type(exc).__name__}: {exc}", flush=True)
-            time.sleep(every_s)
+        threading.Thread(target=loop, daemon=True, name=f"{label}Index").start()
 
-    threading.Thread(target=loop, daemon=True, name="PcsIndex").start()
+    if os.environ.get("INDEX_PCS_ENABLED", "1") != "0":
+        keep_fresh("PCS", lambda: ingest_pcs(get_conn), first_delay_s)
+    # Contracts Finder and Find a Tender notices are kept for their buyer contact points (Buyer intelligence). Search still reads those
+    # two portals live. `INDEX_OCDS_ENABLED=0` switches these two off; they start a few minutes apart from PCS and each other.
+    if os.environ.get("INDEX_OCDS_ENABLED", "1") != "0":
+        keep_fresh("ContractsFinder", lambda: ingest_contracts_finder(get_conn, days=2, max_pages=10), first_delay_s + 600)
+        keep_fresh("FindTender", lambda: ingest_find_tender(get_conn, days=2, max_pages=10), first_delay_s + 1200)
 
 
 def index_status(cursor) -> list[dict[str, Any]]:
