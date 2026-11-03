@@ -482,6 +482,36 @@ def search_notices(cursor, terms: list[str], sources: list[str] | None = None, l
 
 
 SCRAPED_SOURCES = ("pcs",)
+OCDS_SOURCES = ("find_tender", "contracts_finder")
+
+
+def stored_rows(cursor, terms: list[str], sources: list[str], limit: int = 300) -> list[dict[str, Any]]:
+    """Stored Find a Tender / Contracts Finder notices that match the words, as the rows their live search returns. Used only when the live
+    portal could not answer (Find a Tender returns HTTP 429 under load), so a search shows saved notices instead of nothing."""
+    terms = [t for t in (terms or []) if t and t.strip()]
+    wanted = [src for src in (sources or []) if src in OCDS_SOURCES]
+    if not terms or not wanted:
+        return []
+    where, params = _tsquery_for(terms)
+    cursor.execute(
+        f"SELECT source, resource_id, title, description, contracting_authority, notice_type, status, published_at, deadline_at, value, currency, "
+        f"cpv_codes, location_text, detail_url, last_seen_at FROM tender_notices WHERE source = ANY(%s) AND ({where}) "
+        f"ORDER BY published_at DESC NULLS LAST, last_seen_at DESC LIMIT %s",
+        [wanted, *params, int(limit)])
+    labels = {"find_tender": "Find a Tender", "contracts_finder": "Contracts Finder"}
+    out = []
+    for (src, rid, title, desc, authority, ntype, status, published, deadline, value, currency, cpvs, location, url, seen) in cursor.fetchall():
+        out.append({
+            "source": src, "source_label": labels[src], "resource_id": rid, "title": title, "description": desc or "",
+            "contracting_authority": authority or "", "notice_type": ntype or "", "cpv_codes": cpvs or "", "location": location or "",
+            "status": "Active" if status == "open" else ("Closed" if status in ("closed", "expired") else (status or "Active").title()),
+            "date_published": published.strftime("%d/%m/%Y %H:%M:%S") if published else "",
+            "submission_deadline": deadline.strftime("%d/%m/%Y %H:%M:%S") if deadline else "",
+            "estimated_value_eur": f"{value:g} {currency or 'GBP'}" if value is not None else "",
+            "detail_url": url or "", "procedure": "", "procurement_type": "",
+            "indexed_at": seen.isoformat() if seen else None, "from_saved": True,
+        })
+    return out
 
 
 def freshness(cursor) -> dict[str, dict[str, Any]]:

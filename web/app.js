@@ -2648,6 +2648,15 @@ function savePortalSelection() {
 }
 
 function loadPortalPrefs() {
+  // A shared link names its portals (or portals=all): they win over what this account saved (Re-test 5 TN5).
+  if (typeof SearchUrl !== "undefined" && /[?&]q=/.test(location.search)) {
+    const want = SearchUrl.fromSearch(location.search, PORTALS.map((p) => p.id));
+    if (want.portals || want.all) {
+      _selectedPortals = want.portals && want.portals.length < PORTALS.length ? new Set(want.portals) : null;
+      syncNativeScope();
+      return;
+    }
+  }
   const savedPortals = lsGet(LS_PORTAL, null);
   if (Array.isArray(savedPortals) && savedPortals.length > 0) {
     const validIds = new Set(PORTALS.map(p => p.id));
@@ -2681,7 +2690,7 @@ function reconcilePortalCatalogue() {
     hasSavedPrefs: "selected_portals" in state.userPrefs || "managed_countries" in state.userPrefs,
   });
   if (!out.changed) return;
-  if (JSON.stringify(out.selected) !== JSON.stringify(current)) {
+  if (JSON.stringify(out.selected) !== JSON.stringify(current) && !/[?&]portals=/.test(location.search)) {
     _selectedPortals = out.selected ? new Set(out.selected) : null;
     savePortalSelection();
   }
@@ -4862,8 +4871,11 @@ function parseDate(str) {
   // "5th March 2026" -> "5 March 2026" for the standard parser
   const plain = s.replace(/(\d)(?:st|nd|rd|th)\b/i, "$1");
 
-  // Fallback to standard Date parsing
-  const d = new Date(plain);
+  // Fallback to standard Date parsing, only for text that looks like a date: Chrome reads "Deadline Time:" or "Lot 2" as a day in
+  // some year, which put tenders with no deadline under "due in 7 days" (Re-test 5 PL2). A year and a month name are required.
+  if (!/\b(?:19|20)\d{2}\b/.test(plain) || !/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i.test(plain)) return null;
+  // the time of day goes first: "14 July 2025, 12:00PM" is not a string Date accepts, "14 July 2025" is
+  const d = new Date(plain.replace(/[,\s]+\d{1,2}:\d{2}.*$/, ""));
   return isNaN(d.getTime()) ? null : d;
 }
 
@@ -6080,9 +6092,13 @@ function filteredAndSortedRows() {
           // A row with some of the words is a partial match: it stays in the list, ranked after the full matches
           // (Re-test 4 TN2: 37 of 38 open tenders sat behind "weaker matches"). Only a row with none of them is collapsed.
           if (level === "some" && hasDesc) row._partial = true;
-          else if (level === "none") {
+          else if (level === "none" && !hasDesc) {
+            // A title-only portal (Public Contracts Scotland, Find a Tender lists) matched this on notice text the table does not show
+            // ("Making Data Count for NHS" for "business intelligence", Re-test 5 TN2): it stays in the list, ranked after the others.
+            row._partial = true;
+          } else if (level === "none") {
             if (!state.showLooseMatches) return false;
-            row._loose = true;   // shown only when asked for, after the real matches
+            row._loose = true;   // its own description lacks the words: shown only when asked for, after the real matches
           }
         }
         row._match_reason = "portal";
@@ -7714,8 +7730,7 @@ function dashDaysLeft(deadline, now = Date.now()) {
     const t = d && s.match(/\s(\d{1,2}):(\d{2})/);
     if (t) d.setHours(+t[1], +t[2], 0, 0);
   }
-  if (!d) d = new Date(s);
-  if (isNaN(d)) return null;
+  if (!d || isNaN(d)) return null;   // text that is not a date (a blank, "N/A", "Deadline Time:") has no days left
   return Math.ceil((d - now) / 86400000);
 }
 
@@ -7956,7 +7971,7 @@ function renderPipelineBoard() {
       const key = item.tender_key;
       const daysLeft = dashDaysLeft(item.submission_deadline, now);
       const daysHtml = daysLeft !== null
-        ? `<span class="dash-card__days ${daysLeft <= 7 ? "dash-card__days--urgent" : ""}">${daysLeft >= 0 ? daysLeft + "d left" : "Closed " + esc(item.submission_deadline || "")}</span>`
+        ? `<span class="dash-card__days ${daysLeft <= 7 ? "dash-card__days--urgent" : ""}">${daysLeft >= 0 ? daysLeft + "d left" : "Closed " + esc((() => { const d = parseDate(item.submission_deadline); return d ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : (item.submission_deadline || ""); })())}</span>`
         : "";
       const aiChip = item.ai_score != null
         ? `<span class="fit-badge-deep-pill fit-badge-deep-pill--${item.ai_band}" title="AI deep score: ${item.ai_score}/100 (a separate measure from the Keyword Score)">★ ${item.ai_score}</span>`
@@ -8594,7 +8609,7 @@ function syncSearchUrl() {
     if (!(state.q || "").trim()) return;
     const u = new URL(location.href);
     for (const k of ["q", "mode", "portals", "scope"]) u.searchParams.delete(k);
-    const want = SearchUrl.toParams(state, _selectedPortals ? [..._selectedPortals] : null);
+    const want = SearchUrl.toParams(state, _selectedPortals ? [..._selectedPortals] : null, true);
     want.forEach((v, k) => u.searchParams.set(k, v));
     const next = u.pathname + u.search + u.hash;
     if (next !== location.pathname + location.search + location.hash) history.replaceState(null, "", next);
@@ -25127,6 +25142,7 @@ function initAll() {
       state.statusFilter = want.mode;
       syncStatusFilterUI();
       if (want.portals) _selectedPortals = new Set(want.portals);
+      else if (want.all) _selectedPortals = null;
       if (want.scope) {
         state.keywordScope = want.scope;
         if ($("keywordScopeSelect")) $("keywordScopeSelect").value = want.scope;

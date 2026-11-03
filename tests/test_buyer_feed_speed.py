@@ -60,6 +60,17 @@ def test_top_suppliers_are_kept_between_requests():
         conn.close()
 
 
+def test_a_frameworks_only_search_returns_buyers_and_a_repeat_is_instant():
+    """It used to de-duplicate every award, twice (over 40 s live). The buyers must still come back, with the real total."""
+    c = _client()
+    first, data = _timed(c, "/api/buyers/search?frameworks_only=1")
+    assert data["ok"] and data["buyers"] and data["total"] >= len(data["buyers"]), data.get("total")
+    assert first < 20, first
+    again, data2 = _timed(c, "/api/buyers/search?frameworks_only=1")
+    assert again < 0.5 and data2["total"] == data["total"], again
+    _timed(c, "/api/buyers/search?date_range=2")
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in sorted(globals().items()):

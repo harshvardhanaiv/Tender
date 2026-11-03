@@ -7,11 +7,13 @@
   const SCOPES = ["title", "supplier", "buyer"];
 
   // state: { q, statusFilter, keywordScope }; portals: array of selected portal ids, or null for all; validPortals: ids that exist.
-  function toParams(state, portals) {
+  // explicitAll: write portals=all when every portal is selected, so a shared link never depends on the reader's saved portals.
+  function toParams(state, portals, explicitAll) {
     const p = new URLSearchParams();
     if (state.q) p.set("q", state.q);
     if (state.statusFilter && state.statusFilter !== "opportunities" && state.statusFilter !== "none") p.set("mode", state.statusFilter);
     if (portals && portals.length) p.set("portals", portals.join(","));
+    else if (explicitAll && state.q) p.set("portals", "all");
     if (state.keywordScope && SCOPES.includes(state.keywordScope)) p.set("scope", state.keywordScope);
     return p;
   }
@@ -22,6 +24,7 @@
     const mode = MODES[(p.get("mode") || "").toLowerCase()];
     if (mode) out.mode = mode;
     const ids = (p.get("portals") || "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 1 && ids[0].toLowerCase() === "all") out.all = true;
     const known = validPortals ? ids.filter((id) => validPortals.includes(id)) : ids;
     if (known.length) out.portals = known;
     const scope = (p.get("scope") || "").toLowerCase();

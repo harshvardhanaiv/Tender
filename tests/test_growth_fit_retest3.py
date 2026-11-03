@@ -58,6 +58,14 @@ def test_a_councils_own_scheme_is_not_a_developer_to_pitch_to():
     assert out and out[0]["target"]["targetable"] is False and "council" in out[0]["target"]["reason"].lower(), out[0]["target"]
 
 
+def test_a_council_named_as_a_bare_place_is_still_the_authority_not_a_client():
+    """Re-test 4 live check: "Derbyshire Dales" (no "council" in the name) kept a fit of 80 and a Start campaign button."""
+    out = gs.development_signals([planning(applicant_company="Derbyshire Dales", authority="Derbyshire Dales")], "preset", TODAY)
+    assert out[0]["target"]["targetable"] is False and out[0]["fit"] <= gs.COUNCIL_SCHEME_CAP, out[0]["fit"]
+    other = gs.development_signals([planning(applicant_company="Dales Homes Ltd", authority="Derbyshire Dales")], "preset", TODAY)
+    assert other[0]["target"]["targetable"] is True
+
+
 def test_notice_titles_lose_their_award_tail_and_reference_and_summaries_are_cut_at_a_word():
     """GS3: '... Work Services - AWARD' and 'Milton Key' (a word cut in two)."""
     assert gs.clean_notice_title("Mechanical and Electrical Work Services - AWARD") == "Mechanical and Electrical Work Services"

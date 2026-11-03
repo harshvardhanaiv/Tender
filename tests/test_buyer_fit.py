@@ -113,3 +113,11 @@ def test_a_renewal_days_away_is_worth_nothing_and_one_in_four_to_nine_months_is_
     by = {x["key"]: x["note"] for x in f}
     assert "too close to act on" in by["renewal"] and "tomorrow" not in by["renewal"] and by["sector"].startswith("38 of 290")
     assert bf.day_phrase(0) == "today" and bf.day_phrase(1) == "tomorrow" and bf.day_phrase(3) == "in 3 days"
+
+
+def test_retest5_b2_one_passing_word_is_not_a_service():
+    """A software firm that mentions research and training in passing is not selling print, media buying or teaching."""
+    divisions = bf.infer_divisions("AIVHUB LTD business intelligence (BI), data analytics, and AI-powered decision-support software. We do research and training.")
+    assert "72" in divisions and "79" not in divisions and "80" not in divisions, divisions
+    assert bf.infer_divisions("TVD Driveways Ltd driveway paving surfacing") == ["45"]
+    assert bf.infer_divisions("we do cleaning") == ["90"], "a profile that names one service still has it"

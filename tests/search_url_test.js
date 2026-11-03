@@ -33,5 +33,14 @@ test("search() and initAll use SearchUrl and the page loads it before app.js", (
   const html = fs.readFileSync(path.join(__dirname, "..", "web", "index.html"), "utf8");
   assert.ok(html.indexOf("/search-url.js") > 0 && html.indexOf("/search-url.js") < html.indexOf("/app.js"));
 });
+test("a shared link says which portals it means, and they win over the reader's saved portals (Re-test 5 TN5)", () => {
+  const all = SearchUrl.toParams({ q: "bi", statusFilter: "opportunities", keywordScope: "all" }, null, true).toString();
+  assert.equal(all, "q=bi&portals=all");
+  assert.equal(SearchUrl.fromSearch("?q=bi&portals=all", PORTALS).all, true);
+  assert.equal(SearchUrl.fromSearch("?q=bi&portals=all", PORTALS).portals, null);
+  const fn = app.slice(app.indexOf("function loadPortalPrefs()"), app.indexOf("function reconcilePortalCatalogue()"));
+  assert.ok(fn.indexOf("SearchUrl.fromSearch(location.search") > 0 && fn.indexOf("SearchUrl.fromSearch(location.search") < fn.indexOf("lsGet(LS_PORTAL"), "the address must be read before the saved portals");
+  assert.ok(app.includes("!/[?&]portals=/.test(location.search)"), "the catalogue reconcile must not rewrite a portals= link");
+});
 console.log(`\n${passed} of ${passed + failed} passed`);
 process.exit(failed ? 1 : 0);

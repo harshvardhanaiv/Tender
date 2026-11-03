@@ -66,7 +66,10 @@ def infer_divisions(text: str) -> list[str]:
         if hits:
             scored.append((hits, div))
     scored.sort(key=lambda t: (-t[0], t[1]))
-    return [d for _h, d in scored][:6]
+    # One passing word is not a service: "research" or "training" in a software firm's profile made "business services" (print, media buying)
+    # and "education" its sectors and scored unrelated renewals (Re-test 5 B2). A division needs two of its words, unless nothing has two.
+    strong = [t for t in scored if t[0] >= 2]
+    return [d for _h, d in (strong or scored[:1])][:6]
 
 
 def sector_share(shares: dict[str, int] | None, divisions: list[str]) -> tuple[float, int, int]:

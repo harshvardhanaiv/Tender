@@ -33,5 +33,12 @@ test("TN3: the closed-hidden count does not depend on the weaker-matches toggle"
   assert.ok(app.includes("state.showLooseMatches = looseWas;"));
 });
 
+test("Re-test 5 TN2: a title-only portal hit with none of the words stays in the list, ranked last", () => {
+  const i = app.indexOf('else if (level === "none" && !hasDesc)');
+  assert.ok(i > 0, "the title-only branch exists");
+  assert.ok(app.slice(i, i + 500).includes("row._partial = true"), "it becomes a partial match, not a hidden loose one");
+  assert.ok(/\} else if \(level === "none"\) \{\s+if \(!state\.showLooseMatches\) return false;/.test(app), "a row whose own description lacks the words is still collapsed");
+});
+
 console.log(`\n${passed} of ${passed + failed} passed`);
 process.exitCode = failed ? 1 : 0;

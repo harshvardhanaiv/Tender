@@ -511,10 +511,21 @@ def _council_name(name: str) -> str | None:
     return None
 
 
+# Entries that are not buyers: a bare number ("2307564.27"), an address line ("2nd Floor"), a tender reference that stands where the buyer
+# should be ("019-SN-24 Leisure Services Software Mana..."). They are kept out of the buyer lists (Re-test 5 BN5).
+JUNK_BUYER_NAME_RE = re.compile(r"^[\s\d.,/\-]+$|^\s*\d+(?:st|nd|rd|th)?\s+floor\b|^\s*\d{2,4}[-/][A-Za-z]{2,6}[-/]\d{2}\b", re.I)
+JUNK_BUYER_NAME_SQL = r"(authority_name ~* '^[[:space:][:digit:].,/-]+$' OR authority_name ~* '^\s*[0-9]+(st|nd|rd|th)?\s+floor\y' OR authority_name ~* '^\s*[0-9]{2,4}[-/][a-z]{2,6}[-/][0-9]{2}\y')"
+
+
+def is_junk_buyer_name(name: str | None) -> bool:
+    return bool(JUNK_BUYER_NAME_RE.search(name or ""))
+
+
 def canonical_authority_name(name: str | None) -> str | None:
     """The buyer's usual name when `name` is a known alias of it, else `name` unchanged."""
     if not name:
         return name
+    name = name.rstrip(" .,;:") if re.search(r"[A-Za-z]{3}[.,;:]+\s*$", name) else name   # "Ministry of Justice." -> "Ministry of Justice"
     borough = _london_borough(name)
     if borough:
         return borough

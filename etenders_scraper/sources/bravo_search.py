@@ -191,7 +191,7 @@ def _finalize_bravo_rows(
 _DETAIL_FILL_FIELDS = ("estimated_value_eur", "procedure", "date_published")
 _DETAIL_FILL_WORKERS = 8
 _DETAIL_FILL_MAX_ROWS = 60
-_DETAIL_FILL_BUDGET = 75.0
+_DETAIL_FILL_BUDGET = 25.0   # was 75: with the stored index answering first, a live PCS search took 82 s (Re-test 4 T3)
 
 
 def _fill_missing_from_details(rows: list[dict[str, Any]], site_root: str) -> None:

@@ -4773,6 +4773,23 @@ def create_app() -> Flask:
             except Exception as exc:  # the index is a shortcut: a failure must never cost the search its rows
                 print(f"[Search] index read skipped: {exc}", flush=True)
                 index_rows, index_fresh = [], {}
+        # A portal that could not answer this search (Find a Tender answers HTTP 429 under load) is served from its saved notices instead of
+        # leaving the table without it (Re-test 5 TN4). The saved copy is filled by the scheduled index.
+        failed_ocds = [src for src in ("find_tender", "contracts_finder")
+                       if src in (meta.get("errors") or {}) and (scope == "all" or src in scope.split(","))]
+        if failed_ocds and os.environ.get("SEARCH_USE_INDEX", "1") != "0":
+            try:
+                from tender_app import tender_index as _ti
+                _fc = get_db_connection()
+                try:
+                    saved = _ti.stored_rows(_fc.cursor(), split_terms(q), failed_ocds)
+                finally:
+                    _fc.close()
+                saved = [r for r in translate_row_list(saved) if not _is_invalid_tender_row(r, q)]
+                index_rows = list(index_rows) + saved
+                meta["served_from_saved"] = {src: sum(1 for r in saved if r.get("source") == src) for src in failed_ocds}
+            except Exception as exc:
+                print(f"[Search] saved fallback skipped: {exc}", flush=True)
         db_rows = list(index_rows) + list(db_rows or [])
         _d = count_by_source(db_rows or [])
 

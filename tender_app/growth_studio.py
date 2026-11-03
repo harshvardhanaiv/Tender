@@ -732,6 +732,14 @@ def _applicant(row: Mapping[str, Any]) -> str | None:
     return company
 
 
+def _is_the_authority(developer: str, row: Mapping[str, Any]) -> bool:
+    """The applicant is the planning authority itself, named as a bare place ("Derbyshire Dales"), which the public-body words miss."""
+    def key(text: Any) -> str:
+        return re.sub(r"\b(?:the|council|borough|district|city|county|metropolitan|of|london)\b|[^a-z]+", "", str(text or "").lower())
+
+    return bool(key(developer)) and key(developer) == key(row.get("authority"))
+
+
 def development_signals(rows: Iterable[Mapping[str, Any]], strength: str, today: date) -> list[dict[str, Any]]:
     out = []
     for row in rows:
@@ -739,7 +747,7 @@ def development_signals(rows: Iterable[Mapping[str, Any]], strength: str, today:
         if not isinstance(decided, date) or decided > today or is_screening_opinion(row.get("description")):
             continue
         developer = _applicant(row)
-        fit = score_development(row, strength, today, public_body=bool(developer and is_public_body(developer)))
+        fit = score_development(row, strength, today, public_body=bool(developer and (is_public_body(developer) or _is_the_authority(developer, row))))
         dwellings = row.get("n_dwellings") or 0
         scheme = (f"{dwellings:,} dwellings" if dwellings > 1 else "a major scheme" if row.get("app_size") == "Large" else "a scheme")
         scheme_text = f"{scheme} at {row['address'].strip()}" if (row.get("address") or "").strip() else f"{scheme} in {row.get('authority')}"
@@ -773,7 +781,7 @@ def development_signals(rows: Iterable[Mapping[str, Any]], strength: str, today:
             },
             "target": (
                 {"name": developer, "key": "dev:" + (mr.canonical_supplier_key(developer) or developer.upper()), "targetable": True, "reason": None}
-                if developer and not is_public_body(developer) else
+                if developer and not (is_public_body(developer) or _is_the_authority(developer, row)) else
                 {"name": None, "key": None, "targetable": False,
                  "reason": "This is a council's own scheme: it will tender it. Watch for the contract notice instead of approaching it as a developer."}
                 if developer else

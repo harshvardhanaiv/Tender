@@ -26,6 +26,7 @@ from etenders_scraper.awards import (
     PLACEHOLDER_COORDS,
     UK_IE_SOURCE_PORTALS,
     SINGLE_AWARD_STATS_CEILING_GBP,
+    JUNK_BUYER_NAME_SQL,
     DEDUPED_AWARDS_CTE_SQL,
     PANEL_MIN_SUPPLIERS,
     PANEL_MIN_VALUE,
@@ -353,6 +354,7 @@ def refresh_buyer_stats(conn, from_table: bool = False) -> int:
             FROM deduped_awards
             WHERE authority_name IS NOT NULL AND TRIM(authority_name) != '' AND LENGTH(TRIM(authority_name)) > 2
               AND authority_name NOT IN ('Unknown', 'Not available', 'N/A')
+              AND NOT {JUNK_BUYER_NAME_SQL}
         ) ca
         GROUP BY k
         ON CONFLICT (authority_key) DO UPDATE SET

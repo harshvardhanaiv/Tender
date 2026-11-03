@@ -128,6 +128,12 @@ def _fetch_buyer_contact_info(cursor, conn, authority_name: str) -> dict[str, st
     return contact_info
 
 
+def _readable_title(value: Any) -> str:
+    """A contract title to name in a sentence, or "" when the notice gave a number or a code ("4000000 is due to renew")."""
+    text = (value or "").strip() if isinstance(value, str) else ""
+    return text if len(re.findall(r"[A-Za-z]", text)) >= 4 else ""
+
+
 def _unset(value: Any) -> bool:
     return not value or value == "Not available"
 
@@ -442,6 +448,11 @@ def resolve_authority_coords(auth_name: str, existing_lat: float | None, existin
 
 # ── BUYER SEARCH & LIST ────────────────────────────────────────────────────
 
+# Searches that cannot use buyer_stats (frameworks only, or a date range) aggregate the awards: keep the answer for a few minutes.
+_SLOW_SEARCH_CACHE: dict[Any, tuple[float, Any]] = {}
+_SLOW_SEARCH_TTL_S = 600.0
+
+
 @buyers_bp.route("/api/buyers/search", methods=["GET"])
 def search_buyers():
     """
@@ -521,7 +532,12 @@ def search_buyers():
                 conn.rollback()
                 rows = None
 
+        slow_key = (q.lower(), buyer_type_filter, sort_by, date_preset, min_spend, frameworks_only)
+        aggregated = rows is None
         if rows is None:
+            hit = _SLOW_SEARCH_CACHE.get(slow_key)
+            if hit and time.time() - hit[0] < _SLOW_SEARCH_TTL_S:
+                return jsonify(hit[1])
             # Framework awards carry a shared ceiling value across every appointed
             # supplier, not a per-buyer spend figure — summing them alongside direct
             # awards inflates total_spend by however many suppliers share the
@@ -539,8 +555,16 @@ def search_buyers():
             # returning ALL CAPS) doesn't fragment into duplicate buyer rows — but
             # still display a real, naturally-cased name (prefer a non-all-caps
             # variant if one exists) rather than the normalized key itself.
+            # Rows the filters below would drop anyway are left out BEFORE the de-duplication, which sorts every award: a frameworks-only
+            # or date-limited search de-duplicated all ~500k awards, then threw most away (over 40 s on the live database).
+            early = []
+            if frameworks_only:
+                early.append("is_framework = 1")
+            if date_preset != "all":
+                early.append(f"date_signed >= '{cutoff_date}'")
+            awards_cte = deduped_awards_cte_sql(" AND ".join(early)) if early else DEDUPED_AWARDS_CTE_SQL
             query = f"""
-                WITH {DEDUPED_AWARDS_CTE_SQL}
+                WITH {awards_cte}
                 SELECT
                     (ARRAY_AGG(TRIM(ca.authority_name) ORDER BY
                         (TRIM(ca.authority_name) = UPPER(TRIM(ca.authority_name))) ASC,
@@ -555,7 +579,8 @@ def search_buyers():
                     MAX(ca.date_signed) as latest_award_date,
                     MAX(ca.contract_end_date) as max_renewal_date,
                     (ARRAY_AGG(ca.latitude ORDER BY ca.date_signed DESC NULLS LAST) FILTER (WHERE {_REAL_COORD_SQL}))[1] as latitude,
-                    (ARRAY_AGG(ca.longitude ORDER BY ca.date_signed DESC NULLS LAST) FILTER (WHERE {_REAL_COORD_SQL}))[1] as longitude
+                    (ARRAY_AGG(ca.longitude ORDER BY ca.date_signed DESC NULLS LAST) FILTER (WHERE {_REAL_COORD_SQL}))[1] as longitude,
+                    COUNT(*) OVER () as total_groups
                 FROM deduped_awards ca
                 WHERE {where_sql}
                 GROUP BY {_norm_auth_sql("ca.authority_name")}
@@ -569,27 +594,12 @@ def search_buyers():
             else:
                 query += " ORDER BY total_spend DESC NULLS LAST"
 
-            # Real total count of matching buyer groups, independent of the LIMIT 500 below
-            # (which only bounds how many rows we return for display) — the query previously
-            # reported len(buyers) as "total", which silently equalled the display cap once
-            # more than 500 buyers matched.
-            count_query = f"""
-                WITH {DEDUPED_AWARDS_CTE_SQL}
-                SELECT COUNT(*) FROM (
-                    SELECT {_norm_auth_sql("ca.authority_name")} as norm_name
-                    FROM deduped_awards ca
-                    WHERE {where_sql}
-                    GROUP BY {_norm_auth_sql("ca.authority_name")}
-                    {having_sql}
-                ) t
-            """
-            _execute(cursor, conn, count_query, params)
-            total_matching = cursor.fetchone()[0]
-
             query += " LIMIT 500"
-
             _execute(cursor, conn, query, params)
             rows = cursor.fetchall()
+            # The total comes from the same pass (a window count over every matching buyer group, taken before the LIMIT):
+            # a second COUNT query de-duplicated every award again.
+            total_matching = _row_to_dict(cursor, rows[0]).get("total_groups", len(rows)) if rows else 0
 
         buyers = []
         for row in rows:
@@ -633,7 +643,12 @@ def search_buyers():
                 "coords_approximate": bool(coords_approx) if (b_lat or b_lon) else None,
             })
 
-        return jsonify({"ok": True, "buyers": buyers, "total": total_matching})
+        payload = {"ok": True, "buyers": buyers, "total": total_matching}
+        if aggregated:
+            if len(_SLOW_SEARCH_CACHE) >= 40:
+                _SLOW_SEARCH_CACHE.clear()
+            _SLOW_SEARCH_CACHE[slow_key] = (time.time(), payload)
+        return jsonify(payload)
 
     except Exception as e:
         import traceback
@@ -1787,11 +1802,11 @@ def get_opportunity_feed():
                     if isinstance(_e, dict) and _e.get("date") and today_str <= _e["date"] <= horizon_str and (_best is None or _e["date"] < _best["date"]):
                         _best = _e
                 next_ren = _best["date"] if _best else ""
-                renewal_contract = (_best.get("title") or "").strip() if _best else ""
+                renewal_contract = _readable_title(_best.get("title")) if _best else ""
                 renewal_value = _best.get("value") if _best else None
             elif next_ren:
                 # no profile services to scope it by: the buyer's first renewal, named from the stats (empty until the next rebuild)
-                renewal_contract = (b.get("next_renewal_title") or "").strip() if rows_from_stats else ""
+                renewal_contract = _readable_title(b.get("next_renewal_title")) if rows_from_stats else ""
             days_until_renewal = 999
             if next_ren:
                 _d = _days_until(next_ren)

@@ -72,6 +72,35 @@ def test_stored_rows_are_found_by_words_and_come_back_as_live_rows():
         conn.close()
 
 
+def test_saved_find_a_tender_notices_stand_in_when_the_portal_cannot_answer():
+    """Re-test 5 TN4: Find a Tender answered HTTP 429 and the search showed nothing from it."""
+    from tender_app.db import get_db_connection
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        ti.ensure_tables(cur)
+        cur.execute("DELETE FROM tender_notices WHERE source = 'find_tender' AND resource_id LIKE 'ocds-zz-%'")
+        release = {"ocid": "ocds-zz-0001", "id": "ocds-zz-0001-1", "date": "2026-10-29T09:00:00Z", "tag": ["tender"],
+                   "buyer": {"name": "NHS Example Trust"},
+                   "tender": {"title": "Making Data Count for NHS", "description": "Business intelligence dashboards", "status": "active",
+                              "tenderPeriod": {"endDate": "2026-11-27T12:00:00Z"}, "value": {"amount": 250000, "currency": "GBP"}}}
+        n = ti.normalise_release(release, "find_tender", "Find a Tender", lambda r: "https://www.find-tender.service.gov.uk/Notice/" + r["uuid"], NOW)
+        ti.upsert_notices(cur, [n])
+        found = [r for r in ti.stored_rows(cur, ["business intelligence"], ["find_tender"]) if r["resource_id"] == "ocds-zz-0001"]
+        assert len(found) == 1, found
+        row = found[0]
+        assert row["source"] == "find_tender" and row["source_label"] == "Find a Tender" and row["title"] == "Making Data Count for NHS"
+        assert row["status"] == "Active" and row["submission_deadline"].startswith("27/11/2026") and row["estimated_value_eur"].startswith("250000")
+        assert row["from_saved"] is True
+        assert ti.stored_rows(cur, ["business intelligence"], ["pcs"]) == [], "only Find a Tender and Contracts Finder come from here"
+        assert ti.stored_rows(cur, [], ["find_tender"]) == []
+    finally:
+        conn.rollback()
+        cur.execute("DELETE FROM tender_notices WHERE source = 'find_tender' AND resource_id LIKE 'ocds-zz-%'")
+        conn.commit()
+        conn.close()
+
+
 def test_an_ordinary_run_stops_at_the_first_page_it_already_holds():
     from tender_app.db import get_db_connection
     from etenders_scraper.sources import bravo_search as bs

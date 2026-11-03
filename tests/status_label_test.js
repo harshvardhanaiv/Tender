@@ -133,6 +133,16 @@ test("re-test 3 PL1: Pipeline reads portal dates day first", () => {
   assert.equal(ctx.dashDaysLeft("not a date", now), null);
 });
 
+test("re-test 5 PL2: text that is not a date has no days left, so it is never 'due in 7 days'", () => {
+  const now = new Date(2026, 10, 2, 12, 0).getTime();
+  for (const junk of ["Deadline Time:", "N/A", "TBC", "Lot 2", "7", "Data Architecture 2", "See official notice", "-"]) {
+    assert.equal(ctx.dashDaysLeft(junk, now), null, junk);
+  }
+  assert.equal(ctx.dashDaysLeft("14 July 2025, 12:00PM", now) < 0, true);
+  assert.equal(ctx.dashDaysLeft("05 October 2026", now) < 0, true);
+  assert.equal(ctx.dashDaysLeft("17 November 2026", now), 15);
+});
+
 test("re-test 3 SN8/T8/G0: the selected supplier is in the address, the company's own name is not suggested, sections have addresses", () => {
   const src = fs.readFileSync(path.join(__dirname, "..", "web", "app.js"), "utf8");
   assert.ok(src.includes('parts.push("id=" + encodeURIComponent(supplierId))'), "the selected supplier is not written to the address");
