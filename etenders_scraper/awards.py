@@ -516,8 +516,9 @@ def _council_name(name: str) -> str | None:
 
 # Entries that are not buyers: a bare number ("2307564.27"), an address line ("2nd Floor"), a tender reference that stands where the buyer
 # should be ("019-SN-24 Leisure Services Software Mana..."). They are kept out of the buyer lists (Re-test 5 BN5).
-JUNK_BUYER_NAME_RE = re.compile(r"^[\s\d.,/\-]+$|^\s*\d+(?:st|nd|rd|th)?\s+floor\b|^\s*\d{2,4}[-/][A-Za-z]{2,6}[-/]\d{2}\b", re.I)
-JUNK_BUYER_NAME_SQL = r"(authority_name ~* '^[[:space:][:digit:].,/-]+$' OR authority_name ~* '^\s*[0-9]+(st|nd|rd|th)?\s+floor\y' OR authority_name ~* '^\s*[0-9]{2,4}[-/][a-z]{2,6}[-/][0-9]{2}\y')"
+JUNK_BUYER_NAME_RE = re.compile(r"^[\s\d.,/\-]+$|^\s*\d+(?:st|nd|rd|th)?\s+floor\b|^\s*\d{2,4}[-/][A-Za-z]{2,6}[-/]\d{2}\b|^\s*[0-9a-f]{24,}\s*$", re.I)
+# the last alternative: an identifier hash read as a name ("abb773bedbb680101b84a5305b961981", Re-test 6)
+JUNK_BUYER_NAME_SQL = r"(authority_name ~* '^[[:space:][:digit:].,/-]+$' OR authority_name ~* '^\s*[0-9]+(st|nd|rd|th)?\s+floor\y' OR authority_name ~* '^\s*[0-9]{2,4}[-/][a-z]{2,6}[-/][0-9]{2}\y' OR authority_name ~* '^\s*[0-9a-f]{24,}\s*$')"
 
 
 def is_junk_buyer_name(name: str | None) -> bool:

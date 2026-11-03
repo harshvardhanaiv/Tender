@@ -72,7 +72,8 @@ def test_retest4_b5_variants_of_one_body_are_one_buyer():
 
 def test_retest5_bn5_numbers_addresses_and_tender_references_are_not_buyers():
     from etenders_scraper.awards import is_junk_buyer_name
-    for junk in ("2307564.27", "2nd Floor", "019-SN-24 Leisure Services Software Mana", "159-SNBD-23 South Norfolk District Counc"):
+    for junk in ("2307564.27", "2nd Floor", "019-SN-24 Leisure Services Software Mana", "159-SNBD-23 South Norfolk District Counc",
+                 "abb773bedbb680101b84a5305b961981"):
         assert is_junk_buyer_name(junk), junk
     for real in ("2Gether Support Solutions Limited", "7 Force- Commercial Services", "Leeds City Council", "2 Sisters Food Group"):
         assert not is_junk_buyer_name(real), real

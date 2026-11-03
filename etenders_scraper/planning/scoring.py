@@ -128,13 +128,25 @@ _RESERVED_MATTERS_RE = re.compile(r"reserved\s+matters", re.IGNORECASE)
 _HOMES_WORDS_RE = re.compile(r"\b(dwellings?|homes?|houses?|housing|residential|apartments?|flats?|units?|bungalows?|plots?|bedrooms?)\b", re.IGNORECASE)
 
 
+# an element that is not housing: a reserved-matters application for one of these covers none of the scheme's homes. A phase of homes that
+# names none of them keeps the register's count (it may well be the housing itself).
+_NON_HOMES_WORDS_RE = re.compile(
+    r"\b(substation|school|landscaping|landscape|bund|drainage|highways?|roads?|open\s+space|play\s*(?:area|space|ground)|pumping|"
+    r"local\s+centre|community|retail|commercial|employment|shop|nursery|surgery|car\s+park(?:ing)?|signage|lighting|access)\b", re.IGNORECASE)
+_OUTLINE_CLAUSE_RE = re.compile(r"\b(?:pursuant\s+to|persuant\s+to|following|in\s+accordance\s+with|outline)\b", re.IGNORECASE)
+
+
 def scheme_dwellings(row: dict[str, Any]) -> int:
     """The homes this application itself covers. A reserved-matters application for one element of a big scheme (a school, a substation) carries
     the whole outline scheme's dwelling count in the register; unless its own description speaks of homes it covers none (Re-test 6 PN4)."""
     dwellings = row.get("n_dwellings") or 0
     description = row.get("description") or ""
-    if dwellings > 0 and _RESERVED_MATTERS_RE.search(description) and not _HOMES_WORDS_RE.search(description):
-        return 0
+    if dwellings > 0 and _RESERVED_MATTERS_RE.search(description):
+        # what this application is for comes before it quotes the outline permission it follows ("...School Substation ... pursuant to
+        # permission ... Outline application for ... 2750 homes"): only that first part can say it covers homes
+        own = _OUTLINE_CLAUSE_RE.split(description, maxsplit=1)[0]
+        if _NON_HOMES_WORDS_RE.search(own) and not _HOMES_WORDS_RE.search(own):
+            return 0
     return dwellings
 
 

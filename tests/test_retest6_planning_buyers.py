@@ -23,6 +23,15 @@ def test_a_reserved_matters_element_covers_none_of_the_schemes_homes():
     assert scheme_dwellings(school) == 0
     homes = {"n_dwellings": 2750, "description": "Reserved matters for 120 dwellings and associated landscaping"}
     assert scheme_dwellings(homes) == 2750
+    # the live descriptions quote the outline permission's homes after the clause that says what this application is for
+    quoted = {"n_dwellings": 2750, "description": "Reserved Matters Application for School Substation of the Towcester Grange development pursuant to planning permission S/2007/0374/OUTWNS) Outline application for the creation of a new mixed use neighbourhood at Towcester comprising: 2750 homes; employment land"}
+    assert scheme_dwellings(quoted) == 0
+    bund = {"n_dwellings": 1200, "description": "Approval of all reserved matters (except for access) relating to the construction of an earth bund pursuant to outline permission H/2022/0181 (Outline planning application for the erection of up to 1200no. dwellings"}
+    assert scheme_dwellings(bund) == 0
+    own = {"n_dwellings": 1400, "description": "Reserved matters for 120 dwellings following outline permission for up to 1,400 new homes"}
+    assert scheme_dwellings(own) == 1400, "an application that itself names homes keeps the register's count"
+    phase = {"n_dwellings": 2170, "description": "Application for Approval of Reserved Matters (Appearance, Layout and Scale) of Phase 2 following approval of Outline Planning Permission"}
+    assert scheme_dwellings(phase) == 2170, "a phase that names no non-housing element may be the housing itself"
     outline = {"n_dwellings": 2750, "description": "Outline application for a new community with a school"}
     assert scheme_dwellings(outline) == 2750, "only reserved matters are changed"
 
