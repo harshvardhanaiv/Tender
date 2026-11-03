@@ -77,3 +77,12 @@ def test_retest5_bn5_numbers_addresses_and_tender_references_are_not_buyers():
     for real in ("2Gether Support Solutions Limited", "7 Force- Commercial Services", "Leeds City Council", "2 Sisters Food Group"):
         assert not is_junk_buyer_name(real), real
     assert canon("Ministry of Justice.") == "Ministry of Justice"
+
+
+def test_retest6_bn5_seven_forces_and_a2dominion_variants_merge():
+    for name in ("7 Forces Procurement", "7 Forces Commercial Services", "7 Force Commercial Services", "7 Force- Commercial Services"):
+        assert canon(name) == "7 Forces Procurement", name
+    for name in ("A2Dominion", "A2Dominion Housing Group Ltd", "A2 Dominion Housing Group Ltd.", "A2Dominion Group", "A2Dominion Housing Group ltd",
+                 "A2DOMINION HOUSING GROUP LIMITED", "A2Dominion Group Limited", "A2Dominion Housing Group Ltd (A2D)"):
+        assert canon(name) == "A2Dominion", name
+    assert canon("7 Sisters Housing") == "7 Sisters Housing"

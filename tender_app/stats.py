@@ -411,7 +411,10 @@ def refresh_buyer_stats(conn, from_table: bool = False) -> int:
                       SELECT {_norm_auth_sql('authority_name')} AS k, LEFT(cpv_code, 2) AS div, contract_end_date AS d, LEFT(tender_title, 80) AS ttl,
                              CASE WHEN is_framework = 1 OR contract_value < 0 OR contract_value > {SINGLE_AWARD_STATS_CEILING_GBP} THEN NULL ELSE contract_value END AS val
                       FROM deduped_awards
-                      WHERE authority_name IS NOT NULL AND cpv_code ~ '^[0-9][0-9]' AND cpv_code NOT LIKE '00%%' AND contract_end_date >= %s) x
+                      WHERE authority_name IS NOT NULL AND cpv_code ~ '^[0-9][0-9]' AND cpv_code NOT LIKE '00%%' AND contract_end_date >= %s
+                        -- a financial or legal adviser filed under "systems consultancy" (CPV 7222) is not an IT renewal (Re-test 6: Ofgem);
+                        -- software for legal or audit work (CPV 7226) is IT and stays
+                        AND NOT (cpv_code LIKE '7222%%' AND tender_title ~* '(^|[^a-z])(financial|legal|actuarial|audit|accountan)')) x
                   ORDER BY k, div, d) y GROUP BY k) t
         WHERE b.authority_key = t.k
     """, ((datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d"),))

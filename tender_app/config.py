@@ -18,6 +18,9 @@ CREDIT_COST_AI_DOWNLOAD = int(os.environ.get("CREDIT_COST_AI_DOWNLOAD", "3"))
 CREDIT_COST_ENRICH = int(os.environ.get("CREDIT_COST_ENRICH", "3"))
 CREDIT_COST_GANTT  = int(os.environ.get("CREDIT_COST_GANTT",  "2"))
 CREDIT_COST_METHODOLOGY = int(os.environ.get("CREDIT_COST_METHODOLOGY", "2"))
+# Supplier Intelligence: the AI summary and the BD Playbook of one supplier. 0 makes either free.
+CREDIT_COST_SUPPLIER_SUMMARY = int(os.environ.get("CREDIT_COST_SUPPLIER_SUMMARY", "1"))
+CREDIT_COST_BD_PLAYBOOK = int(os.environ.get("CREDIT_COST_BD_PLAYBOOK", "3"))
 # Growth Studio: an AI-written first draft of an outreach message. Signals, template drafts, exports
 # and campaign tracking are free. 0 makes the AI draft free too (require_credits skips a cost <= 0).
 CREDIT_COST_GROWTH_DRAFT = int(os.environ.get("CREDIT_COST_GROWTH_DRAFT", "2"))

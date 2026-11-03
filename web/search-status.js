@@ -99,8 +99,11 @@
     let n = total;
     let text;
     if (list.length && !searching) {
-      n = list.filter((p) => p.status === "ok" || p.status === "empty").length;
+      // A portal that failed but whose saved notices are in the list still has an answer (Re-test 5 TN4): counted, and said to be from saved copies.
+      const fromSaved = list.filter((p) => FAILED.has(p.status) && p.stored > 0).length;
+      n = list.filter((p) => p.status === "ok" || p.status === "empty").length + fromSaved;
       text = n < total ? `${n} of ${plural(total, "portal")} answered` : `Across ${plural(total, "portal")}`;
+      if (fromSaved) text += ` (${fromSaved} from saved copies)`;
     } else {
       text = `Across ${plural(total, "portal")}`;
     }
@@ -194,7 +197,12 @@
   /* "<b>Name</b> did not respond in time" when the portal's own message already starts with its name
      (the server words them that way), otherwise "<b>Name</b>: message". */
   function reasonLine(p, e) {
-    const message = String(p.message);
+    let message = String(p.message);
+    // the list is not empty: say what is in it, so "try again" does not read as "nothing here" (Re-test 6)
+    if (p.stored > 0 && /429|rate.?limit/i.test(message)) {
+      message = message.replace(/\s*Try again in a (minute|few moments)\.?$/i, "")
+        + ` ${p.count > 0 ? `${fmtInt(p.count)} live result${p.count === 1 ? "" : "s"} and ` : ""}${fmtInt(p.stored)} saved from earlier searches are shown; press Retry for the full live list.`;
+    }
     const name = String(p.label).replace(/\s*\([^)]*\)\s*$/, "");
     if (name && message.toLowerCase().startsWith(name.toLowerCase())) {
       return `<b>${e(message.slice(0, name.length))}</b>${e(message.slice(name.length))}`;

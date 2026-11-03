@@ -24,9 +24,12 @@ test("they are read back, and unknown values fall back to the defaults", () => {
   assert.equal(SearchUrl.fromSearch("?mode=awarded", PORTALS).mode, "awards");
   assert.equal(SearchUrl.fromSearch("", PORTALS).mode, "opportunities");
 });
-test("a saved 'All' no longer overrides the default: the page opens on Opportunities", () => {
-  assert.ok(!/state\.statusFilter\s*=\s*lsGet\(LS_STATUS_FILTER/.test(app), "the saved notice type must not be restored on load");
+test("the page opens on the tab the reader last used, and a link with a search says its own mode", () => {
+  assert.ok(app.includes('const savedStatus = lsGet(LS_STATUS_FILTER, "opportunities");'), "the last tab is restored on load");
+  assert.ok(app.includes('["opportunities", "awards", "all"].includes(savedStatus)'), "only a known tab is restored");
   assert.ok(!/state\.statusFilter = p\.status_filter/.test(app), "the account's saved notice type must not be applied on load");
+  assert.ok(app.includes("state.statusFilter = want.mode;"), "a link's own mode wins over the saved tab");
+  assert.equal(SearchUrl.fromSearch("?q=x", PORTALS).mode, "opportunities", "a link with no mode means Opportunities");
 });
 test("search() and initAll use SearchUrl and the page loads it before app.js", () => {
   assert.ok(app.includes("function syncSearchUrl()") && app.includes("SearchUrl.fromSearch("));

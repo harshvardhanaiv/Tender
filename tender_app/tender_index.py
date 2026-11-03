@@ -527,7 +527,7 @@ def start_scheduler(get_conn: Callable[[], Any], every_s: float = 2 * 3600, firs
     import os
     import threading
 
-    def keep_fresh(label: str, run: Callable[[], Any], delay_s: float) -> None:
+    def keep_fresh(label: str, run: Callable[[], Any], delay_s: float, interval_s: float | None = None) -> None:
         def loop() -> None:
             time.sleep(delay_s)
             while True:
@@ -535,7 +535,7 @@ def start_scheduler(get_conn: Callable[[], Any], every_s: float = 2 * 3600, firs
                     print(f"[Index] {label}:", run(), flush=True)
                 except Exception as exc:  # noqa: BLE001
                     print(f"[Index] {label} run failed: {type(exc).__name__}: {exc}", flush=True)
-                time.sleep(every_s)
+                time.sleep(interval_s or every_s)
 
         threading.Thread(target=loop, daemon=True, name=f"{label}Index").start()
 
@@ -545,7 +545,9 @@ def start_scheduler(get_conn: Callable[[], Any], every_s: float = 2 * 3600, firs
     # two portals live. `INDEX_OCDS_ENABLED=0` switches these two off; they start a few minutes apart from PCS and each other.
     if os.environ.get("INDEX_OCDS_ENABLED", "1") != "0":
         keep_fresh("ContractsFinder", lambda: ingest_contracts_finder(get_conn, days=2, max_pages=10), first_delay_s + 600)
-        keep_fresh("FindTender", lambda: ingest_find_tender(get_conn, days=2, max_pages=10), first_delay_s + 1200)
+        # Search answers from this copy first (Re-test 6 TN4/T3), so it is refreshed every 30 minutes; a failed run backs off to the next one.
+        keep_fresh("FindTender", lambda: ingest_find_tender(get_conn, days=2, max_pages=10), first_delay_s + 1200,
+                   float(os.environ.get("INDEX_FIND_TENDER_EVERY_S", "1800")))
 
 
 def index_status(cursor) -> list[dict[str, Any]]:

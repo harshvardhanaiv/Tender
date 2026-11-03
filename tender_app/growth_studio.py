@@ -49,7 +49,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Callable, Iterable, Mapping
 
 from etenders_scraper.awards import UK_IE_SOURCE_PORTALS
-from etenders_scraper.planning.scoring import lead_score
+from etenders_scraper.planning.scoring import lead_score, scheme_dwellings
 from tender_app import email_rich as er
 from tender_app import market_radar as mr
 from tender_app.text_fix import clean_notice_title  # noqa: F401  (History shares it; still importable from here)
@@ -537,9 +537,10 @@ def score_development(row: Mapping[str, Any], strength: str, today: date, public
     else:
         timing, timing_note = 0, f"Approved {ago_text(age)}: most packages will already be let"
 
-    category = 7 if strength == "keyword" else 10
+    # An approval does not say which trade it needs: only the words the reader searched for earn a few points (Re-test 6 GS2)
+    category = 7 if strength == "keyword" else 0
     developer = bool(_applicant(row))
-    dwellings = (row.get("n_dwellings") or 0) >= 1
+    dwellings = scheme_dwellings(row) >= 1
     address = bool((row.get("address") or "").strip())
     approach = (30 if developer else 0) + (3 if dwellings else 0) + (2 if address else 0)
     named = [what for ok, what in ((developer, "the developer"), (dwellings, "a dwelling count"), (address, "a site address")) if ok]
@@ -549,8 +550,9 @@ def score_development(row: Mapping[str, Any], strength: str, today: date, public
     result = _finish([
         _part("scheme", "Scheme", potential, 35, f"Planning Leads rates this scheme {planning} out of 100 for size, decision, stage and recency"),
         _part("timing", "Timing", timing, 20, timing_note),
-        _part("category", "Category", category, 10,
-              "Approvals are relevant to " + ("your category" if strength != "keyword" else "the words in your search")),
+        _part("category", "Category", category, 10 if strength == "keyword" else 0,
+              "The scheme's description uses the words in your search" if strength == "keyword"
+              else "A planning approval does not say which trade it needs, so it earns no category points"),
         _part("approach", "Someone to approach", approach, 35, approach_note),
     ])
     if not developer and result["score"] > NO_DEVELOPER_CAP:
@@ -748,11 +750,11 @@ def development_signals(rows: Iterable[Mapping[str, Any]], strength: str, today:
             continue
         developer = _applicant(row)
         fit = score_development(row, strength, today, public_body=bool(developer and (is_public_body(developer) or _is_the_authority(developer, row))))
-        dwellings = row.get("n_dwellings") or 0
+        dwellings = scheme_dwellings(row)
         scheme = (f"{dwellings:,} dwellings" if dwellings > 1 else "a major scheme" if row.get("app_size") == "Large" else "a scheme")
         scheme_text = f"{scheme} at {row['address'].strip()}" if (row.get("address") or "").strip() else f"{scheme} in {row.get('authority')}"
         description = re.sub(r"\s+", " ", str(row.get("description") or "")).strip()
-        bits = [description[:240] + ("…" if len(description) > 240 else "")] if description else []
+        bits = [cut_at_word(description, 240)] if description else []   # a whole word, never part-way through one (Re-test 6 GS3)
         if row.get("agent_company"):
             bits.append(f"Planning agent: {row['agent_company'].strip()}.")
         if not developer:

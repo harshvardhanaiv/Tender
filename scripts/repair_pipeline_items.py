@@ -40,10 +40,11 @@ def main() -> None:
     args = ap.parse_args()
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id, username, tender_key, source, resource_id, title, submission_deadline FROM pipeline")
+    cur.execute("SELECT id, username, tender_key, source, title, submission_deadline FROM pipeline")
     rows = cur.fetchall()
     deadline_changes, title_changes = [], []
-    for pid, user, key, source, rid, title, deadline in rows:
+    for pid, user, key, source, title, deadline in rows:
+        rid = (key or "").split(":", 1)[1] if ":" in (key or "") else ""
         new = iso_deadline(deadline)
         if new is not None and new != (deadline or ""):
             deadline_changes.append((pid, user, key, deadline, new))

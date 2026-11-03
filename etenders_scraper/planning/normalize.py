@@ -20,7 +20,7 @@ from datetime import date, datetime
 from typing import Any
 
 from etenders_scraper.planning.planit_api import PLACEHOLDER_VALUES
-from etenders_scraper.planning.scoring import low_value_reason
+from etenders_scraper.planning.scoring import low_value_reason, scheme_dwellings
 
 # ONS GSS code prefix -> nation. Authoritative; used instead of guessing from names.
 GSS_PREFIX_COUNTRY = {
@@ -135,6 +135,8 @@ def normalize_planit_record(
     lat, lng = _coords(rec, other)
     description = clean_text(rec.get("description"))
     n_dwellings = parse_int(other.get("n_dwellings"))
+    if n_dwellings and not scheme_dwellings({"n_dwellings": n_dwellings, "description": description}):
+        n_dwellings = None   # a reserved-matters element of a bigger scheme does not inherit its homes (Re-test 6 PN4)
     app_type = clean_text(rec.get("app_type"), 32)
 
     return {

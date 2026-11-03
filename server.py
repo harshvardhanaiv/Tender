@@ -1646,6 +1646,10 @@ def deep_item_key(label: str) -> str:
     return " ".join(str(label or "").lower().split())[:280]
 
 
+_DEEP_ALERTS_CACHE: dict[str, tuple[float, list, dict]] = {}
+_DEEP_ALERTS_TTL_S = 60.0
+
+
 def deep_alerts_for_user(username: str) -> tuple[list[dict], dict]:
     """(alerts, progress) for one user's watched/bidding tenders.
 
@@ -2565,6 +2569,23 @@ _SYNTHETIC_ROW_PATTERNS = [
     "provision of digital infrastructure, cloud &",
     "indexed portal notice",
 ]
+
+def _ocds_portals_needing_saved(meta: dict, rows: list, scope: str) -> list:
+    """Find a Tender / Contracts Finder portals in this search to fill from the saved copy: one that failed, or one still running that has
+    returned no rows yet. A portal that finished with rows is left to the live results."""
+    from etenders_scraper.sources.progressive_search import UNSETTLED_STATES
+    wanted = None if scope == "all" else set(scope.split(","))
+    errors = meta.get("errors") or {}
+    progress = meta.get("source_progress") or {}
+    have = {r.get("source") for r in rows if isinstance(r, dict)}
+    out = []
+    for src in ("find_tender", "contracts_finder"):
+        if wanted is not None and src not in wanted:
+            continue
+        if src in errors or (progress.get(src) in UNSETTLED_STATES and src not in have):
+            out.append(src)
+    return out
+
 
 def _is_invalid_tender_row(row: dict, query: str = "") -> bool:
     """Return True if this row is an error/login/bad-page artefact or synthetic fake tender that must be hidden."""
@@ -4154,7 +4175,9 @@ def create_app() -> Flask:
                 "ok": True,
                 "apiVersion": API_VERSION,
                 "multiPortal": True,
-                "sources": list(SOURCES.keys()),
+                # a liveness check, not a catalogue: the portals a user can search come from /api/sources and their own country settings
+                # (this list named the non-UK portals to UK users, Re-test 5)
+                "sourceCount": len(SOURCES),
             }
         )
 
@@ -4775,8 +4798,9 @@ def create_app() -> Flask:
                 index_rows, index_fresh = [], {}
         # A portal that could not answer this search (Find a Tender answers HTTP 429 under load) is served from its saved notices instead of
         # leaving the table without it (Re-test 5 TN4). The saved copy is filled by the scheduled index.
-        failed_ocds = [src for src in ("find_tender", "contracts_finder")
-                       if src in (meta.get("errors") or {}) and (scope == "all" or src in scope.split(","))]
+        # The same copy fills the table while the live call is still running and has returned nothing yet, so the first poll shows rows at
+        # once instead of waiting for a slow or throttled portal; the live rows replace it as they arrive.
+        failed_ocds = _ocds_portals_needing_saved(meta, rows, scope)
         if failed_ocds and os.environ.get("SEARCH_USE_INDEX", "1") != "0":
             try:
                 from tender_app import tender_index as _ti
@@ -5424,6 +5448,7 @@ Include every question, in the form's order."""
             conn.commit()
             cur.close()
             conn.close()
+            _DEEP_ALERTS_CACHE.pop(username, None)
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
         return jsonify({"ok": True})
@@ -5434,8 +5459,14 @@ Include every question, in the form's order."""
         username = session.get("username", "")
         if not username:
             return jsonify({"error": "Unauthorized"}), 401
+        # Every page load asks for this and it reads the database several times per tracked tender (1 to 4 s on live, Re-test 5),
+        # so a user's answer is kept for a minute; dismissing an alert clears it.
+        hit = _DEEP_ALERTS_CACHE.get(username)
+        if hit and time.time() - hit[0] < _DEEP_ALERTS_TTL_S:
+            return jsonify({"ok": True, "alerts": hit[1], "progress": hit[2]})
         try:
             alerts, progress = deep_alerts_for_user(username)
+            _DEEP_ALERTS_CACHE[username] = (time.time(), alerts, progress)
         except Exception as e:
             print("deep alerts failed:", e)
             alerts, progress = [], {}
@@ -5475,6 +5506,7 @@ Include every question, in the form's order."""
         conn.commit()
         cur.close()
         conn.close()
+        _DEEP_ALERTS_CACHE.pop(username, None)
         return jsonify({"ok": True, "id": new_id})
 
     @app.patch("/api/tender-clarifications/<int:cid>")
@@ -5502,6 +5534,7 @@ Include every question, in the form's order."""
         conn.commit()
         cur.close()
         conn.close()
+        _DEEP_ALERTS_CACHE.pop(username, None)
         return jsonify({"ok": True})
 
     @app.delete("/api/tender-clarifications/<int:cid>")
@@ -5515,6 +5548,7 @@ Include every question, in the form's order."""
         conn.commit()
         cur.close()
         conn.close()
+        _DEEP_ALERTS_CACHE.pop(username, None)
         return jsonify({"ok": True})
 
     @app.post("/api/tender-deep-form-prefill")
@@ -5573,6 +5607,7 @@ Include every question, in the form's order."""
             conn.commit()
             cur.close()
             conn.close()
+            _DEEP_ALERTS_CACHE.pop(username, None)
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
         return jsonify({"ok": True})

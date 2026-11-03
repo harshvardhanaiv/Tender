@@ -124,10 +124,24 @@ def low_value_reason(row: dict[str, Any]) -> str | None:
     return None
 
 
+_RESERVED_MATTERS_RE = re.compile(r"reserved\s+matters", re.IGNORECASE)
+_HOMES_WORDS_RE = re.compile(r"\b(dwellings?|homes?|houses?|housing|residential|apartments?|flats?|units?|bungalows?|plots?|bedrooms?)\b", re.IGNORECASE)
+
+
+def scheme_dwellings(row: dict[str, Any]) -> int:
+    """The homes this application itself covers. A reserved-matters application for one element of a big scheme (a school, a substation) carries
+    the whole outline scheme's dwelling count in the register; unless its own description speaks of homes it covers none (Re-test 6 PN4)."""
+    dwellings = row.get("n_dwellings") or 0
+    description = row.get("description") or ""
+    if dwellings > 0 and _RESERVED_MATTERS_RE.search(description) and not _HOMES_WORDS_RE.search(description):
+        return 0
+    return dwellings
+
+
 def explain_lead_score(row: dict[str, Any], today: date | None = None) -> dict[str, int]:
     today = today or date.today()
 
-    dwellings = row.get("n_dwellings") or 0
+    dwellings = scheme_dwellings(row)
     # On a log scale up to DWELLING_FULL_POINTS homes: 1 point per 10 homes stopped at 170, so a 200-home and an 850-home scheme scored alike.
     dwelling_pts = min(DWELLING_POINTS_MAX, round(DWELLING_POINTS_MAX * math.log10(1 + dwellings) / math.log10(1 + DWELLING_FULL_POINTS))) if dwellings > 0 else 0
 

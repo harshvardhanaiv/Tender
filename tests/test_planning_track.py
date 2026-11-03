@@ -75,8 +75,13 @@ def test_tracking_adds_a_pipeline_entry_and_raises_an_alert_when_the_lead_is_dec
         assert [a for a in c.get("/api/deep-alerts").get_json()["alerts"] if a["kind"] == "planning_stage"] == [], "nothing has changed yet"
         cur.execute("UPDATE planning_applications SET app_state = 'Conditions', decided_date = CURRENT_DATE WHERE id = 'Zz/26/001'")
         conn.commit()
+        import server
+        stale = [a for a in c.get("/api/deep-alerts").get_json()["alerts"] if a["kind"] == "planning_stage"]
+        assert stale == [], "the answer is kept for a minute (Re-test 5: /api/deep-alerts ran on every page load)"
+        server._DEEP_ALERTS_CACHE.clear()
         alerts = [a for a in c.get("/api/deep-alerts").get_json()["alerts"] if a["kind"] == "planning_stage"]
         assert len(alerts) == 1 and alerts[0]["tender_key"] == "planning:Zz/26/001" and "decided" in alerts[0]["message"], alerts
+        server._DEEP_ALERTS_CACHE.clear()
         again = [a for a in c.get("/api/deep-alerts").get_json()["alerts"] if a["kind"] == "planning_stage"]
         assert len(again) == 1, "the same stage is not alerted twice"
         assert c.delete("/api/planning/track/Zz/26/001", headers=H).status_code == 200

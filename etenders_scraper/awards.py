@@ -448,6 +448,9 @@ _BUYER_ALIAS_RULES = (
     (re.compile(r"^\s*commercial\s+services\s+kent(?:\s+(?:limited|ltd))?\s*$", re.IGNORECASE), lambda m: "Kent County Council"),
     # the Ministry of Defence publishes each project team and agency as "Ministry of Defence, Ships, Maritime Platform Systems (MPS)"
     (re.compile(r"^\s*(?:the\s+)?ministry\s+of\s+defence\s*(?:[,:].*)?$", re.IGNORECASE), lambda m: "Ministry of Defence"),
+    # Re-test 6 BN5: the seven-force procurement consortium and the housing group are each published under several spellings
+    (re.compile(r"^\s*7\s*forces?\b[\s\-–]*(?:procurement|commercial\s+services)?\s*$", re.IGNORECASE), lambda m: "7 Forces Procurement"),
+    (re.compile(r"^\s*a2\s?dominion\b(?:\s+(?:housing\s+)?group)?(?:\s+(?:ltd|limited)\.?)?(?:\s*\(a2d\))?\s*$", re.IGNORECASE), lambda m: "A2Dominion"),
 )
 
 

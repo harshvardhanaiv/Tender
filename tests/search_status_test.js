@@ -86,6 +86,13 @@ test("a timed-out, failed or stopped portal is settled, so the search is not 'wa
   assert.equal(S.progress(list).settled, 3);
 });
 
+test("a failed portal whose saved notices are listed counts as answered, from saved copies (Re-test 5 TN4)", () => {
+  const list = S.portalList(metaOf({ find_tender: "error", procontract: "timeout" }, { find_tender: { stored: 12 } }), labelOf);
+  assert.equal(S.headerSub(list, 3, 1, false), "2 of 3 portals answered (1 from saved copies) in 1 country");
+  const all = S.portalList(metaOf({ find_tender: "error" }, { find_tender: { stored: 5 } }), labelOf);
+  assert.equal(S.headerSub(all, 3, 1, false), "Across 3 portals (1 from saved copies) in 1 country");
+});
+
 test("headerSub counts the portals that answered, not the portals that were selected", () => {
   const all = S.portalList(metaOf({}), labelOf);
   assert.equal(S.headerSub(all, 3, 1, false), "Across 3 portals in 1 country");

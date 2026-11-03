@@ -310,14 +310,17 @@ def test_development_signals_skip_unusable_rows_and_describe_the_scheme():
     assert large["headline"] == "A major scheme in Charnwood approved 6 weeks ago"
     [one] = gs.development_signals([planning(n_dwellings=1, app_size="Medium")], "preset", TODAY)
     assert one["headline"].startswith("A scheme at ")
-    [long] = gs.development_signals([planning(description="x" * 400)], "preset", TODAY)
-    assert "x" * 240 + "…" in long["detail"] and "x" * 241 not in long["detail"]
+    [long] = gs.development_signals([planning(description="erection of dwellings " * 40)], "preset", TODAY)
+    head = long["detail"].split(" Planning agent")[0]
+    assert head.endswith("…") and set(head[:-1].split()) <= {"erection", "of", "dwellings"} and len(head) <= 241, head   # ends on a whole word
 
 
 def test_development_fit_parts():
     base = gs.score_development(planning(lead_score=100), "preset", TODAY)
-    assert {k: v for k, v in parts(base).items() if k != "limit"} == {"scheme": 35, "timing": 20, "category": 10, "approach": 35} and base["score"] == gs.DEVELOPMENT_CAP   # the parts add to 100; an approval is capped (Re-test 4 GS2)
-    assert [p["max"] for p in base["parts"] if p["key"] != "limit"] == [35, 20, 10, 35]
+    assert {k: v for k, v in parts(base).items() if k != "limit"} == {"scheme": 35, "timing": 20, "category": 0, "approach": 35} and base["score"] == gs.DEVELOPMENT_CAP   # an approval names no trade, so no category points; it is capped (Re-test 4 GS2, Re-test 6 GS2)
+    assert [p["max"] for p in base["parts"] if p["key"] != "limit"] == [35, 20, 0, 35]
+    kw = gs.score_development(planning(lead_score=100), "keyword", TODAY)
+    assert parts(kw)["category"] == 7, "words the reader searched for still earn points"
     assert parts(gs.score_development(planning(lead_score=80), "preset", TODAY))["scheme"] == 28
     for age, points in ((0, 20), (120, 20), (121, 14), (240, 14), (241, 8), (365, 8), (366, 0)):
         got = parts(gs.score_development(planning(decided_date=TODAY - timedelta(days=age)), "preset", TODAY))["timing"]

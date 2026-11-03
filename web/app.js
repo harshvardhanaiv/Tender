@@ -400,8 +400,10 @@ function loadPrefs() {
   // Default ON: with a county selected, a notice that names no place can't be shown to be in it, so it is hidden
   // (it used to leak through, e.g. Swindon and Trafford notices under an Essex filter). The reader can turn it off.
   state.hideLocationNotStated = lsGet(LS_HIDE_UNSTATED_LOCATION, true) !== false;
-  // Tender Search always opens on Opportunities (re-test 3 T4); a link can carry another mode (?mode=awards, see SearchUrl).
-  state.statusFilter = "opportunities";
+  // Tender Search opens on the tab the reader last used (Opportunities the first time). A link with a search in it says its own mode
+  // (?mode=awards, see SearchUrl; no mode means Opportunities), so a shared link shows what the sender saw, not the reader's saved tab.
+  const savedStatus = lsGet(LS_STATUS_FILTER, "opportunities");
+  state.statusFilter = ["opportunities", "awards", "all"].includes(savedStatus) ? savedStatus : "opportunities";
   syncStatusFilterUI();
 
   // Restore keyword scope selection (persisted so it survives refresh)
@@ -1683,8 +1685,11 @@ function deepAlertsBannerHtml() {
       <div style="font-size:12px">${esc(a.message)}</div></div>
       ${a.id ? `<button type="button" class="btn" style="font-size:11px;padding:1px 8px" data-deep-alert-dismiss="${a.id}">Dismiss</button>` : ""}</div>`;
   }).join("");
-  return `<div class="deep-alert-banner"><div style="font-weight:700;margin-bottom:6px">Must not miss: ${_deepAlerts.length} alert${_deepAlerts.length === 1 ? "" : "s"} on tenders you are tracking</div>${rows}</div>`;
+  return `<details class="deep-alert-banner" id="deepAlertBanner"${_deepAlertsOpen ? " open" : ""}><summary style="font-weight:700;cursor:pointer">Must not miss: ${_deepAlerts.length} alert${_deepAlerts.length === 1 ? "" : "s"} on tenders you are tracking</summary><div style="margin-top:6px">${rows}</div></details>`;
 }
+// Collapsed on every visit, like the lists under it; it stays as the reader leaves it until the page is reloaded.
+let _deepAlertsOpen = false;
+document.addEventListener("toggle", (e) => { if (e.target && e.target.id === "deepAlertBanner") _deepAlertsOpen = e.target.open; }, true);
 
 document.addEventListener("click", async (e) => {
   const dis = e.target.closest?.("[data-deep-alert-dismiss]");
@@ -4506,10 +4511,13 @@ function updateResultsTotal(rowsNow) {
   const newHint = pendingNew
     ? ` · <a href="#" class="results-total__hint" data-show-new="1" title="Found by the portals since your saved results were stored. They are held back so the list does not move while you read it.">${pendingNew.toLocaleString()} new result${pendingNew === 1 ? "" : "s"} — show</a>`
     : "";
-  const partialCount = filteredRows.filter((r) => r && r._partial).length;
-  const partialHint = partialCount
+  const uncheckedCount = filteredRows.filter((r) => r && r._unchecked).length;
+  const partialCount = filteredRows.filter((r) => r && r._partial && !r._unchecked).length;
+  const partialHint = (partialCount
     ? ` · <span class="results-total__hint" title="These notices contain some, not all, of your words. They are listed after the full matches.">${partialCount.toLocaleString()} partial match${partialCount === 1 ? "" : "es"}, listed last</span>`
-    : "";
+    : "") + (uncheckedCount
+    ? ` · <span class="results-total__hint" title="The portal returned these for your search but shows only a title, so we cannot confirm your words are in them. They are listed last; open one to check.">${uncheckedCount.toLocaleString()} unconfirmed (title only), listed last</span>`
+    : "");
 
   let html = `<div class="results-total__main">${esc(headline.main)}</div>`;
   html += `<div class="results-total__sub">${esc(sub)}${indexHint}${newHint}${partialHint}${hiddenHint}${looseHint}</div>`;
@@ -5891,6 +5899,14 @@ function queryAlternatives(query) {
     .filter((words) => words.length);
 }
 
+// A search word's stem inside the row text. A short stem ("car" for "cars") must be a whole word with an ordinary ending, otherwise it is
+// found inside "cardio", "care", "carpet" and "Scarborough" (Re-test 6: "cars" listed a cardio contract). Longer stems still match inside a word.
+function stemInText(hay, w) {
+  if (w.length > 4) return hay.includes(w);
+  const rx = new RegExp("(^|[^a-z0-9])" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(s|es|ed|ing|er|ers)?($|[^a-z0-9])");
+  return rx.test(hay);
+}
+
 function rowSearchText(row) {
   const parts = [
     row.title, row.tender_title, row.name, row.description, row.abstract, row.procurement_description,
@@ -5910,7 +5926,7 @@ function wordMatchLevel(row, query, titleOnly) {
   const titleHay = String(row.title || row.tender_title || row.name || "").toLowerCase();
   let some = false;
   for (const words of alts) {
-    const hits = words.filter((w) => hay.includes(w));
+    const hits = words.filter((w) => stemInText(hay, w));
     if (hits.length === words.length) {
       if (!row._match_reason) row._match_reason = words.every((w) => titleHay.includes(w)) ? "title" : "scope text";
       return "all";
@@ -5929,7 +5945,7 @@ function rowHasTerm(row, term) {
   if (!words.length) words = String(term || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 2).map(queryWordStem);
   if (!words.length) return false;
   const hay = rowSearchText(row);
-  return words.every((w) => hay.includes(w));
+  return words.every((w) => stemInText(hay, w));
 }
 
 function matchRowToKeyword(row, query, scope = "all") {
@@ -6069,6 +6085,7 @@ function filteredAndSortedRows() {
     rows = rows.filter((row) => {
       row._loose = false;
       row._partial = false;
+      row._unchecked = false;
       if (matchRowToKeyword(row, parsedKeyword.query, parsedKeyword.scope)) return true;
       // The portal returned this row for the search itself, so it is a hit even though the word is not in the fields shown
       // (all-fields searches only: a title / supplier / buyer search is exactly about those fields).
@@ -6096,10 +6113,16 @@ function filteredAndSortedRows() {
             // A title-only portal (Public Contracts Scotland, Find a Tender lists) matched this on notice text the table does not show
             // ("Making Data Count for NHS" for "business intelligence", Re-test 5 TN2): it stays in the list, ranked after the others.
             row._partial = true;
+            row._unchecked = true;   // counted apart from the partial matches: nothing on the row shows why the portal returned it
           } else if (level === "none") {
             if (!state.showLooseMatches) return false;
             row._loose = true;   // its own description lacks the words: shown only when asked for, after the real matches
           }
+        } else if (relevant.every((t) => wordMatchLevel(row, t, false) === "none")
+                   && extractTextFromField(row.description || row.abstract || row.summary || row.scope).length <= 40) {
+          // a one-word search: a title-only row that shows no sign of the word is the portal's say-so, so it is listed last and counted as unconfirmed
+          row._partial = true;
+          row._unchecked = true;
         }
         row._match_reason = "portal";
         return true;
@@ -7786,7 +7809,7 @@ function pipelineItemDeep(item) {
 let _pipelineShowAllHighFit = false;
 
 let _pipelineKind = "all";            // all | tender | buyer | supplier | grant
-const _pipelineAccOpen = { all: true };   // open until the user closes it
+const _pipelineAccOpen = { all: false };   // closed on every visit; stays as the user leaves it until the page is reloaded
 
 // Buyers and suppliers on the global watchlist (web/watchlist.js) that the board's search and kind filter let through.
 function pipelineEntities(searchQuery, portalFilter) {
@@ -20704,21 +20727,21 @@ async function loadSupplierDetail(supplierId) {
           <div class="supplier-detail-actions" style="display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap; min-width:0; max-width:100%;">
             <button type="button"
                     id="btnGenerateBDPlaybook"
-                    title="Generate strategic Business Development Playbook (uses no credits)"
+                    title="Generate strategic Business Development Playbook (uses 3 credits)"
                     style="display:inline-flex; align-items:center; gap:7px; padding:9px 18px; background:linear-gradient(135deg,#7c3aed,#9333ea); color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; transition:all 0.18s ease; white-space:nowrap; box-shadow:0 2px 8px rgba(147,51,234,0.35);"
                     onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 14px rgba(147,51,234,0.5)';"
                     onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(147,51,234,0.35)';"
                     onclick="window.showBDPlaybookModal &amp;&amp; window.showBDPlaybookModal(${s.id})">
-              ✨ Generate BD Playbook <small style="opacity:.75;font-weight:500">· no credits</small>
+              ✨ Generate BD Playbook <small style="opacity:.75;font-weight:500">· 3 credits</small>
             </button>
             <button type="button"
                     id="btnSupplierSummary"
-                    title="Extract structured executive summary and key contract insights (uses no credits)"
+                    title="Extract structured executive summary and key contract insights (uses 1 credit)"
                     style="display:inline-flex; align-items:center; gap:7px; padding:9px 18px; background:linear-gradient(135deg,#4f46e5,#6366f1); color:#fff; border:none; border-radius:8px; font-size:12px; font-weight:700; text-decoration:none; cursor:pointer; transition:all 0.18s ease; white-space:nowrap; box-shadow:0 2px 8px rgba(99,102,241,0.35);"
                     onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 14px rgba(99,102,241,0.5)';"
                     onmouseout="this.style.transform=''; this.style.boxShadow='0 2px 8px rgba(99,102,241,0.35)';"
                     onclick="window.showSupplierSummaryModal &amp;&amp; window.showSupplierSummaryModal(${s.id})">
-              ⚡ AI Summary <small style="opacity:.75;font-weight:500">· no credits</small>
+              ⚡ AI Summary <small style="opacity:.75;font-weight:500">· 1 credit</small>
             </button>
             <button type="button"
                     id="btnDownloadSupplierDocx"
@@ -21245,6 +21268,7 @@ async function showSupplierSummaryModal(supplierId) {
 
   try {
     const res = await fetch(`/api/suppliers/${supplierId}/summary`);
+    if (res.status === 402) { modal.classList.add("hidden"); return; }   // the credits dialog is already showing
     if (!res.ok) throw new Error("Failed to fetch supplier summary");
     const data = await res.json();
     const s = data.supplier || {};
@@ -21380,6 +21404,7 @@ async function showBDPlaybookModal(supplierId, awardId) {
   try {
     const query = awardId ? `?award_id=${awardId}` : '';
     const res = await fetch(`/api/suppliers/${supplierId}/bd-playbook${query}`);
+    if (res.status === 402) { modal.classList.add("hidden"); return; }   // the credits dialog is already showing
     if (!res.ok) throw new Error("Failed to generate Business Development Playbook");
     const data = await res.json();
     const s = data.supplier || {};

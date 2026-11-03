@@ -17,6 +17,8 @@ from etenders_scraper.awards import (
     DEDUPED_AWARDS_CTE_SQL,
 )
 from tender_app.security import rate_limit
+from tender_app.config import CREDIT_COST_BD_PLAYBOOK, CREDIT_COST_SUPPLIER_SUMMARY
+from tender_app.metering import require_credits
 from tender_app.grants import grants_for_supplier
 from tender_app.charities import charities_for_suppliers, charity_for_supplier
 from tender_app.geo import geo_radius_clause
@@ -1793,6 +1795,7 @@ def get_supplier_detail(identifier: str):
 
 
 @suppliers_bp.route("/api/suppliers/<identifier>/summary", methods=["GET"])
+@require_credits(CREDIT_COST_SUPPLIER_SUMMARY, "supplier_summary", lambda: _get_connection())
 def get_supplier_executive_summary(identifier: str):
     """Generate structured AI Executive Summary and extract key supplier & contract information."""
     conn = _get_connection()
@@ -2546,7 +2549,7 @@ def _sanitize_playbook_output(pb: dict[str, Any], sup: dict[str, Any], target_aw
 
 
 @suppliers_bp.route("/api/suppliers/<identifier>/bd-playbook", methods=["GET", "POST"])
-
+@require_credits(CREDIT_COST_BD_PLAYBOOK, "bd_playbook", lambda: _get_connection())
 def generate_bd_playbook(identifier: str):
     """Generate research-backed 10-section Business Development Playbook for targeting a public sector contract winner."""
     req_body = request.get_json(silent=True) if (request.is_json and request.data) else {}
