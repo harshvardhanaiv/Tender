@@ -292,6 +292,10 @@ def test_canonical_buyer_key():
     assert mr.canonical_buyer_key(None, LG) == ""
 
 
+def test_canonical_supplier_key_ignores_a_region_glued_to_the_suffix():
+    assert mr.canonical_supplier_key("Churchill Contract Services LtdUK") == mr.canonical_supplier_key("Churchill Contract Services Ltd")
+
+
 def test_canonical_supplier_key():
     keys = {mr.canonical_supplier_key(n) for n in ("Bell Group Limited", "BELL GROUP LTD.", "Bell Group", "The Bell Group plc")}
     assert keys == {"BELL GROUP"}, keys

@@ -1126,6 +1126,20 @@ def get_opportunity_radar():
 
         where_sql = " AND ".join(where_clauses)
 
+        # A framework appears once per appointed supplier (DOS7 had 300 rows of its own): one row per framework, with the supplier count
+        # (Re-test 8 B1). Everything else is one row per award, as before.
+        group_sql = ("CASE WHEN ca.is_framework = 1 THEN COALESCE(ca.authority_name, '') || '|' || COALESCE(ca.tender_title, '') || '|' "
+                     "|| COALESCE(ca.contract_end_date::text, '') ELSE ca.id::text END")
+        inner_sql = f"""
+            SELECT ca.id, ca.authority_name, ca.buyer_type, ca.tender_title, ca.supplier_name, ca.contract_value, ca.contract_start_date,
+                   ca.contract_end_date, ca.cpv_code, ca.cpv_description, ca.is_framework, ca.notice_url, ca.latitude, ca.longitude,
+                   COUNT(*) OVER (PARTITION BY {group_sql}) AS suppliers_on_contract,
+                   ROW_NUMBER() OVER (PARTITION BY {group_sql} ORDER BY ca.id) AS rn
+            FROM {source_sql}
+            WHERE {where_sql}
+        """
+        source_sql = f"({inner_sql}) ca"
+        where_sql = "ca.rn = 1"
         query = f"""
             {with_sql}SELECT
                 ca.id,
@@ -1141,7 +1155,8 @@ def get_opportunity_radar():
                 ca.is_framework,
                 ca.notice_url,
                 ca.latitude,
-                ca.longitude
+                ca.longitude,
+                ca.suppliers_on_contract
             FROM {source_sql}
             WHERE {where_sql}
         """
@@ -1207,8 +1222,11 @@ def get_opportunity_radar():
                 "cpv_description": rec.get("cpv_description") if rec.get("cpv_description") not in (None, "", "Not available") else (
                     _bf_label(rec.get("cpv_code")) if rec.get("cpv_code") else "Not available"),
                 "is_framework": bool(rec.get("is_framework")),
+                "supplier_count": int(rec.get("suppliers_on_contract") or 1),
                 "notice_url": rec.get("notice_url") or "#"
             })
+            if renewals[-1]["is_framework"] and renewals[-1]["supplier_count"] > 1:
+                renewals[-1]["current_supplier"] = f"{renewals[-1]['supplier_count']:,} suppliers on this framework"
 
         total_matches = sql_total if sql_total is not None else len(renewals)
 

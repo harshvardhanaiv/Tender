@@ -151,6 +151,70 @@
         body.mode-signup .auth-card { padding: 28px 22px 26px; border-radius: 22px; margin: 0 auto; }
         .header h1 { font-size: 32px; }
       }
+      /* Desktop: fit the screen, no page scroll. Sizes tighten as the window gets shorter. */
+      @media (min-width: 961px) {
+        html, body { height: 100%; overflow: hidden; }
+        .shell { height: 100vh; height: 100dvh; min-height: 0; }
+        body.mode-signin .rp, body.mode-signup .rp { min-height: 0; }
+        body.mode-signup .shell { padding-bottom: 0; }
+        body.mode-signup .rp { padding-top: 56px; }
+      }
+      @media (min-width: 961px) and (max-height: 960px) {
+        .lp--signin { padding: 36px 56px 32px; }
+        .lp--signin h1 { font-size: clamp(34px, 3.6vw, 48px); margin-bottom: 16px; }
+        .lp--signin .tag { font-size: 17px; margin-bottom: 20px; }
+        .checks { font-size: 16px; gap: 10px; }
+        body.mode-signin .rp { padding: 20px 28px; }
+        body.mode-signin .tabs { margin-bottom: 24px; }
+        body.mode-signin .tabs button, .btn, .input-wrapper input { font-size: 16px; }
+        .login-card { gap: 12px; }
+        .header h1 { font-size: 32px; margin-bottom: 4px; }
+        .header p, body.mode-signup .header p { font-size: 16px; }
+        .input-wrapper input { padding: 13px 18px; }
+        .btn { padding: 12px; }
+        .divider, .forgot, .pwd-toggle-btn { font-size: 15px; }
+        .forgot a, .legal a { padding: 2px 0; }
+        .legal { font-size: 14px; margin-top: 2px; }
+        .lang-opt { padding: 4px 6px; }
+        .su-nav { padding: 16px 48px; }
+        .lp--signup h1 { font-size: clamp(36px, 4.2vw, 54px); margin-bottom: 18px; }
+        .lp--signup .pill { margin-bottom: 16px; font-size: 15px; }
+        .lp--signup .tag { font-size: 18px; margin-bottom: 24px; }
+        .stat b { font-size: 40px; }
+        body.mode-signup .rp { padding-top: 48px; }
+        body.mode-signup .auth-card { padding: 28px 34px 24px; border-radius: 26px; }
+        body.mode-signup .tabs { margin-bottom: 18px; }
+        body.mode-signup .tabs button { font-size: 18px; padding: 6px 0 12px; }
+      }
+      @media (min-width: 961px) and (max-height: 760px) {
+        .lp--signin { padding: 24px 48px 22px; }
+        .lp--signin h1 { font-size: 34px; margin-bottom: 10px; }
+        .lp--signin .tag { font-size: 15px; margin-bottom: 14px; }
+        .checks { font-size: 14px; gap: 6px; }
+        .checks li::before { width: 22px; height: 22px; font-size: 12px; }
+        body.mode-signin .rp { padding: 12px 24px; }
+        body.mode-signin .tabs { margin-bottom: 14px; }
+        .login-card { gap: 8px; }
+        .header h1 { font-size: 26px; }
+        .header p, body.mode-signup .header p { font-size: 14px; }
+        .form-group { gap: 4px; }
+        .form-group label { font-size: 14px; }
+        .input-wrapper input, .btn, body.mode-signin .tabs button { font-size: 15px; }
+        .input-wrapper input { padding: 9px 14px; }
+        .btn { padding: 9px; }
+        .legal { font-size: 12px; }
+        .lang-row { margin-top: 0; }
+        .su-nav { padding: 10px 40px; }
+        .su-nav .brand__mark, .brand__mark { width: 38px; height: 38px; }
+        .lp--signup h1 { font-size: 34px; margin-bottom: 12px; }
+        .lp--signup .tag { font-size: 15px; margin-bottom: 16px; }
+        .stat b { font-size: 30px; }
+        .stat span { font-size: 14px; }
+        body.mode-signup .rp { padding-top: 40px; }
+        body.mode-signup .auth-card { padding: 18px 26px 14px; border-radius: 20px; }
+        body.mode-signup .tabs { margin-bottom: 12px; }
+        body.mode-signup .tabs button { font-size: 16px; padding: 4px 0 8px; }
+      }
       @media (max-width: 480px) {
         .su-nav nav a:not(:last-child) { display: none; }
         body.mode-signup .tabs button { font-size: 17px; }

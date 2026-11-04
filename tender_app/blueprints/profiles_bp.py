@@ -129,6 +129,8 @@ def api_set_default_company_profile(profile_id: int):
         comp_name = row[0]
         cursor.execute("UPDATE company_profiles SET is_default = FALSE WHERE username = %s", (username,))
         cursor.execute("UPDATE company_profiles SET is_default = TRUE WHERE id = %s AND username = %s", (profile_id, username))
+        # Growth Studio opens on the profile used last; a new default replaces that, so it opens on the default (Re-test 8 G4)
+        cursor.execute("DELETE FROM user_prefs WHERE username = %s AND pref_key = 'growth_profile'", (username,))
         conn.commit()
         cursor.close()
         conn.close()

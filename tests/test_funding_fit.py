@@ -114,3 +114,9 @@ def test_a_grant_with_no_other_signal_quotes_its_own_first_condition():
     assert "The grant says: Applicants must be registered in Wales." in text or out["verdict"] == "unlikely", out
     assert ff._stated_rule({"eligibility": "Some background only."}) == ""
     assert ff._stated_rule({"summary": "Open to charities across the UK and delivering community projects."}).startswith("Open to charities")
+
+
+def test_sme_only_grant_is_unlikely_for_a_public_body():
+    """Re-test 8 F2: an SME grant ranked first for 'Public sector body'."""
+    out = ff.assess(grant(name="SME Technology Adoption Accelerator", summary="Helps SMEs adopt technology."), SOFTWARE, kind="Public Sector", has_profile=True)
+    assert out["verdict"] == "unlikely" and any("not an SME" in b for b in out["blockers"]), out

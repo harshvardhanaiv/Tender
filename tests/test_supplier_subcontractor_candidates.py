@@ -67,6 +67,24 @@ def test_unknown_supplier_and_bad_cpv():
     assert [x["code"] for x in one["divisions"]] == [own[0]["code"]]
 
 
+def test_main_divisions_follow_the_suppliers_real_trade():
+    """Re-test 8 S1: a laundry firm with a few IT-coded awards is matched on laundry, not on IT services."""
+    from tender_app.blueprints.suppliers_bp import main_divisions
+    assert main_divisions([("9831", 40), ("7200", 4), ("3900", 3)]) == ["9831"]
+    assert main_divisions([("9831", 20), ("3900", 12), ("7200", 2)]) == ["9831", "3900"]   # 12 of 34 is over the 20% line
+    assert main_divisions([("7200", 5)]) == ["7200"]                                       # the only trade is always kept
+    assert main_divisions([("1", 9), ("2", 8), ("3", 7), ("4", 6)]) == ["1", "2", "3"]       # at most three
+    assert main_divisions([]) == []
+
+
+def test_each_candidate_says_why_it_was_suggested():
+    c = client()
+    sid = a_supplier_with_cpv(c)
+    d = c.get(f"/api/suppliers/{sid}/subcontractor-candidates").get_json()
+    for x in d["registered"] + d["unregistered"]:
+        assert x["why"].startswith("shares ") and "award" in x["why"], x["why"]
+
+
 def test_buyer_candidates_are_suppliers_that_won_from_that_buyer():
     c = client()
     from tender_app.blueprints import suppliers_bp as sb
@@ -86,6 +104,16 @@ def test_buyer_candidates_are_suppliers_that_won_from_that_buyer():
     assert all(not x["company_number"] for x in d["unregistered"])
     nobody = c.get("/api/suppliers/buyer-candidates", query_string={"authority": "zz no such buyer"}).get_json()
     assert nobody["ok"] and nobody["registered"] == [] and nobody["unregistered"] == []
+
+
+def test_notice_sme_flag_is_withdrawn_for_large_suppliers():
+    """Re-test 8 S2/B3: Thales, BAE and others were tagged SME from a ticked notice box."""
+    from tender_app.blueprints.suppliers_bp import _sme_for_candidate as f
+    assert f("SME", (900_000_000, 40, False)) == "Non-SME"
+    assert f("SME", (1_000_000, 300, False)) == "Non-SME"
+    assert f("SME", (1_000_000, 3, True)) == "Non-SME"
+    assert f("SME", (1_000_000, 3, False)) == "SME"
+    assert f("SME", None) == "SME" and f("Non-SME", None) == "Non-SME"
 
 
 if __name__ == "__main__":

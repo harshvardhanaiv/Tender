@@ -76,6 +76,18 @@ def test_similar_suppliers_by_cpv_overlap():
     assert r["total"] == 1
 
 
+def test_similar_suppliers_widen_to_four_digit_cpv():
+    """Re-test 8 W1: suppliers whose CPV codes differ after the fourth digit are similar at 4 digits, not at 5."""
+    idx = {
+        "a": {"name": "A", "id": 1, "buyers": 1, "cpv": {"90911": [3, 100.0]}},
+        "b": {"name": "B", "id": 2, "buyers": 1, "cpv": {"90919": [2, 50.0]}},
+        "c": {"name": "C", "id": 3, "buyers": 1, "cpv": {"72000": [5, 10.0]}},
+    }
+    assert mr.similar_suppliers(idx, "a")["total"] == 0
+    wide = mr.similar_suppliers(idx, "a", digits=4)
+    assert wide["total"] == 1 and wide["rows"][0]["supplier"] == "B" and wide["cpv"] == ["9091"] and wide["cpv_digits"] == 4
+
+
 def test_similar_suppliers_excludes_the_reference_and_merges_spellings():
     a = analysis()
     idx = a["_supplier_cpv"]

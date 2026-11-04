@@ -47,15 +47,24 @@ def _ch_headers() -> dict[str, str]:
     return {"Authorization": f"Basic {token}"}
 
 
-def _ch_find_number(name: str) -> tuple[str | None, str | None]:
+def _ch_find_number(name: str) -> tuple[str | None, str | None, bool, str | None]:
+    """(company number, registered title, exact, status) of the best Companies House name match, or (None, None, False, None).
+
+    `exact` is true only when the two names are the same once legal suffixes and punctuation are removed. A near match
+    ("Churchill Contract Services" vs "CHURCHILL CONTRACTORS LIMITED", in liquidation) is returned as not exact so the
+    caller can say the match is uncertain rather than present the wrong company as the supplier (Re-test 8 W2).
+    Among equally good matches an active company is preferred over a dissolved or liquidated one."""
     q = urllib.parse.quote(name)
     data = _get_json(f"{CH_API}/search/companies?q={q}&items_per_page=8", _ch_headers())
-    best = (0.0, None, None)
+    best: tuple[float, int, str | None, str | None, str | None] | None = None
     for item in data.get("items") or []:
         score = calculate_name_similarity(name, item.get("title"))
-        if score > best[0]:
-            best = (score, item.get("company_number"), item.get("title"))
-    return (best[1], best[2]) if best[0] >= MATCH_THRESHOLD else (None, None)
+        active = 1 if item.get("company_status") == "active" else 0
+        if best is None or (score, active) > (best[0], best[1]):
+            best = (score, active, item.get("company_number"), item.get("title"), item.get("company_status"))
+    if best is None or best[0] < MATCH_THRESHOLD:
+        return None, None, False, None
+    return best[2], best[3], best[0] >= 1.0, best[4]
 
 
 def companies_house(name: str, company_number: str | None) -> dict[str, Any]:
@@ -67,8 +76,11 @@ def companies_house(name: str, company_number: str | None) -> dict[str, Any]:
             number = normalize_ch_company_number(company_number)
             matched_by = "number"
             if not number:
-                found, _ = _ch_find_number(name)
+                found, title, exact, found_status = _ch_find_number(name)
                 number, matched_by = normalize_ch_company_number(found), "name"
+                if number and not exact:
+                    return {"status": "uncertain", "company_number": number, "name": title, "company_status": found_status,
+                            "url": f"https://find-and-update.company-information.service.gov.uk/company/{number}"}
             if not number:
                 return {"status": "not_found"}
             h = _ch_headers()

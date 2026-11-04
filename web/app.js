@@ -1442,6 +1442,7 @@ function initCollapsiblePanels() {
 }
 
 function resetAllFilters() {
+  const hadSearch = !!(state.q || "").trim() || !!state.jobId;
   // 1. Search keyword & scope
   state.q = "";
   state.keywordScope = "all";
@@ -1537,7 +1538,24 @@ function resetAllFilters() {
   const btnClear = $("btnClearValue");
   if (btnClear) btnClear.disabled = true;
 
-  // 8. Update summaries & trigger rendering
+  // 8. A search that is cleared leaves no results and no search in the address: the old rows were scored for a profile that is now "No profile",
+  // and q= in the URL would bring the search back on refresh (Re-test 8 T4)
+  if (hadSearch) {
+    stopSearchPoll();
+    _searchGeneration++;
+    state.jobId = null;
+    state.total = null;
+    state.rows = [];
+    state.searchPhase = "complete";
+    try {
+      const u = new URL(location.href);
+      for (const k of ["q", "mode", "portals", "scope"]) u.searchParams.delete(k);
+      history.replaceState(null, "", u.pathname + u.search + u.hash);
+    } catch (_) { /* no history */ }
+    try { renderPortalSummary(); } catch (_) { /* nothing to summarise */ }
+  }
+
+  // 9. Update summaries & trigger rendering
   if (typeof updateExplanationText === "function") updateExplanationText();
   updateFilterSidebarSummary();
 
@@ -4446,7 +4464,7 @@ function updateResultsTotal(rowsNow) {
     : `Across ${checkedPortalsCount} portal${checkedPortalsCount !== 1 ? 's' : ''} in ${checkedCountriesCount} countr${checkedCountriesCount !== 1 ? 'ies' : 'y'}`;
 
   const headline = typeof SearchStatus !== "undefined" && SearchStatus.resultsHeadline
-    ? SearchStatus.resultsHeadline(filteredCount)
+    ? SearchStatus.resultsHeadline(filteredCount, state.searchPhase === "loading")
     : { main: `${filteredCount.toLocaleString()} tender${filteredCount !== 1 ? 's' : ''}` };
 
   // how the portal, saved and filtered numbers add up: kept as the hover text of the count, not a line on the page
@@ -7673,6 +7691,8 @@ async function loadDetails(row) {
 }
 
 function viewInPipeline(key) {
+  // The tender's details window would otherwise stay open over the Pipeline and over whatever page is opened next (Re-test 8 B5)
+  if (!$("expandModal")?.classList.contains("hidden")) closeExpandModal();
   openDashboard();
   if (!key) return;
   setTimeout(() => {
@@ -10705,7 +10725,7 @@ $("btnReadyBid")?.addEventListener("click", () => {
 });
 
 // ── Deep analysis: crawl every page / document / link of the tender ──
-async function openDeepModal(row, refresh = false) {
+async function openDeepModal(row, refresh = false, confirmed = false) {
   const source = row.source;
   const rid = row.resource_id;
   $("modalTitle").textContent = "Deep analysis: full tender crawl";
@@ -10714,6 +10734,19 @@ async function openDeepModal(row, refresh = false) {
   $("btnReRunSummary")?.classList.add("hidden");
   $("btnReRunAnalysis")?.classList.add("hidden");
   $("analyseModal").classList.remove("hidden");
+  if (!refresh && !confirmed) {
+    // Opening the tab does not start anything: the crawl is slow and opens many pages, so it waits for a click (Re-test 8 T1).
+    const closedNote = (isClosedTender(row) || isAwardNotice(row));
+    $("modalBody").innerHTML = `
+      <div style="padding:6px 0">
+        <p style="margin:0 0 8px">Reads the notice, its linked pages and documents, and lists the deadlines, forms and requirements it finds. This can take a minute or more.</p>
+        <p style="margin:0 0 14px;font-size:13px;color:#64748b">The crawl itself uses no credits. The optional AI briefing afterwards shows its cost before it runs.</p>
+        ${closedNote ? `<p style="margin:0 0 14px;font-size:13px;color:#b45309">This notice is closed or awarded, so there is nothing left to bid on and deep analysis is switched off.</p>` : ""}
+        <button type="button" class="btn btn--summary" id="btnDeepConfirmRun" ${closedNote ? "disabled" : ""}>🔬 Run deep analysis</button>
+      </div>`;
+    $("btnDeepConfirmRun")?.addEventListener("click", () => openDeepModal(row, false, true));
+    return;
+  }
   $("modalBody").innerHTML = `
     <div class="analysis-loading">
       <div class="shimmer-container">
@@ -19712,8 +19745,14 @@ const SECTION_ROUTES = [
   { path: "/documents", title: "Documents · TenderFlow", modal: "userDocumentsModal", button: "btnUserDocuments" },
   { path: "/history", title: "History · TenderFlow", modal: "historyModal", button: "btnHistory" },
   { path: "/pipeline", title: "Pipeline · TenderFlow", modal: "dashboardModal", button: "btnDashboard" },
+  // Company profiles, My Profile, Billing, Connected apps and the AIV dashboard kept the previous page's address and title (Re-test 8 G2)
+  { path: "/profiles", title: "Company profiles · TenderFlow", modal: "cpModal", button: "btnDropdownCompanyProfiles" },
+  { path: "/account", title: "My Profile · TenderFlow", modal: "profileModal", button: "btnProfile" },
+  { path: "/billing", title: "Billing & credits · TenderFlow", modal: "pricingModal", button: "navBilling" },
+  { path: "/connections", title: "Connected apps · TenderFlow", modal: "connectionsModal", button: "btnConnectionsNav" },
+  { path: "/aiv", title: "AIV Dashboard · TenderFlow", modal: "aivDashboardModal", button: "btnAivDashboard" },
 ];
-const KNOWN_APP_PATHS = /^\/(funding|planning|buyers|suppliers|growth|answers|documents|history|pipeline|buyer-workspace)(\/|$)/;
+const KNOWN_APP_PATHS = /^\/(funding|planning|buyers|suppliers|growth|answers|documents|history|pipeline|profiles|account|billing|connections|aiv|buyer-workspace)(\/|$)/;
 (function wireSectionRoutes() {
   let prevTitle = "";
   const start = () => {
@@ -20991,7 +21030,7 @@ function subInviteRenderList() {
       <input type="checkbox" class="sub-invite__pick" data-id="${r.supplier_id}"${checked} aria-label="Select ${esc(displayName(r.name))}" />
       <div class="sub-invite__who">
         <div class="sub-invite__name">${esc(displayName(r.name))} ${size}${vcse}</div>
-        <div class="sub-invite__meta">${r.company_number ? `#${esc(r.company_number)} · ` : ""}${esc(r.region || "UK")} · ${r.similar_awards} ${_subInvite.buyer ? "award" : "similar award"}${r.similar_awards === 1 ? "" : "s"}${_subInvite.buyer ? " from this buyer" : ""}${r.latest_award ? ` · latest ${esc(r.latest_award)}` : ""}</div>
+        <div class="sub-invite__meta">${r.company_number ? `#${esc(r.company_number)} · ` : ""}${esc(r.region || "UK")} · ${!_subInvite.buyer && r.why ? esc(r.why) : `${r.similar_awards} ${_subInvite.buyer ? "award" : "similar award"}${r.similar_awards === 1 ? "" : "s"}${_subInvite.buyer ? " from this buyer" : ""}`}${r.latest_award ? ` · latest ${esc(r.latest_award)}` : ""}</div>
         <div class="sub-invite__meta">${contact}${site}</div>
       </div>
       <button type="button" class="btn btn--secondary btn--small" data-draft="${r.supplier_id}"${r.email ? "" : " disabled"} title="${r.email ? "Open an email draft to this supplier in your email app" : "No email address on record for this supplier"}">Draft email</button>
@@ -21011,7 +21050,7 @@ function subInviteRenderList() {
 }
 
 function subInviteRenderShell(d) {
-  const sector = (d.divisions[0] && d.divisions[0].description) || "";
+  const sector = ((d.divisions || []).map((x) => String(x.description || "").trim()).find((x) => x && !/^(not available|n\/a|none|public sector contract)$/i.test(x))) || "";   // never "Not available" in the invitation (Re-test 8 S3)
   const chips = _subInvite.buyer ? "" : d.divisions.map(x => `<span class="sub-invite__chip" title="CPV division ${esc(x.code)}">${esc(x.code)}${x.description ? ` · ${esc(x.description)}` : ""}</span>`).join("");
   const profiles = (typeof state !== "undefined" && state.companyProfiles) || [];
   const mine = profiles.find(p => p.is_default) || profiles[0];
@@ -22727,6 +22766,7 @@ window._buyerFilterState = _buyerFilterState; // seedOriginFromProfile() sits ou
 let _activeBuyerTab = "feed";
 let _buyerDebounceTimer = null;
 let _lastBuyerFeedCards = [];
+let _lastBuyerFeedTotal = 0;
 let _buyerLeafletMap = null;
 let _buyerMapMarkersLayer = null;
 let _buyerMapRadiusCircle = null;
@@ -23290,6 +23330,7 @@ function renderOpportunityFeed(data) {
 
   const cards = data.cards || [];
   _lastBuyerFeedCards = cards;
+  _lastBuyerFeedTotal = Number(data.total_matches || 0);
   if (_activeBuyerTab === "map") renderBuyerMap(cards);
 
   if (!cardsList) return;
@@ -23531,7 +23572,10 @@ function renderBuyerMap(cards) {
     !(c.latitude === 0 && c.longitude === 0)
   );
 
-  if (badge) badge.textContent = `${points.length} buyer${points.length === 1 ? "" : "s"} plotted`;
+  // The feed is one page of the matching buyers, so say how many the map leaves out (Re-test 8 B6)
+  if (badge) badge.textContent = _lastBuyerFeedTotal > points.length
+    ? `${points.length} of ${_lastBuyerFeedTotal.toLocaleString()} matching buyers plotted (first page of the list order)`
+    : `${points.length} buyer${points.length === 1 ? "" : "s"} plotted`;
   if (emptyEl) emptyEl.classList.toggle("hidden", points.length > 0);
 
   if (!_buyerLeafletMap) {

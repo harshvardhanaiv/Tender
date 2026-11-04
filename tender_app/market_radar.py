@@ -786,9 +786,14 @@ def canonical_buyer_key(name: str | None, buyer_type: str | None = None) -> str:
 _LEGAL_SUFFIX_RE = re.compile(r"\b(LIMITED|LTD|PLC|LLP|LLC|INC|CIC|COMPANY|THE)\b")
 
 
+_GLUED_REGION_RE = re.compile(r"(?i)\b(ltd|limited|plc|llp)(?:uk|england|wales|scotland)$")
+
+
 def canonical_supplier_key(name: str | None) -> str:
     """One key per supplier name: case, punctuation and legal suffix (Ltd / Limited / plc) ignored.
     Suppliers whose canonical records were never merged still appear under several spellings."""
+    # a region pasted straight onto the legal suffix ("... LtdUK") is the same company as "... Ltd" (Re-test 8 W3)
+    name = _GLUED_REGION_RE.sub(r"\g<1>", name or "")
     norm = normalise_name(name)
     stripped = re.sub(r"\s+", " ", _LEGAL_SUFFIX_RE.sub(" ", norm)).strip()
     return stripped or norm
@@ -813,6 +818,7 @@ _PLACEHOLDER_SUPPLIER = re.compile(
     r"(please see|please refer)|"
     r"^(as per|information withheld|awarded supplier details|confidential information|confidential / sensitive)|"
     r"commercially confidential|"
+    r"^(see\s+)?section\s+([ivx]+|\d+)\s*[:.\-)]|"   # "See Section VI: Complementary Information", a form heading read as a name (Re-test 8 W4)
     r"(see|refer to)[a-z ,']{0,45}attach",
     re.IGNORECASE,
 )
@@ -1103,7 +1109,20 @@ def category_name_terms(category: Category, cpv_labels: dict[str, str] | None = 
     return list(seen)[:limit]
 
 
-def similar_suppliers(index: dict[str, dict[str, Any]], supplier_key: str, limit: int = 15) -> dict[str, Any] | None:
+SIMILAR_MIN_ROWS = 10   # fewer similar suppliers than this and the view is widened (Re-test 8 W1)
+
+
+def _coarser(cpv: dict[str, list[float]], digits: int) -> dict[str, list[float]]:
+    """A supplier's {cpv class: [awards, value]} regrouped to fewer CPV digits (5 -> 4)."""
+    out: dict[str, list[float]] = {}
+    for c, (n, v) in cpv.items():
+        slot = out.setdefault(c[:digits] if c else "", [0, 0.0])
+        slot[0] += n
+        slot[1] += v
+    return out
+
+
+def similar_suppliers(index: dict[str, dict[str, Any]], supplier_key: str, limit: int = 15, digits: int = SIMILAR_CPV_DIGITS) -> dict[str, Any] | None:
     """Other suppliers in the same category doing the same kind of work as `supplier_key`.
 
     "Same kind of work" is CPV overlap: a supplier is similar when it has awards under a CPV class (first
@@ -1113,12 +1132,15 @@ def similar_suppliers(index: dict[str, dict[str, Any]], supplier_key: str, limit
     mine = index.get(supplier_key)
     if mine is None:
         return None
-    my_classes = {c for c in mine["cpv"] if c}
+    coarse = digits < SIMILAR_CPV_DIGITS
+    mine_cpv = _coarser(mine["cpv"], digits) if coarse else mine["cpv"]
+    my_classes = {c for c in mine_cpv if c}
     ranked = []
     for key, entry in index.items():
         if key == supplier_key:
             continue
-        shared = {c: v for c, v in entry["cpv"].items() if c in my_classes} if my_classes else entry["cpv"]
+        their_cpv = _coarser(entry["cpv"], digits) if coarse else entry["cpv"]
+        shared = {c: v for c, v in their_cpv.items() if c in my_classes} if my_classes else their_cpv
         if not shared:
             continue
         ranked.append({
@@ -1128,14 +1150,15 @@ def similar_suppliers(index: dict[str, dict[str, Any]], supplier_key: str, limit
             "shared_awards": int(sum(v[0] for v in shared.values())),
             "shared_value": _round_money(sum(v[1] for v in shared.values())) or None,
             "buyers": entry["buyers"],
-            "awards": int(sum(v[0] for v in entry["cpv"].values())),
+            "awards": int(sum(v[0] for v in their_cpv.values())),
             "shared_cpv": sorted((c for c in shared if c), key=lambda c: -shared[c][0])[:3],
         })
     ranked.sort(key=lambda x: (x["shared_awards"], x["shared_value"] or 0, x["awards"], x["supplier"].lower()), reverse=True)
     return {
         "supplier": mine["name"],
         "basis": "cpv" if my_classes else "category",
-        "cpv": sorted(my_classes, key=lambda c: -mine["cpv"][c][0]),
+        "cpv": sorted(my_classes, key=lambda c: -mine_cpv[c][0]),
+        "cpv_digits": digits,
         "total": len(ranked),
         "rows": ranked[:limit],
     }

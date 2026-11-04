@@ -2666,6 +2666,12 @@ tbody tr:hover td {
 #docPreviewModal.modal-overlay {
   z-index: 1260;
 }
+/* Clarifications, Bid response and Deep analysis are opened from a tender's details, and a tender can be opened from the buyer drawer
+   (z-index 10000) or the Buyer intelligence page: they must open above those, or the click seems to do nothing (Re-test 8 B2).
+   Order: these < documents < preview < the alert and confirm boxes (20000). */
+#analyseModal.modal-overlay, #bidModal.modal-overlay, #abModal.modal-overlay { z-index: 10100; }
+#userDocumentsModal.modal-overlay { z-index: 10120; }
+#docPreviewModal.modal-overlay { z-index: 10130; }
 .modal {
   background: #fff;
   border-radius: 16px;

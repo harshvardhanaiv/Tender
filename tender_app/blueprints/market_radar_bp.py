@@ -459,6 +459,30 @@ def radar_similar_suppliers():
     result = mr.similar_suppliers(analysis["_supplier_cpv"], supplier)
     if result is None:
         return _error("supplier not found in this view", 404)
+    result["widened"] = None
+    if result["total"] < mr.SIMILAR_MIN_ROWS:
+        # A narrow view (one authority type, a short window, exact 5-digit CPV) leaves most suppliers with no one to compare to. Widen in steps
+        # and say so, rather than show an empty or one-row panel (Re-test 8 W1).
+        steps = [("closer CPV codes (4 digits)", authority, window, 4)]
+        if authority != "all":
+            steps.append(("all public bodies", "all", window, 5))
+        if authority != "all" or window not in ("5y", "all"):
+            steps.append(("all public bodies, 5 years, closer CPV codes", "all", window if window == "all" else "5y", 4))
+        best = result
+        for label, a, w, digits in steps:
+            try:
+                wide = analysis if (a, w) == (authority, window) else mr.get_analysis(_connect, cat, a, w, scope)
+            except mr.CategoryError:
+                continue
+            tried = mr.similar_suppliers(wide["_supplier_cpv"], supplier, digits=digits)
+            if tried is None:
+                continue
+            tried["widened"] = label
+            if tried["total"] > best["total"]:
+                best = tried
+            if tried["total"] >= mr.SIMILAR_MIN_ROWS:
+                break
+        result = best
     labels, _ = mr.load_cpv_labels(_connect)
     result["cpv_labels"] = {c: next((labels[c[:n]] for n in (5, 4, 3, 2) if c[:n] in labels), None) for c in result["cpv"][:5]}
     result["category"] = cat.to_public()
@@ -508,7 +532,7 @@ def radar_not_awarded_suppliers():
     conn = _connect()
     try:
         cur = conn.cursor()
-        elsewhere = _awarded_elsewhere(cur, groups, in_category, limit)
+        elsewhere = _awarded_elsewhere(cur, groups, in_category, limit, frozenset(analysis["_supplier_cpv"]))
         registered = _registered_unawarded(cur, terms, limit)
         cur.close()
     except Exception:
@@ -521,8 +545,10 @@ def radar_not_awarded_suppliers():
     return jsonify({"category": cat.to_public(), "limit": limit, "elsewhere": elsewhere, "registered": registered})
 
 
-def _awarded_elsewhere(cur, groups: list[str], in_category: set, limit: int) -> dict:
-    """Suppliers with notices under the category's related CPV groups but none in the category itself."""
+def _awarded_elsewhere(cur, groups: list[str], in_category: set, limit: int, in_keys: set | frozenset = frozenset()) -> dict:
+    """Suppliers with notices under the category's related CPV groups but none in the category itself.
+    `in_keys` are the canonical names of the suppliers that do have one: a company held under two spellings has two ids,
+    and was listed here while Supplier comparison showed it as a supplier in the category (Re-test 8 W3)."""
     if not groups:
         return {"total": 0, "rows": []}
     cur.execute("""
@@ -536,7 +562,7 @@ def _awarded_elsewhere(cur, groups: list[str], in_category: set, limit: int) -> 
         LIMIT 2000
     """, ("^(" + "|".join(groups) + ")",))
     rows = [{"supplier_id": r[0], "supplier": r[1], "region": r[2], "sme": (r[3] or "") == "SME", "notices": int(r[4]), "latest": r[5]}
-            for r in cur.fetchall() if r[0] not in in_category]
+            for r in cur.fetchall() if r[0] not in in_category and mr.canonical_supplier_key(r[1]) not in in_keys]
     return {"total": len(rows), "rows": rows[:limit]}
 
 

@@ -11,9 +11,9 @@
   let openPopoverResizeObserver = null;
 
   function shortMoney(value) {
-    if (value >= 1e6) return `€${Number((value / 1e6).toFixed(1))}m`;
-    if (value >= 1e3) return `€${Math.round(value / 1e3)}k`;
-    return `€${value}`;
+    if (value >= 1e6) return `${Number((value / 1e6).toFixed(1))}m`;
+    if (value >= 1e3) return `${Math.round(value / 1e3)}k`;
+    return `${value}`;
   }
 
   function setChip(id, text, isSet) {
@@ -145,6 +145,12 @@
       const box = byId(id);
       if (box) box.checked = false;
     });
+    // The category chip, Min fit and Sort are filters too: "Clear all" put them back to their defaults (Re-test 8 B4)
+    setValue("selFeedMinMatch", "0");
+    setValue("selFeedSort", "best_match");
+    ["chkRadarAllCategories", "chkRadarEndingSoon"].forEach((id) => { const box = byId(id); if (box) box.checked = false; });
+    document.querySelectorAll("#feedCategoryChips .buyer-chip").forEach((chip) => chip.classList.toggle("active", chip.dataset.chip === "all"));
+    if (window._buyerFilterState) window._buyerFilterState.category = "all";
     if (typeof refreshBuyerIntelligenceView === "function") refreshBuyerIntelligenceView();
     refreshAll();
   }

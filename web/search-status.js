@@ -113,7 +113,9 @@
   /* The results header's first line. `shown` is what is left after the page's own filters. The number
      loaded before those filters is not shown (it read as a second, unexplained total).
      There is no "sample" line: a portal holding more notices than were fetched is in that portal's chip tooltip. */
-  function resultsHeadline(shown) {
+  function resultsHeadline(shown, searching) {
+    // Until the first portal answers, "0 tenders" reads as "nothing found" (Re-test 7)
+    if (searching && !shown) return { main: "Searching…" };
     return { main: plural(shown, "tender") };
   }
 

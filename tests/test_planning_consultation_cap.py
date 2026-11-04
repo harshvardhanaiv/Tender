@@ -50,6 +50,13 @@ def test_a_normal_application_is_untouched():
     assert r["lead_score"] == 90 and "is_consultation" not in r and "cap" not in r["lead_score_breakdown"]
 
 
+def test_a_neighbouring_authority_consultation_is_a_consultation_not_an_approval():
+    """Re-test 8 P1: "Consultation from Central Bedfordshire Council on application ..." led the list at 98 and was labelled Approved."""
+    r = _mark_consultation(row(description="Consultation from Central Bedfordshire Council on application CB/26/02378/DB", lead_score=98))
+    assert r["lead_score"] == 25 and r["app_state"] == "Consultation" and r["is_consultation"] is True
+    assert "is_consultation" not in _mark_consultation(row(description="Erection of 40 dwellings, following consultation with the parish"))
+
+
 def test_the_page_labels_the_consultation_cap():
     js = (ROOT / "web" / "planning.js").read_text(encoding="utf-8")
     assert '"consultation" ? "Consultation / screening cap"' in js

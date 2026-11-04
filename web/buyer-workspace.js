@@ -21,7 +21,7 @@
   // A trailing colon or comma is left over from the notice ("Gristwood and Toms:"); it is dropped for display (Re-test 4 W2).
   function displayName(name) {
     const shown = typeof NameFormat !== "undefined" ? NameFormat.display(name) : String(name ?? "");
-    return typeof shown === "string" ? shown.replace(/\s*[:;,]+\s*$/, "") : shown;
+    return typeof shown === "string" ? shown.replace(/\s*[:;,]+\s*$/, "").replace(/\b(Ltd|Limited|PLC|LLP)(UK|England|Wales|Scotland)$/, "$1") : shown;
   }
   function trimNum(x, digits) { return x.toFixed(digits).replace(/\.0+$/, ""); }
   function fmtInt(n) { return n == null ? "–" : Number(n).toLocaleString("en-GB"); }
@@ -381,7 +381,7 @@
         <td data-label="Latest contract">${titleText}
           <span class="bw-sub">${subBit}</span></td>
         <td data-label="Route"><span class="bw-badge" title="${ROUTE_HINT}">${esc(latest.route || "Not stated")}</span></td>
-        <td class="num"><div class="bw-row-actions"><button class="bw-link" type="button" data-action="peer-toggle" data-key="${esc(p.key)}" aria-expanded="false">Contracts</button>${S.insights ? `<button class="bw-btn bw-btn--sm" type="button" data-action="peer-insights" data-key="${esc(p.key)}">Insights</button>` : ""}</div></td>
+        <td class="num"><div class="bw-row-actions"><button class="bw-link" type="button" data-action="peer-toggle" data-key="${esc(p.key)}" aria-expanded="false">Contracts</button>${S.insights ? `<button class="bw-btn bw-btn--sm" type="button" data-action="peer-insights" data-key="${esc(p.key)}" title="Opens the buyer's figures and writes a short AI summary of them">Insights (AI)</button>` : ""}</div></td>
       </tr>
       <tr class="bw-detail hidden" data-detail="${esc(p.key)}"><td colspan="6"><div class="bw-detail__body"></div></td></tr>`;
     }).join("");
@@ -716,8 +716,11 @@
   function companyProfileHtml(d) {
     const ch = d.companies_house || {};
     let chHtml;
-    if (ch.status !== "ok") {
-      chHtml = `<div class="bw-empty"><strong>Companies House</strong>${esc(SOURCE_NOTE[ch.status] || SOURCE_NOTE.error)}</div>`;
+    if (ch.status === "uncertain") {
+      const link = safeUrl(ch.url) ? `<a class="bw-link" href="${esc(ch.url)}" target="_blank" rel="noopener noreferrer">${esc(ch.company_number)}</a>` : esc(ch.company_number);
+      chHtml = `<div class="bw-empty"><strong>Companies House: match uncertain</strong>No registration number is held for ${esc(d.supplier.name)}, and the closest registered name, ${esc(ch.name || "")} (${link}${ch.company_status ? `, ${esc(String(ch.company_status).replace(/-/g, " "))}` : ""}), is not the same name. It may be a different company, so its details are not shown.</div>`;
+    } else if (ch.status !== "ok") {
+      chHtml =`<div class="bw-empty"><strong>Companies House</strong>${esc(SOURCE_NOTE[ch.status] || SOURCE_NOTE.error)}</div>`;
     } else {
       const link = safeUrl(ch.url) ? `<a class="bw-link" href="${esc(ch.url)}" target="_blank" rel="noopener noreferrer">${esc(ch.company_number)}</a>` : esc(ch.company_number);
       const facts = [["Company", `${esc(ch.name || d.supplier.name)} (${link})`], ["Status", esc(ch.company_status || "–")], ["Incorporated", ch.incorporated ? fmtDate(ch.incorporated) : "–"],
@@ -755,12 +758,14 @@
     const basis = d.basis === "cpv"
       ? `Ranked by awards under the same CPV classes as ${esc(displayName(d.supplier))} in ${esc(d.category.label)}${d.cpv.length ? `: ${d.cpv.slice(0, 5).map((c) => esc(d.cpv_labels && d.cpv_labels[c] ? `${c} ${d.cpv_labels[c]}` : c)).join("; ")}` : ""}.`
       : `${esc(displayName(d.supplier))}’s notices carry no CPV code, so every other supplier in ${esc(d.category.label)} is listed, ranked by awards.`;
-    if (!d.rows.length) return `<p class="bw-hint">${basis}</p><div class="bw-empty"><strong>No similar suppliers found</strong>No other supplier in this view has awards under the same CPV classes.</div>`;
+    // Few matches in the chosen view: the server widened the search and says how (Re-test 8 W1)
+    const widened = d.widened ? `<div class="bw-note" role="status">Few similar suppliers matched your current filters, so this list uses ${esc(d.widened)}.</div>` : "";
+    if (!d.rows.length) return `<p class="bw-hint">${basis}</p><div class="bw-empty"><strong>No similar suppliers found</strong>Even with all public bodies and wider CPV codes, no other supplier in ${esc(d.category.label)} has awards under the same kind of work.</div>`;
     const rows = d.rows.map((r) => `<tr><td class="bw-cell-main" data-label="Supplier"><span class="bw-name">${esc(displayName(r.supplier))}</span>${r.shared_cpv.length ? `<span class="bw-sub">CPV ${esc(r.shared_cpv.join(", "))}</span>` : ""}${profileBtn(r)}</td>
       <td class="num" data-label="Awards">${fmtInt(r.shared_awards)}${r.awards > r.shared_awards ? `<span class="bw-sub">of ${fmtInt(r.awards)}</span>` : ""}</td>
       <td class="num" data-label="Value">${r.shared_value ? fmtMoney(r.shared_value) : '<span class="bw-faint">–</span>'}</td>
       <td class="num" data-label="Buyers">${fmtInt(r.buyers)}</td></tr>`).join("");
-    return `<p class="bw-hint" style="margin-top:0">${basis}</p>
+    return `${widened}<p class="bw-hint" style="margin-top:0">${basis}</p>
       <div class="bw-table-wrap"><table class="bw-table bw-table--stack"><thead><tr><th>Supplier</th><th class="num" title="Awards under the shared CPV classes">Awards</th><th class="num" title="Published value of those awards, framework ceilings excluded">Value</th><th class="num">Buyers</th></tr></thead><tbody>${rows}</tbody></table></div>
       <p class="bw-hint">${d.total > d.rows.length ? `Showing ${d.rows.length} of ${fmtInt(d.total)}. ` : ""}Values are published notice values, not invoiced spend.</p>`;
   }

@@ -51,6 +51,30 @@ def test_name_match_needs_confidence():
     assert cp.companies_house("Acme Boilers Ltd", None)["status"] == "not_found"
 
 
+def test_a_near_name_match_is_uncertain_not_shown_as_the_supplier():
+    """Re-test 8 W2: "Churchill Contract Services Ltd" must not open CHURCHILL CONTRACTORS LIMITED (in liquidation)."""
+    cp._CACHE.clear()
+    config.COMPANIES_HOUSE_API_KEY = "k"
+    cp._get_json = fake({"/search/companies": {"items": [
+        {"title": "CHURCHILL CONTRACTORS LIMITED", "company_number": "01423743", "company_status": "liquidation"}]}})
+    out = cp.companies_house("Churchill Contract Services Ltd", None)
+    assert out["status"] == "uncertain" and out["company_number"] == "01423743" and "filings" not in out
+
+
+def test_an_exact_name_match_prefers_the_active_company():
+    cp._CACHE.clear()
+    config.COMPANIES_HOUSE_API_KEY = "k"
+    cp._get_json = fake({
+        "/search/companies": {"items": [
+            {"title": "ACME BOILERS LIMITED", "company_number": "01111111", "company_status": "dissolved"},
+            {"title": "ACME BOILERS LTD", "company_number": "02222222", "company_status": "active"}]},
+        "/company/02222222": {"company_name": "ACME BOILERS LTD", "company_status": "active"},
+        "/filing-history": {"items": []}, "/persons-with-significant-control": {"items": []},
+    })
+    out = cp.companies_house("Acme Boilers Ltd", None)
+    assert out["status"] == "ok" and out["company_number"] == "02222222" and out["matched_by"] == "name"
+
+
 def test_errors_not_cached_and_soft():
     cp._CACHE.clear()
     config.GOOGLE_PLACES_API_KEY = "k"

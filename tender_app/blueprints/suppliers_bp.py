@@ -2975,18 +2975,41 @@ SUBCONTRACTOR_GROUP_LIMIT = 50
 _PLACEHOLDER_HEADROOM = 4   # candidates ranked per group before the placeholder-name filter, as a multiple of the group limit
 
 
+# Codes that stand in for "no real CPV" ("72000000 Public Sector Contract"): they say nothing about a supplier's trade (Re-test 8 S1).
+_FALLBACK_CPV_SQL = "cpv_code NOT IN ('72000000', '00000000', '99999999') AND COALESCE(cpv_description, '') NOT ILIKE 'public sector contract%%'"   # %% because the query runs with parameters
+_MAIN_DIVISION_SHARE = 0.2   # a division is part of a supplier's trade when it holds at least this share of its coded awards
+_MAIN_DIVISION_MAX = 3
+
+
+def main_divisions(counts: list[tuple[str, int]]) -> list[str]:
+    """The divisions that make up a supplier's real trade, from (division, awards) pairs: the top one always, then any other holding at
+    least 20% of the coded awards, at most 3. A minor division no longer outweighs the main one."""
+    ranked = sorted(((d, n) for d, n in counts if d and n > 0), key=lambda x: (-x[1], x[0]))
+    total = sum(n for _, n in ranked)
+    if not total:
+        return []
+    return [d for i, (d, n) in enumerate(ranked) if i == 0 or n / total >= _MAIN_DIVISION_SHARE][:_MAIN_DIVISION_MAX]
+
+
 def _supplier_cpv_prefixes(cursor, conn, supplier_id: int, company_number: str | None) -> list[str]:
-    """The 4-digit CPV divisions this supplier has won in, most-won first (at most 5)."""
+    """The 4-digit CPV divisions that make up this supplier's trade, most-won first (see main_divisions)."""
     if _is_valid_cnum_for_award_join(company_number):
         where, params = "(supplier_id = %s OR company_number = %s)", [supplier_id, company_number]
     else:
         where, params = "supplier_id = %s", [supplier_id]
     cursor.execute(f"""
         SELECT LEFT(cpv_code, 4) AS division, COUNT(*) AS n FROM contract_awards
-        WHERE {where} AND source_portal IN ({_PORTALS_SQL_LIST}) AND cpv_code ~ '^[0-9]{{4}}'
-        GROUP BY 1 ORDER BY n DESC, 1 LIMIT 5;
+        WHERE {where} AND source_portal IN ({_PORTALS_SQL_LIST}) AND cpv_code ~ '^[0-9]{{4}}' AND {_FALLBACK_CPV_SQL}
+        GROUP BY 1 ORDER BY n DESC, 1;
     """, params)
-    return [r[0] for r in cursor.fetchall()]
+    return main_divisions([(r[0], int(r[1])) for r in cursor.fetchall()])
+
+
+def _sme_for_candidate(flag: Any, totals: tuple[Any, Any, Any] | None) -> Any:
+    """The notice's SME flag, withdrawn when the supplier's public contract totals are too large for a small or medium business."""
+    if flag == "SME" and totals and (_implausible_sme(totals[0], totals[1]) or totals[2]):
+        return "Non-SME"
+    return flag
 
 
 def _subcontractor_groups(cursor, exclude_id: int | None, match_sql: str, match_params: list[Any], limit: int) -> tuple[tuple[int, list[dict[str, Any]]], tuple[int, list[dict[str, Any]]]]:
@@ -3031,6 +3054,13 @@ def _subcontractor_groups(cursor, exclude_id: int | None, match_sql: str, match_
     if fetched:
         cursor.execute("SELECT supplier_id, emails, website FROM supplier_contact_enrichment WHERE supplier_id = ANY(%s);", ([r["id"] for r in fetched],))
         enrich = {row[0]: {"emails": row[1], "website": row[2]} for row in cursor.fetchall()}
+    # An award notice's SME box is ticked for large firms too (Thales, BAE, Babcock...): the same size checks the supplier list
+    # applies decide here (Re-test 8 S2 / B3).
+    totals_by_id: dict[int, tuple[Any, Any, Any]] = {}
+    if fetched:
+        cursor.execute("SELECT supplier_id, total_value, total_awards, COALESCE(group_large, FALSE) FROM supplier_stats WHERE supplier_id = ANY(%s);",
+                       ([r["id"] for r in fetched],))
+        totals_by_id = {row[0]: (row[1], row[2], row[3]) for row in cursor.fetchall()}
     groups: dict[bool, list[dict[str, Any]]] = {True: [], False: []}
     for r in fetched:
         registered = bool(r["is_registered"])
@@ -3047,7 +3077,7 @@ def _subcontractor_groups(cursor, exclude_id: int | None, match_sql: str, match_
             email = next((e for e in found if isinstance(e, str) and "@" in e), "")
         groups[registered].append({
             "supplier_id": r["id"], "name": r["name"], "company_number": cnum or "", "region": r.get("region") or "",
-            "sme_status": r.get("sme_status"), "vcse_status": r.get("vcse_status"),
+            "sme_status": _sme_for_candidate(r.get("sme_status"), totals_by_id.get(r["id"])), "vcse_status": r.get("vcse_status"),
             "email": email, "website": clean_contact_field(r.get("website")) or clean_contact_field(found_row.get("website")),
             "similar_awards": int(r.get("similar_awards") or 0), "divisions": sorted(d for d in (r.get("divisions") or []) if d),
             "latest_award": str(r.get("latest_award") or ""),
@@ -3075,14 +3105,24 @@ def get_subcontractor_candidates(supplier_id: int):
                             "totals": {"registered": 0, "unregistered": 0}, "limit": SUBCONTRACTOR_GROUP_LIMIT,
                             "message": "This supplier has no awards with a CPV code, so there is nothing to match similar suppliers on.",
                             "attribution": OGL_V3_ATTRIBUTION})
+        # The label of a division is its most common real description. MAX() picked the alphabetically last one, which could be another
+        # trade's ("7200 Staffing"), and "Not available" or "Public Sector Contract" are not labels at all (Re-test 8 S3).
         cursor.execute(f"""
-            SELECT LEFT(cpv_code, 4), MAX(cpv_description) FROM contract_awards
-            WHERE LEFT(cpv_code, 4) IN ({", ".join(["%s"] * len(divisions))}) AND cpv_description IS NOT NULL AND cpv_description <> ''
-            GROUP BY 1;
+            SELECT DISTINCT ON (division) division, cpv_description FROM (
+                SELECT LEFT(cpv_code, 4) AS division, cpv_description, COUNT(*) AS n FROM contract_awards
+                WHERE LEFT(cpv_code, 4) IN ({", ".join(["%s"] * len(divisions))}) AND {_FALLBACK_CPV_SQL}
+                  AND TRIM(COALESCE(cpv_description, '')) <> '' AND LOWER(TRIM(cpv_description)) NOT IN ('not available', 'n/a', 'none', 'public sector contract')
+                GROUP BY 1, 2
+            ) d ORDER BY division, n DESC;
         """, divisions)
         names = {d: desc for d, desc in cursor.fetchall()}
         like_sql, like_params = " OR ".join(["a.cpv_code LIKE %s"] * len(divisions)), [f"{d}%" for d in divisions]
         (reg_total, registered), (unreg_total, unregistered) = _subcontractor_groups(cursor, sup[0], like_sql, like_params, SUBCONTRACTOR_GROUP_LIMIT)
+        for row in registered + unregistered:   # why each one is suggested: "shares 9831 Laundry · 14 awards"
+            shared = [d for d in row["divisions"] if d in divisions]
+            first = shared[0] if shared else ""
+            label = f"{first} {names[first]}".strip() if first in names else first
+            row["why"] = f"shares {label}{f' +{len(shared) - 1} more' if len(shared) > 1 else ''} · {row['similar_awards']} award{'s' if row['similar_awards'] != 1 else ''}"
         return jsonify({
             "ok": True, "supplier": {"id": sup[0], "name": sup[1]},
             "divisions": [{"code": d, "description": names.get(d, "")} for d in divisions],

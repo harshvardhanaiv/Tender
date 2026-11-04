@@ -7,7 +7,7 @@
   "use strict";
   var SOURCES = {
     supplier_intelligence: "Supplier Intelligence", buyer_intelligence: "Buyer Intelligence", growth_studio: "Growth Studio",
-    open_opportunity: "Open opportunity", tender_search: "Tender search", market_radar: "Market Radar", map: "Map"
+    open_opportunity: "Tender details", tender_search: "Tender search", market_radar: "Market Radar", map: "Map"
   };
   var items = [];
   var loaded = false;

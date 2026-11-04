@@ -4126,6 +4126,11 @@ def create_app() -> Flask:
     @app.get("/documents")
     @app.get("/history")
     @app.get("/pipeline")
+    @app.get("/profiles")
+    @app.get("/account")
+    @app.get("/billing")
+    @app.get("/connections")
+    @app.get("/aiv")
     def section_pages():
         # Growth Studio, Answer Bank, Documents, History and Pipeline each have an address (Re-test 3 G0); the page opens the panel.
         return app.send_static_file("index.html")

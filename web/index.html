@@ -40,7 +40,7 @@
        instead of pins stacking invisibly on top of each other. -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-  <link rel="stylesheet" href="/styles.css?v=149" />
+  <link rel="stylesheet" href="/styles.css?v=150" />
   <link rel="stylesheet" href="/theme.css?v=52" />
   <link rel="stylesheet" href="/mobile.css?v=4" />
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
@@ -677,29 +677,29 @@
           <button type="button" id="chipValue" class="tf-chip" aria-haspopup="dialog" aria-expanded="false" aria-controls="popValue"><span class="tf-chip__text" data-i18n="chip_any_value">Any value</span><span class="tf-chip__car" aria-hidden="true">▾</span></button>
           <div id="popValue" class="tf-popover hidden" role="dialog" aria-label="Estimated value">
             <div class="rm-field-group">
-              <span class="rm-field-label">Estimated value range (£ for UK portals, € for Irish)</span>
+              <span class="rm-field-label">Estimated value range (in each portal's own currency)</span>
               <div class="rm-select-pair">
                 <div class="rm-select-wrap">
                   <select id="rmValueMin" class="rm-select rm-custom-select" style="padding-left: 12px;" aria-label="Minimum value">
                     <option value="">Min Value</option>
-                    <option value="10000">€10,000</option>
-                    <option value="50000">€50,000</option>
-                    <option value="100000">€100,000</option>
-                    <option value="250000">€250,000</option>
-                    <option value="500000">€500,000</option>
-                    <option value="1000000">€1,000,000</option>
+                    <option value="10000">10,000</option>
+                    <option value="50000">50,000</option>
+                    <option value="100000">100,000</option>
+                    <option value="250000">250,000</option>
+                    <option value="500000">500,000</option>
+                    <option value="1000000">1,000,000</option>
                   </select>
                 </div>
                 <span class="rm-pair-dash">-</span>
                 <div class="rm-select-wrap">
                   <select id="rmValueMax" class="rm-select rm-custom-select" style="padding-left: 12px;" aria-label="Maximum value">
                     <option value="">Max Value</option>
-                    <option value="50000">€50,000</option>
-                    <option value="100000">€100,000</option>
-                    <option value="250000">€250,000</option>
-                    <option value="500000">€500,000</option>
-                    <option value="1000000">€1,000,000</option>
-                    <option value="5000000">€5,000,000+</option>
+                    <option value="50000">50,000</option>
+                    <option value="100000">100,000</option>
+                    <option value="250000">250,000</option>
+                    <option value="500000">500,000</option>
+                    <option value="1000000">1,000,000</option>
+                    <option value="5000000">5,000,000+</option>
                   </select>
                 </div>
               </div>
@@ -3428,14 +3428,14 @@
   <script src="/uk_counties.js?v=122"></script>
   <script src="/name-format.js?v=2"></script>
   <script src="/search-url.js?v=2"></script>
-  <script src="/search-status.js?v=10"></script>
+  <script src="/search-status.js?v=11"></script>
   <script src="/portal-prefs.js?v=1"></script>
   <script src="/search-cache.js?v=2"></script>
   <script src="/watchlist.js?v=2"></script>
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=2"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=277"></script>
+  <script src="/app.js?v=283"></script>
   <script src="/planning.js?v=23"></script>
   <script src="/funding.js?v=11"></script>
   <script src="/grants-board.js?v=1"></script>
@@ -3451,7 +3451,7 @@
   <script src="/growth-studio.js?v=27"></script>
   <script src="/email-outreach.js?v=5"></script>
   <script src="/shell.js?v=8"></script>
-  <script src="/search-filters.js?v=10"></script>
+  <script src="/search-filters.js?v=12"></script>
   <script>
     // The buyer workspace (Market Radar, market engagement) is a separate page for public sector buyers,
     // and Growth Studio is a section of this one; each menu item only appears when the server has the

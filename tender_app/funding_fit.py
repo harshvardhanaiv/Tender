@@ -279,7 +279,9 @@ def assess(grant: dict[str, Any], applicant: dict[str, Any], *, kind: str = "", 
 
     size = applicant.get("size")
     if re.search(r"\bsmes?\b|small and medium", head, re.I):
-        if size == "large":
+        if kind == "Public Sector":
+            blockers.append("For SMEs (under 250 staff); a public sector body is not an SME")  # Re-test 8 F2
+        elif size == "large":
             blockers.append("For SMEs (under 250 staff); your profile says large")
         elif size:
             whys.append("SME (under 250 staff)")
