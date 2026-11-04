@@ -1127,7 +1127,8 @@
     const ENG_WRITE = ["plan-from", "eng-new", "eng-create", "eng-add-note", "eng-add-supplier", "eng-close", "eng-confirm-delete", "eng-convert",
       "eng-delete", "eng-match", "eng-publish", "eng-regenerate", "eng-remove-supplier", "eng-save-notice", "eng-save-scope"]
       .map((a) => `[data-action="${a}"]`).join(", ");
-    const ENG_FIELDS = "[data-scope], [data-supplier], #noticeText, #manualSupplier, #publishUrl, #logNote";
+    // Market Radar's "View similar suppliers" button also carries data-supplier but only reads data, so it stays available.
+    const ENG_FIELDS = "[data-scope], [data-supplier]:not([data-action=\"similar-suppliers\"]), #noticeText, #manualSupplier, #publishUrl, #logNote";
     const lock = () => document.querySelectorAll(`${ENG_WRITE}, ${ENG_FIELDS}`).forEach((b) => {
       if (b.disabled) return;
       b.disabled = true;

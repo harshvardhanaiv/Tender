@@ -2972,6 +2972,7 @@ def get_authority_suppliers():
 # (see normalize_ch_company_number), so a supplier carrying one is not registered as far as we can tell.
 _CH_NUMBER_SQL = r"(s.company_number ~ '^[0-9]{8}$' OR (s.company_number ~ '^[A-Z]{2}[0-9]{6}$' AND s.company_number !~ '^(CF|UK|BR)'))"
 SUBCONTRACTOR_GROUP_LIMIT = 50
+_PLACEHOLDER_HEADROOM = 4   # candidates ranked per group before the placeholder-name filter, as a multiple of the group limit
 
 
 def _supplier_cpv_prefixes(cursor, conn, supplier_id: int, company_number: str | None) -> list[str]:
@@ -2988,53 +2989,70 @@ def _supplier_cpv_prefixes(cursor, conn, supplier_id: int, company_number: str |
     return [r[0] for r in cursor.fetchall()]
 
 
-def _subcontractor_group(cursor, exclude_id: int | None, match_sql: str, match_params: list[Any], registered: bool, limit: int) -> tuple[int, list[dict[str, Any]]]:
-    """Suppliers with awards matching `match_sql` (on `a`): all of them with a Companies House number, or all without one.
+def _subcontractor_groups(cursor, exclude_id: int | None, match_sql: str, match_params: list[Any], limit: int) -> tuple[tuple[int, list[dict[str, Any]]], tuple[int, list[dict[str, Any]]]]:
+    """Suppliers with awards matching `match_sql` (on `a`), as (registered, unregistered): those with a Companies House number and those without,
+    each as (total, top `limit` by similar awards). One pass: the awards are totalled per supplier first (index-backed, a fraction of a second),
+    then joined to suppliers and ranked, and the slow name checks run only on the best candidates (this took 88 s for a supplier with 12,000 similar suppliers).
     Plain %s placeholders and cursor.execute on purpose: SUPPLIER_NAME_NOT_PLACEHOLDER_SQL holds a literal `?` that _execute would rewrite."""
     import json as _json
-    reg_sql = _CH_NUMBER_SQL if registered else f"NOT {_CH_NUMBER_SQL}"
-    base = f"""
-        FROM suppliers s
-        JOIN contract_awards a ON a.supplier_id = s.id
-        LEFT JOIN supplier_contact_enrichment e ON e.supplier_id = s.id
-        WHERE s.id <> %s AND a.source_portal IN ({_PORTALS_SQL_LIST}) AND ({match_sql})
-          AND {reg_sql} AND {SUPPLIER_NAME_NOT_PLACEHOLDER_SQL}
-    """
-    params = [exclude_id or 0, *match_params]
-    cursor.execute(f"SELECT COUNT(DISTINCT s.id) {base};", params)
-    total = int(cursor.fetchone()[0] or 0)
     cursor.execute(f"""
-        SELECT s.id, s.name, s.company_number, s.region, s.sme_status, s.vcse_status, s.email, s.website,
-               COUNT(DISTINCT a.id) AS similar_awards,
-               ARRAY_AGG(DISTINCT LEFT(a.cpv_code, 4)) AS divisions,
-               MAX(a.date_signed) AS latest_award,
-               MAX(e.emails) AS found_emails, MAX(e.website) AS found_website
-        {base}
-        GROUP BY s.id, s.name, s.company_number, s.region, s.sme_status, s.vcse_status, s.email, s.website
-        ORDER BY similar_awards DESC, s.name
-        LIMIT %s;
-    """, [*params, limit])
-    out = []
-    for raw in cursor.fetchall():
-        r = _row_to_dict(cursor, raw)
+        WITH agg AS (
+            SELECT a.supplier_id, COUNT(*) AS similar_awards, ARRAY_AGG(DISTINCT LEFT(a.cpv_code, 4)) AS divisions, MAX(a.date_signed) AS latest_award
+            FROM contract_awards a
+            WHERE a.supplier_id IS NOT NULL AND a.supplier_id <> %s AND a.source_portal IN ({_PORTALS_SQL_LIST}) AND ({match_sql})
+            GROUP BY a.supplier_id
+        ), ranked AS (
+            SELECT s.id, s.name, s.company_number, s.region, s.sme_status, s.vcse_status, s.email, s.website,
+                   agg.similar_awards, agg.divisions, agg.latest_award, {_CH_NUMBER_SQL} AS is_registered
+            FROM agg JOIN suppliers s ON s.id = agg.supplier_id
+        ), numbered AS (
+            SELECT ranked.*, COUNT(*) OVER (PARTITION BY is_registered) AS group_total,
+                   ROW_NUMBER() OVER (PARTITION BY is_registered ORDER BY similar_awards DESC, name) AS rn
+            FROM ranked
+        )
+        SELECT s.* FROM (SELECT * FROM numbered WHERE rn <= %s OFFSET 0) s
+        WHERE {SUPPLIER_NAME_NOT_PLACEHOLDER_SQL}
+        ORDER BY s.is_registered DESC, s.rn;
+    """, [exclude_id or 0, *match_params, limit * _PLACEHOLDER_HEADROOM])
+    fetched = [_row_to_dict(cursor, raw) for raw in cursor.fetchall()]
+    # The placeholder-name patterns are slow (seconds over thousands of names), so they run only on the best-ranked candidates. A group's total
+    # is the unfiltered count less the placeholders found among those candidates; ones further down the ranking are not subtracted.
+    totals = {True: 0, False: 0}
+    kept = {True: 0, False: 0}
+    for r in fetched:
+        flag = bool(r["is_registered"])
+        kept[flag] += 1
+        totals[flag] = int(r["group_total"])
+    for flag in (True, False):
+        if kept[flag]:
+            totals[flag] -= min(totals[flag], limit * _PLACEHOLDER_HEADROOM) - kept[flag]
+    fetched = [r for flag in (True, False) for r in [x for x in fetched if bool(x["is_registered"]) == flag][:limit]]
+    enrich: dict[int, dict[str, Any]] = {}
+    if fetched:
+        cursor.execute("SELECT supplier_id, emails, website FROM supplier_contact_enrichment WHERE supplier_id = ANY(%s);", ([r["id"] for r in fetched],))
+        enrich = {row[0]: {"emails": row[1], "website": row[2]} for row in cursor.fetchall()}
+    groups: dict[bool, list[dict[str, Any]]] = {True: [], False: []}
+    for r in fetched:
+        registered = bool(r["is_registered"])
         cnum = normalize_ch_company_number(r.get("company_number"))
         if bool(cnum) != registered:   # the SQL pattern and the app's own check disagree: keep to the app's check
             continue
+        found_row = enrich.get(r["id"], {})
         email = clean_contact_field(r.get("email"))
         if not email:
             try:
-                found = _json.loads(r.get("found_emails") or "[]")
+                found = _json.loads(found_row.get("emails") or "[]")
             except ValueError:
                 found = []
             email = next((e for e in found if isinstance(e, str) and "@" in e), "")
-        out.append({
+        groups[registered].append({
             "supplier_id": r["id"], "name": r["name"], "company_number": cnum or "", "region": r.get("region") or "",
             "sme_status": r.get("sme_status"), "vcse_status": r.get("vcse_status"),
-            "email": email, "website": clean_contact_field(r.get("website")) or clean_contact_field(r.get("found_website")),
+            "email": email, "website": clean_contact_field(r.get("website")) or clean_contact_field(found_row.get("website")),
             "similar_awards": int(r.get("similar_awards") or 0), "divisions": sorted(d for d in (r.get("divisions") or []) if d),
             "latest_award": str(r.get("latest_award") or ""),
         })
-    return total, out
+    return (totals[True], groups[True]), (totals[False], groups[False])
 
 
 @suppliers_bp.route("/api/suppliers/<int:supplier_id>/subcontractor-candidates", methods=["GET"])
@@ -3064,8 +3082,7 @@ def get_subcontractor_candidates(supplier_id: int):
         """, divisions)
         names = {d: desc for d, desc in cursor.fetchall()}
         like_sql, like_params = " OR ".join(["a.cpv_code LIKE %s"] * len(divisions)), [f"{d}%" for d in divisions]
-        reg_total, registered = _subcontractor_group(cursor, sup[0], like_sql, like_params, True, SUBCONTRACTOR_GROUP_LIMIT)
-        unreg_total, unregistered = _subcontractor_group(cursor, sup[0], like_sql, like_params, False, SUBCONTRACTOR_GROUP_LIMIT)
+        (reg_total, registered), (unreg_total, unregistered) = _subcontractor_groups(cursor, sup[0], like_sql, like_params, SUBCONTRACTOR_GROUP_LIMIT)
         return jsonify({
             "ok": True, "supplier": {"id": sup[0], "name": sup[1]},
             "divisions": [{"code": d, "description": names.get(d, "")} for d in divisions],
@@ -3091,8 +3108,7 @@ def get_buyer_supplier_candidates():
     cursor = conn.cursor()
     try:
         match_sql, match_params = "UPPER(TRIM(a.authority_name)) = UPPER(TRIM(%s))", [authority]
-        reg_total, registered = _subcontractor_group(cursor, None, match_sql, match_params, True, SUBCONTRACTOR_GROUP_LIMIT)
-        unreg_total, unregistered = _subcontractor_group(cursor, None, match_sql, match_params, False, SUBCONTRACTOR_GROUP_LIMIT)
+        (reg_total, registered), (unreg_total, unregistered) = _subcontractor_groups(cursor, None, match_sql, match_params, SUBCONTRACTOR_GROUP_LIMIT)
         return jsonify({
             "ok": True, "mode": "buyer", "supplier": {"id": 0, "name": authority}, "divisions": [{"code": "", "description": authority}],
             "registered": registered, "unregistered": unregistered,
