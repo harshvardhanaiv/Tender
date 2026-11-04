@@ -3,11 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="TenderFlow finds public tenders across the UK, Ireland and Europe, scores how well they fit your business, and drafts the bid for you." />
+    <meta name="description" content="Sign in to TenderFlow to search UK, Irish and international public-sector tenders, track deadlines and win more bids." />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <title>TenderFlow — Find it. Fit it. Win it.</title>
+    <title>Sign in — TenderFlow</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <script>
       (function () {
@@ -20,151 +20,141 @@
     </script>
     <style>
       :root {
-        --ink: #0C1D30; --slate: #4A5C70; --mute: #7A8899; --line: #DCE2E9; --paper: #F4F6FA; --panel: #FFFFFF;
-        --accent: #4F46E5; --accent-hover: #4338CA; --gold: #F5B82E; --gold-hover: #E5A818; --gold-ink: #1A1304;
+        --ink: #0C1D30; --slate: #4A5C70; --mute: #7A8899; --line: #DCE2E9; --paper: #F1F3F8; --panel: #FFFFFF;
+        --accent: #4B3FA8; --accent-hover: #3B3190; --gold: #F2B531; --gold-hover: #E2A51E; --gold-ink: #1A1304;
         --pos: #1B7A4B; --pos-soft: #E4F5EC; --neg: #AE3A2E; --neg-soft: #FBEAE8;
-        --navy: #0C1A33; --navy-2: #132747; --chip-tint: #FEF3D0; --chip-ink: #9A6B00;
-        --radius-field: 10px;
+        --navy: #0E1B38; --navy-line: rgba(255,255,255,.08);
+        --radius-field: 12px;
         --font-display: 'Outfit', 'Segoe UI', sans-serif;
         --font-sans: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
       }
       :root[data-theme="dark"] {
         --ink: #E4EBF2; --slate: #B3C0CE; --mute: #8395A8; --line: #243548; --paper: #0A1521; --panel: #101E2D;
-        --accent: #8B85FF; --accent-hover: #756DFF; --pos: #58C08A; --pos-soft: #12301F; --neg: #E07A6E; --neg-soft: #2E1714;
-        --navy: #060E17; --navy-2: #0F2037; --chip-tint: #3A2D0B; --chip-ink: #F5B82E;
+        --accent: #A59DFF; --accent-hover: #BDB7FF; --pos: #58C08A; --pos-soft: #12301F; --neg: #E07A6E; --neg-soft: #2E1714;
+        --navy: #0A1226;
       }
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      html { color-scheme: light dark; scroll-behavior: smooth; }
-      body { font-family: var(--font-sans); background: var(--panel); color: var(--ink); line-height: 1.5; transition: background .2s ease, color .2s ease; }
+      html { color-scheme: light dark; }
+      body { font-family: var(--font-sans); background: var(--panel); color: var(--ink); line-height: 1.5; min-height: 100vh; transition: background .2s ease; }
+      body.mode-signup { background: var(--navy); }
       a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-      .wrap { width: 100%; max-width: 1020px; margin: 0 auto; padding: 0 24px; }
 
-      /* Hero */
-      .hero { background: radial-gradient(circle at 85% 0%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 45%), linear-gradient(160deg, var(--navy) 0%, var(--navy-2) 100%); color: #fff; padding: 22px 0 64px; overflow: hidden; }
-      .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 40px; }
-      .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-family: var(--font-display); font-weight: 800; font-size: 19px; letter-spacing: -.02em; color: #fff; }
-      .brand b { color: color-mix(in srgb, var(--accent) 55%, #fff); font-weight: 800; }
-      .topbar nav { display: flex; align-items: center; gap: 22px; font-size: 14px; font-weight: 500; }
-      .topbar nav a { color: rgba(255,255,255,.78); text-decoration: none; padding: 8px 2px; }
-      .topbar nav a:hover { color: #fff; }
-      .hero__grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 48px; align-items: center; }
-      .pill { display: inline-block; background: rgba(245,184,46,.14); color: var(--gold); border: 1px solid rgba(245,184,46,.25); font-size: 11.5px; font-weight: 700; padding: 5px 12px; border-radius: 999px; margin-bottom: 18px; }
-      .hero h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(36px, 5.6vw, 54px); line-height: 1.05; letter-spacing: -.03em; margin-bottom: 18px; }
-      .hero h1 em { font-style: normal; color: var(--gold); }
-      .hero p.lede { font-size: 16px; color: rgba(255,255,255,.78); max-width: 440px; margin-bottom: 26px; }
-      .cta-row { display: flex; flex-wrap: wrap; gap: 12px; }
-      .cta { font-family: var(--font-sans); font-size: 14.5px; font-weight: 700; padding: 13px 22px; border-radius: 10px; cursor: pointer; border: 1.5px solid transparent; transition: background .15s ease, border-color .15s ease; }
-      .cta--gold { background: var(--gold); color: var(--gold-ink); }
-      .cta--gold:hover { background: var(--gold-hover); }
-      .cta--ghost { background: transparent; color: #fff; border-color: rgba(255,255,255,.35); }
-      .cta--ghost:hover { border-color: #fff; background: rgba(255,255,255,.06); }
+      .brand { display: inline-flex; align-items: center; gap: 12px; text-decoration: none; color: #fff; font-family: var(--font-display); font-weight: 700; font-size: 24px; letter-spacing: -.01em; }
+      .brand__mark { width: 50px; height: 50px; border-radius: 14px; background: var(--gold); color: #1A1304; display: flex; align-items: center; justify-content: center; }
+      .brand__mark svg { width: 24px; height: 24px; }
+      .vis-hide { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-      .matches { background: #fff; color: #0C1D30; border-radius: 18px; padding: 18px 20px 14px; box-shadow: 0 24px 60px rgba(0,0,0,.35); }
-      .matches__head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 14px; padding-bottom: 12px; border-bottom: 1px solid #E6EAF0; }
-      .live-tag { font-size: 11px; font-weight: 700; color: #1B7A4B; background: #E4F5EC; padding: 3px 9px; border-radius: 999px; }
-      .match { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid #E6EAF0; }
-      .match__t { font-size: 14px; font-weight: 600; }
-      .match__s { font-size: 11.5px; color: #5E6E80; margin-top: 2px; }
-      .score { font-size: 13px; font-weight: 700; color: #1B7A4B; background: #E4F5EC; padding: 6px 11px; border-radius: 8px; flex: none; }
-      .matches__note { font-size: 11px; color: #5E6E80; padding-top: 12px; }
+      .shell { min-height: 100vh; display: grid; }
+      .lp h1 { font-family: var(--font-display); font-weight: 800; letter-spacing: -.03em; line-height: 1.05; color: #fff; }
+      .lp h1 em { font-style: normal; color: var(--gold); }
 
-      /* Sources strip */
-      .sources { background: var(--paper); border-bottom: 1px solid var(--line); }
-      .sources .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px 30px; padding-top: 22px; padding-bottom: 22px; font-size: 14.5px; font-weight: 600; }
-      .sources .lab { font-size: 11.5px; letter-spacing: .08em; color: var(--mute); font-weight: 700; }
+      /* Sign in: split screen */
+      body.mode-signin .shell { grid-template-columns: 52fr 48fr; }
+      body.mode-signin .lp--signup, body.mode-signin .su-nav { display: none; }
+      .lp--signin { position: relative; overflow: hidden; background: var(--navy); padding: 56px 66px 52px; display: flex; flex-direction: column; justify-content: space-between; color: rgba(255,255,255,.8); }
+      .lp--signin::before { content: ""; position: absolute; width: 430px; height: 430px; border-radius: 50%; background: rgba(255,255,255,.07); top: -150px; right: -50px; pointer-events: none; }
+      .lp--signin > * { position: relative; }
+      .lp--signin h1 { font-size: clamp(38px, 4.2vw, 56px); margin-bottom: 22px; }
+      .lp--signin .tag { font-size: 19px; line-height: 1.55; max-width: 650px; color: rgba(255,255,255,.78); margin-bottom: 28px; }
+      .checks { list-style: none; display: flex; flex-direction: column; gap: 14px; font-size: 17px; color: rgba(255,255,255,.9); }
+      .checks li { display: flex; align-items: center; gap: 14px; }
+      .checks li::before { content: "\2713"; width: 28px; height: 28px; border-radius: 50%; background: #1B8A5A; color: #fff; font-size: 14px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: none; }
+      .back { color: rgba(255,255,255,.72); text-decoration: none; font-size: 16px; padding: 8px 0; align-self: flex-start; }
+      .back:hover { color: #fff; }
+      body.mode-signin .rp { background: var(--panel); display: flex; align-items: center; justify-content: center; padding: 40px 28px; }
+      body.mode-signin .auth-card { width: 100%; max-width: 556px; }
 
-      /* Sections */
-      section.block { padding: 64px 0; }
-      section.block--tint { background: var(--paper); }
-      h2.sec { font-family: var(--font-display); font-size: clamp(26px, 3.6vw, 32px); font-weight: 700; letter-spacing: -.02em; line-height: 1.25; margin-bottom: 30px; max-width: 520px; }
-      .grid { display: grid; gap: 18px; }
-      .grid--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-      .grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px; box-shadow: 0 1px 2px rgba(12,29,48,.04); }
-      .card h3 { font-family: var(--font-display); font-size: 16.5px; font-weight: 700; margin: 14px 0 6px; }
-      .card p { font-size: 13.5px; color: var(--slate); }
-      .ico { width: 38px; height: 38px; border-radius: 10px; background: var(--chip-tint); color: var(--chip-ink); display: flex; align-items: center; justify-content: center; flex: none; }
-      .ico svg { width: 18px; height: 18px; }
-      .ico--grey { background: var(--paper); color: var(--slate); }
-      .step__n { width: 34px; height: 34px; border-radius: 50%; background: var(--navy); color: var(--gold); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
-      .step h3 { margin-top: 18px; }
-      .feat { display: flex; gap: 16px; align-items: flex-start; padding: 18px 20px; }
-      .feat h3 { margin: 0 0 3px; font-size: 14.5px; font-family: var(--font-sans); }
-      .feat p { font-size: 13px; }
+      /* Create account: dark page with a card */
+      body.mode-signup .shell { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; padding: 0 clamp(24px, 9vw, 180px) 60px 0; }
+      body.mode-signup .lp--signin { display: none; }
+      .su-nav { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; padding: 24px 56px; z-index: 2; }
+      .su-nav .brand { font-size: 24px; }
+      .su-nav .brand__mark { width: 48px; height: 48px; }
+      .su-nav nav { display: flex; gap: 34px; }
+      .su-nav nav a { color: rgba(255,255,255,.82); text-decoration: none; font-size: 16px; font-weight: 500; padding: 8px 0; }
+      .su-nav nav a:hover { color: #fff; }
+      body.mode-signup { position: relative; overflow-x: hidden; }
+      body.mode-signup::before { content: ""; position: fixed; width: 640px; height: 640px; border-radius: 50%; background: rgba(255,255,255,.07); top: -330px; right: -170px; pointer-events: none; }
+      .lp--signup { padding: 0 24px 0 clamp(24px, 9vw, 180px); position: relative; }
+      .lp--signup .pill { display: inline-block; background: rgba(242,181,49,.16); color: var(--gold); font-size: 16px; font-weight: 700; padding: 7px 17px; border-radius: 999px; margin-bottom: 22px; }
+      .lp--signup h1 { font-size: clamp(40px, 5vw, 66px); margin-bottom: 26px; }
+      .lp--signup .tag { font-size: 21px; line-height: 1.55; max-width: 660px; color: rgba(255,255,255,.76); margin-bottom: 34px; }
+      .stats { display: flex; gap: 48px; }
+      .stat b { display: block; font-family: var(--font-display); font-size: 48px; line-height: 1.1; color: var(--gold); letter-spacing: -.02em; }
+      .stat span { font-size: 17px; color: rgba(255,255,255,.75); }
+      body.mode-signup .rp { position: relative; padding-top: 70px; }
+      body.mode-signup .auth-card { background: var(--panel); border-radius: 30px; padding: 42px 42px 36px; box-shadow: 0 40px 90px rgba(0,0,0,.4); max-width: 696px; margin-left: auto; }
 
-      /* Stats / final CTA */
-      .band { background: var(--navy); color: #fff; border-radius: 28px; padding: 36px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 28px; margin: 0 auto 56px; max-width: 1088px; }
-      .stats { display: flex; flex-wrap: wrap; gap: 14px 36px; }
-      .stat b { display: block; font-family: var(--font-display); font-size: 38px; color: var(--gold); line-height: 1.1; letter-spacing: -.02em; }
-      .stat span { font-size: 13.5px; color: rgba(255,255,255,.75); }
-      .band__cta h2 { font-family: var(--font-display); font-size: 22px; font-weight: 700; margin-bottom: 14px; }
-      footer.foot { text-align: center; font-size: 12.5px; color: var(--mute); padding: 0 24px 36px; }
-      footer.foot a { color: var(--slate); margin: 0 6px; }
+      /* Form (shared) */
+      .tabs { display: flex; }
+      body.mode-signin .tabs { background: var(--paper); border-radius: 14px; padding: 5px; gap: 4px; margin-bottom: 44px; }
+      body.mode-signin .tabs button { flex: 1; border: none; background: transparent; color: var(--slate); font: 600 18px var(--font-sans); padding: 13px; border-radius: 10px; cursor: pointer; }
+      body.mode-signin .tabs button[aria-selected="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 4px rgba(12,29,48,.14); }
+      body.mode-signup .tabs { border-bottom: 1px solid var(--line); gap: 30px; margin-bottom: 26px; }
+      body.mode-signup .tabs button { border: none; background: transparent; color: var(--slate); font: 600 20px var(--font-sans); padding: 8px 0 18px; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+      body.mode-signup .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--gold); }
 
-      @media (max-width: 900px) {
-        .hero__grid { grid-template-columns: 1fr; gap: 36px; }
-        .grid--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .grid--3 { grid-template-columns: 1fr; }
-      }
-      @media (max-width: 1100px) { .band { margin-left: 16px; margin-right: 16px; } }
-      @media (max-width: 560px) {
-        .grid--4 { grid-template-columns: 1fr; }
-        .topbar nav a.hide-sm { display: none; }
-        .band { border-radius: 20px; padding: 28px 22px; }
-        .wrap { padding: 0 16px; }
-      }
-
-      /* Sign-in dialog: the original form, unchanged inside */
-      .auth-backdrop { position: fixed; inset: 0; background: rgba(6,14,23,.62); backdrop-filter: blur(3px); display: none; align-items: center; justify-content: center; padding: 16px; z-index: 50; overflow-y: auto; }
-      .auth-backdrop.open { display: flex; }
-      .auth-dialog { position: relative; background: var(--panel); color: var(--ink); width: 100%; max-width: 430px; border-radius: 18px; padding: 30px 30px 24px; box-shadow: 0 30px 80px rgba(0,0,0,.4); margin: auto; }
-      .auth-close { position: absolute; top: 10px; right: 10px; width: 36px; height: 36px; border: none; background: transparent; color: var(--mute); font-size: 22px; line-height: 1; border-radius: 8px; cursor: pointer; }
-      .auth-close:hover { background: var(--paper); color: var(--ink); }
       .login-card { display: flex; flex-direction: column; gap: 16px; }
-      .header { text-align: center; }
-      .brand-container { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 6px; }
-      .brand-title { font-size: 21px; font-weight: 800; letter-spacing: -0.02em; font-family: var(--font-display); color: var(--ink); line-height: 1; }
-      .brand-title-flow { color: var(--accent); }
-      .lang-row { margin-bottom: 18px; display: flex; justify-content: center; gap: 10px; }
-      .lang-opt { color: var(--mute); text-decoration: none; font-size: 12.5px; font-weight: 600; letter-spacing: 0.02em; }
-      .lang-opt.active, .lang-opt:hover { color: var(--accent); }
-      .lang-sep { color: var(--line); }
-      .header h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; font-family: var(--font-display); color: var(--ink); }
-      .header p { font-size: 13.5px; color: var(--slate); }
-      .form-group { display: flex; flex-direction: column; gap: 6px; }
-      .form-group label { font-size: 12px; font-weight: 600; color: var(--slate); }
+      .header h1 { font-family: var(--font-display); font-size: 40px; font-weight: 700; letter-spacing: -.02em; color: var(--ink); line-height: 1.15; margin-bottom: 8px; }
+      .header p { font-size: 18px; color: var(--slate); }
+      body.mode-signup .header h1 { display: none; }
+      body.mode-signup .header p { font-size: 18px; }
+      .form-group { display: flex; flex-direction: column; gap: 8px; }
+      .form-group label { font-size: 16px; font-weight: 600; color: var(--ink); }
+      body.mode-signup .form-group label { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
       .input-wrapper { position: relative; }
-      .input-wrapper input { width: 100%; background: var(--paper); border: 1.5px solid var(--line); border-radius: var(--radius-field); padding: 11px 14px; color: var(--ink); font-family: var(--font-sans); font-size: 14px; outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+      .input-wrapper input { width: 100%; background: var(--panel); border: 1.5px solid var(--line); border-radius: var(--radius-field); padding: 18px 20px; color: var(--ink); font-family: var(--font-sans); font-size: 18px; outline: none; transition: border-color .15s ease, box-shadow .15s ease; }
       .input-wrapper input::placeholder { color: var(--mute); }
-      .input-wrapper input#password { padding-right: 44px; }
-      .input-wrapper input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
-      .pwd-toggle-btn { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: transparent; border: none; color: var(--mute); cursor: pointer; padding: 6px; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: all 0.15s ease; outline: none; }
-      .pwd-toggle-btn:hover:not(:disabled) { color: var(--ink); background: var(--paper); }
-      .pwd-toggle-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-      .copy-toast { position: absolute; right: 42px; top: 50%; transform: translateY(-50%); background: var(--ink); color: var(--panel); font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px; opacity: 0; pointer-events: none; transition: opacity 0.2s ease; white-space: nowrap; }
+      .input-wrapper input#password { padding-right: 84px; }
+      .input-wrapper input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(242,181,49,.28); }
+      .pwd-toggle-btn { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); background: transparent; border: none; color: var(--accent); font: 600 16px var(--font-sans); cursor: pointer; padding: 8px; border-radius: 8px; min-height: 40px; }
+      .pwd-toggle-btn:disabled { opacity: .35; cursor: not-allowed; }
+      .copy-toast { position: absolute; right: 80px; top: 50%; transform: translateY(-50%); background: var(--ink); color: var(--panel); font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 6px; opacity: 0; pointer-events: none; transition: opacity .2s ease; white-space: nowrap; }
       .copy-toast.show { opacity: 1; }
-      .btn { border: 1.5px solid var(--line); border-radius: var(--radius-field); font-size: 14px; font-weight: 600; padding: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; font-family: var(--font-sans); transition: all 0.15s ease; }
-      .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-      .btn-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+      .btn { border: 1.5px solid var(--line); border-radius: var(--radius-field); font-size: 18px; font-weight: 600; padding: 17px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; font-family: var(--font-sans); transition: background .15s ease, border-color .15s ease; }
+      .btn-primary { background: var(--gold); border-color: var(--gold); color: var(--gold-ink); font-weight: 700; margin-top: 4px; }
+      .btn-primary:hover:not(:disabled) { background: var(--gold-hover); border-color: var(--gold-hover); }
       .btn-google { background: var(--panel); color: var(--ink); }
       .btn-google:hover:not(:disabled) { background: var(--paper); }
-      .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-      .divider { text-align: center; color: var(--mute); font-size: 12.5px; position: relative; }
-      .divider::before, .divider::after { content: ''; position: absolute; top: 50%; width: 38%; height: 1px; background: var(--line); }
+      .btn:disabled { opacity: .6; cursor: not-allowed; }
+      .divider { text-align: center; color: var(--slate); font-size: 16px; position: relative; margin: 4px 0; }
+      .divider::before, .divider::after { content: ''; position: absolute; top: 50%; width: 36%; height: 1px; background: var(--line); }
       .divider::before { left: 0; } .divider::after { right: 0; }
-      .error-msg { background: var(--neg-soft); border: 1px solid var(--neg); color: var(--neg); font-size: 13px; padding: 10px 14px; border-radius: var(--radius-field); display: none; }
-      .success-msg { background: var(--pos-soft); border: 1px solid var(--pos); color: var(--pos); font-size: 13px; padding: 10px 14px; border-radius: var(--radius-field); display: none; }
-      .toggle-mode { text-align: center; font-size: 13.5px; color: var(--slate); }
-      .toggle-mode a { color: var(--accent); text-decoration: none; font-weight: 600; cursor: pointer; }
-      .forgot { text-align: right; font-size: 12.5px; }
-      .forgot a { color: var(--accent); text-decoration: none; cursor: pointer; }
-      .signup-only { max-height: 0; overflow: hidden; opacity: 0; transition: all 0.3s; }
-      .show-signup .signup-only { max-height: 120px; opacity: 1; margin-top: 0; }
-      .legal { text-align: center; font-size: 11.5px; color: var(--mute); }
-      .legal a { color: var(--slate); }
-      .lang-opt { display: inline-block; padding: 8px 6px; margin: -8px -6px; }
-      .forgot a, .toggle-mode a, .legal a { display: inline-block; padding: 9px 4px; margin: -9px -4px; }
-      .pwd-toggle-btn { min-width: 36px; min-height: 36px; }
+      .error-msg { background: var(--neg-soft); border: 1px solid var(--neg); color: var(--neg); font-size: 15px; padding: 12px 16px; border-radius: var(--radius-field); display: none; }
+      .success-msg { background: var(--pos-soft); border: 1px solid var(--pos); color: var(--pos); font-size: 15px; padding: 12px 16px; border-radius: var(--radius-field); display: none; }
+      .toggle-mode { display: none; }
+      .forgot { text-align: right; font-size: 16px; margin-top: -4px; }
+      .forgot a { color: var(--accent); cursor: pointer; text-decoration: underline; display: inline-block; padding: 6px 0; }
+      .signup-only { display: none; }
+      body.mode-signup .signup-only { display: flex; }
+      .legal { text-align: center; font-size: 15px; color: var(--slate); margin-top: 6px; }
+      .legal a { color: var(--ink); display: inline-block; padding: 6px 2px; }
+      .lang-row { display: flex; justify-content: center; gap: 10px; margin-top: 4px; }
+      .lang-opt { color: var(--mute); text-decoration: none; font-size: 13px; font-weight: 600; padding: 8px 6px; }
+      .lang-opt.active, .lang-opt:hover { color: var(--accent); }
+      .lang-sep { color: var(--line); align-self: center; }
+
+      @media (max-width: 960px) {
+        body.mode-signin .shell { grid-template-columns: 1fr; }
+        .lp--signin { padding: 28px 24px 30px; gap: 20px; }
+        .lp--signin .tag, .lp--signin .checks { display: none; }
+        .lp--signin h1 { font-size: 32px; margin-bottom: 0; }
+        .lp--signin .back { order: 5; }
+        body.mode-signin .rp { padding: 28px 18px 40px; align-items: flex-start; }
+        body.mode-signup .shell { grid-template-columns: 1fr; padding: 0 16px 40px; }
+        .su-nav { position: static; padding: 18px 16px; }
+        .su-nav nav { gap: 18px; }
+        .lp--signup { padding: 24px 8px 28px; }
+        .lp--signup .tag { font-size: 17px; }
+        .stat b { font-size: 36px; }
+        body.mode-signup .rp { padding-top: 0; }
+        body.mode-signup .auth-card { padding: 28px 22px 26px; border-radius: 22px; margin: 0 auto; }
+        .header h1 { font-size: 32px; }
+      }
+      @media (max-width: 480px) {
+        .su-nav nav a:not(:last-child) { display: none; }
+        body.mode-signup .tabs button { font-size: 17px; }
+      }
     </style>
     <script>
       // Sent here by the app because the session ended (idle timeout or signed out elsewhere): say so (D06).
@@ -178,191 +168,93 @@
           : "You have been signed out. Sign in again to continue.";
         var box = document.getElementById("errorMsg"), text = document.getElementById("errorText");
         if (box && text) { text.textContent = msg; box.style.display = "block"; }
+        if (window.tfSetMode) window.tfSetMode(false); else window.__tfWantSignup = false;
         if (window.tfOpenAuth) window.tfOpenAuth("signin");
       });
     </script>
-    <script src="/translations.js"></script>
+    <script src="/translations.js?v=7"></script>
   </head>
-  <body>
-    <header class="hero">
-      <div class="wrap">
-        <div class="topbar">
-          <a class="brand" href="/login.html" aria-label="TenderFlow"><svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" width="28" height="28" aria-hidden="true"><defs><linearGradient id="heroLogoGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#4f46e5"/></linearGradient></defs><rect width="32" height="32" rx="7" fill="url(#heroLogoGrad)"/><circle cx="14" cy="14" r="5.5" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><line x1="18" y1="18" x2="23.5" y2="23.5" stroke="white" stroke-width="2.5" stroke-linecap="round"/><path d="M11 13.5L13.5 16L17.5 11" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Tender<b>Flow</b></span></a>
-          <nav aria-label="Main">
-            <a class="hide-sm" href="#features">Features</a>
-            <a class="hide-sm" href="/pricing.html">Pricing</a>
-            <a href="#" data-open-auth="signin">Log in</a>
-          </nav>
-        </div>
-        <div class="hero__grid">
-          <div>
-            <span class="pill">Public tender search and bid workspace</span>
-            <h1>Find it. Fit it. <em>Win it.</em></h1>
-            <p class="lede">TenderFlow finds public tenders across the UK, Ireland and Europe, scores how well they fit your business, and drafts the bid for you.</p>
-            <div class="cta-row">
-              <button type="button" class="cta cta--gold" data-open-auth="signup">Start free</button>
-              <button type="button" class="cta cta--ghost" data-open-auth="signin">Log in to TenderFlow</button>
-            </div>
-          </div>
-          <div class="matches" role="img" aria-label="Example list of top tender matches with fit scores">
-            <div class="matches__head"><span>Top matches today</span><span class="live-tag">Live</span></div>
-            <div class="match"><div><div class="match__t">Digital records management service</div><div class="match__s">Sample Council · closes in 38 days</div></div><span class="score">92%</span></div>
-            <div class="match"><div><div class="match__t">Cyber security assurance framework</div><div class="match__s">Example Trust · closes in 21 days</div></div><span class="score">84%</span></div>
-            <div class="match"><div><div class="match__t">Data platform refresh</div><div class="match__s">Example Port Authority · closes in 55 days</div></div><span class="score">78%</span></div>
-            <div class="matches__note">Example tenders for illustration.</div>
-          </div>
-        </div>
-      </div>
-    </header>
-
-    <div class="sources"><div class="wrap"><span class="lab">LIVE SOURCES</span><span>Find a Tender</span><span>Contracts Finder</span><span>eTenders Ireland</span><span>TED (EU)</span></div></div>
-
-    <section class="block" id="features"><div class="wrap">
-      <h2 class="sec">Win more public sector work with less effort</h2>
-      <div class="grid grid--4">
-        <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span><h3>Faster discovery</h3><p>New tenders from every major source in one search, the moment they are published.</p></div>
-        <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><h3>Smarter priorities</h3><p>AI fit scores show which tenders are worth your time.</p></div>
-        <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span><h3>Fewer barriers</h3><p>Your certificates and past answers are ready to reuse in every bid.</p></div>
-        <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h13"/></svg></span><h3>Simple automation</h3><p>Draft summaries, analyses and proposals from an easy interface.</p></div>
-      </div>
-    </div></section>
-
-    <section class="block block--tint"><div class="wrap">
-      <h2 class="sec">How it works</h2>
-      <div class="grid grid--3">
-        <div class="card step"><div class="step__n">1</div><h3>Search and match</h3><p>Tell us what you sell. We surface the tenders that fit and score each one.</p></div>
-        <div class="card step"><div class="step__n">2</div><h3>Plan your bid</h3><p>Move opportunities through your pipeline and see requirements at a glance.</p></div>
-        <div class="card step"><div class="step__n">3</div><h3>Draft and submit</h3><p>Generate a first draft from your Answer Bank, then refine and submit.</p></div>
-      </div>
-    </div></section>
-
-    <section class="block"><div class="wrap">
-      <h2 class="sec">Everything in one workspace</h2>
-      <div class="grid grid--3">
-        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span><div><h3>Tender search</h3><p>One search across UK, Ireland and EU notices.</p></div></div>
-        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h6"/></svg></span><div><h3>Pipeline</h3><p>Track every bid from watching to won.</p></div></div>
-        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6"/><path d="M5 10v9M19 10v9M9 14v5M15 14v5M3 21h18"/></svg></span><div><h3>Buyer intelligence</h3><p>See who buys what, and how much.</p></div></div>
-        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c1-4 4-5.5 7-5.5s6 1.5 7 5.5"/></svg></span><div><h3>Supplier intelligence</h3><p>Learn from past winners and their contracts.</p></div></div>
-        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></span><div><h3>Growth Studio</h3><p>Turn buying signals into outreach campaigns.</p></div></div>
-        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10l-5 4v-4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg></span><div><h3>Answer Bank</h3><p>Reusable answers and evidence for every bid.</p></div></div>
-      </div>
-    </div></section>
-
-    <div class="band">
-      <div class="stats">
-        <div class="stat"><b>2,198</b><span>Tenders tracked</span></div>
-        <div class="stat"><b>82%</b><span>Average AI fit</span></div>
-        <div class="stat"><b>4</b><span>Live sources</span></div>
-      </div>
-      <div class="band__cta"><h2>Ready to see your matches?</h2><button type="button" class="cta cta--gold" data-open-auth="signin">Log in to TenderFlow</button></div>
-    </div>
-    <footer class="foot"><a href="/pricing.html">Pricing</a><a href="/legal/terms.html">Terms</a><a href="/legal/privacy.html">Privacy Policy</a></footer>
-
-    <div class="auth-backdrop" id="authBackdrop" aria-hidden="true">
-      <div class="auth-dialog" role="dialog" aria-modal="true" aria-label="Sign in to TenderFlow">
-        <button type="button" class="auth-close" id="authClose" aria-label="Close">&times;</button>
-      <div class="login-container">
-      <div class="login-card" id="loginCard">
-        <div class="header">
-          <div class="brand-container">
-            <svg class="brand-logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" width="32" height="32">
-              <defs>
-                <linearGradient id="brandLogoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#6366f1" />
-                  <stop offset="100%" stop-color="#4f46e5" />
-                </linearGradient>
-              </defs>
-              <rect width="32" height="32" rx="7" fill="url(#brandLogoGrad)" />
-              <circle cx="14" cy="14" r="5.5" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
-              <line x1="18" y1="18" x2="23.5" y2="23.5" stroke="white" stroke-width="2.5" stroke-linecap="round" />
-              <path d="M11 13.5L13.5 16L17.5 11" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <div class="brand-title">Tender<span class="brand-title-flow">Flow</span></div>
-          </div>
-          <div class="lang-row">
-            <a href="#" class="lang-opt" data-lang="en">EN</a>
-            <span class="lang-sep">|</span>
-            <a href="#" class="lang-opt" data-lang="fr">FR</a>
-            <span class="lang-sep">|</span>
-            <a href="#" class="lang-opt" data-lang="nl">NL</a>
-          </div>
-          <h1 id="titleText">Welcome Back</h1>
-          <p id="subText">Sign in to search and bid on tenders</p>
-        </div>
-        <div id="errorMsg" class="error-msg"><span id="errorText"></span></div>
-        <div id="successMsg" class="success-msg"><span id="successText"></span></div>
-        <button type="button" id="btnGoogle" class="btn btn-google">Continue with Google</button>
-        <div class="divider">or email</div>
-        <form id="loginForm" style="display:flex;flex-direction:column;gap:14px;">
-          <div class="form-group signup-only" id="companyGroup">
-            <label for="companyName">Company name</label>
-            <div class="input-wrapper"><input type="text" id="companyName" placeholder="Acme Ltd" /></div>
-          </div>
-          <div class="form-group">
-            <label for="email">Email</label>
-            <div class="input-wrapper"><input type="email" id="email" required autocomplete="email" placeholder="you@company.com" /></div>
-          </div>
-          <div class="form-group">
-            <label for="password">Password</label>
-            <div class="input-wrapper">
-              <input type="password" id="password" required autocomplete="current-password" placeholder="Your password" minlength="6" />
-              <span id="copyToast" class="copy-toast">Copied!</span>
-              <button type="button" id="togglePasswordBtn" class="pwd-toggle-btn" disabled title="View password" aria-label="Toggle password visibility">
-                <svg id="eyeIcon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                  <circle cx="12" cy="12" r="3"></circle>
-                </svg>
-              </button>
-            </div>
-          </div>
-          <div class="forgot" id="forgotWrap"><a id="forgotLink" href="#" role="button">Forgot password?</a></div>
-          <button type="submit" id="btnSubmit" class="btn btn-primary"><span id="btnText">Sign In</span></button>
-        </form>
-        <div class="toggle-mode">Don't have an account? <a id="toggleLink" href="#" role="button">Sign Up</a></div>
-        <div class="legal">By continuing you agree to our <a href="/legal/terms.html">Terms</a> and <a href="/legal/privacy.html">Privacy Policy</a>.</div>
-      </div>
-      </div>
-    </div>
-    </div>
-
+  <body class="mode-signin">
     <script>
-      // The landing page buttons open the sign-in dialog. Sign-in itself lives in the module script below, which loads Firebase and can be
-      // slower than a click, so the wanted mode is remembered here and applied once the module is ready.
-      (function () {
-        var backdrop = document.getElementById("authBackdrop"), opener = null;
-        function openAuth(mode) {
-          opener = document.activeElement;
-          window.__tfWantSignup = mode === "signup";
-          if (window.tfSetMode) window.tfSetMode(window.__tfWantSignup);
-          backdrop.classList.add("open"); backdrop.setAttribute("aria-hidden", "false");
-          document.body.style.overflow = "hidden";
-          setTimeout(function () { var f = document.getElementById("btnGoogle"); if (f) f.focus(); }, 30);
-        }
-        function closeAuth() {
-          backdrop.classList.remove("open"); backdrop.setAttribute("aria-hidden", "true");
-          document.body.style.overflow = "";
-          if (opener && opener.focus) opener.focus();
-        }
-        window.tfOpenAuth = openAuth;
-        document.querySelectorAll("[data-open-auth]").forEach(function (b) {
-          b.addEventListener("click", function (e) { e.preventDefault(); openAuth(b.getAttribute("data-open-auth")); });
+      // Pick the layout before first paint so a #signup link does not flash the sign-in screen.
+      (function () { if (location.hash === "#signup" || /[?&]mode=signup/.test(location.search)) { document.body.className = "mode-signup"; window.__tfWantSignup = true; } })();
+    </script>
+    <div class="su-nav">
+      <a class="brand" href="/home.html" aria-label="TenderFlow home"><span class="brand__mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/></svg></span>TenderFlow</a>
+      <nav aria-label="Main"><a href="/home.html#features">Features</a><a href="/pricing.html">Pricing</a><a href="/home.html#sources">Sources</a></nav>
+    </div>
+    <main class="shell">
+      <aside class="lp lp--signin">
+        <a class="brand" href="/home.html" aria-label="TenderFlow home"><span class="brand__mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/></svg></span>TenderFlow</a>
+        <div>
+          <h1>Find it. Fit it. <em>Win it.</em></h1>
+          <p class="tag">AI-powered discovery, fit scoring and bid drafting across UK, Ireland and international public tenders.</p>
+          <ul class="checks"><li>Tenders from four live sources in one search</li><li>AI fit score on every notice</li><li>First-draft bids from your Answer Bank</li></ul>
+        </div>
+        <a class="back" href="/home.html">&larr; Back to website</a>
+      </aside>
+      <section class="lp lp--signup">
+        <span class="pill">Public tender search and bid workspace</span>
+        <h1>Find it. Fit it. <em>Win it.</em></h1>
+        <p class="tag">Sign in on this page and go straight to your tenders. No pop-ups, no extra page.</p>
+        <div class="stats"><div class="stat"><b>2,198</b><span>Tenders tracked</span></div><div class="stat"><b>82%</b><span>Average AI fit</span></div></div>
+      </section>
+      <section class="rp">
+        <div class="auth-card">
+          <div class="tabs" role="tablist" aria-label="Sign in or create an account">
+            <button type="button" role="tab" data-mode="signin" aria-selected="true" id="tabSignin">Sign in</button>
+            <button type="button" role="tab" data-mode="signup" aria-selected="false" id="tabSignup">Create account</button>
+          </div>
+          <div class="login-card" id="loginCard">
+            <div class="header">
+              <h1 id="titleText">Welcome back</h1>
+              <p id="subText">Sign in to search and bid on tenders</p>
+            </div>
+            <div id="errorMsg" class="error-msg" role="alert"><span id="errorText"></span></div>
+            <div id="successMsg" class="success-msg" role="status"><span id="successText"></span></div>
+            <button type="button" id="btnGoogle" class="btn btn-google">Continue with Google</button>
+            <div class="divider">or use email</div>
+            <form id="loginForm" style="display:flex;flex-direction:column;gap:14px;">
+              <div class="form-group signup-only" id="companyGroup">
+                <label for="companyName">Company name</label>
+                <div class="input-wrapper"><input type="text" id="companyName" placeholder="Company name" autocomplete="organization" /></div>
+              </div>
+              <div class="form-group">
+                <label for="email">Email</label>
+                <div class="input-wrapper"><input type="email" id="email" required autocomplete="email" placeholder="you@company.com" /></div>
+              </div>
+              <div class="form-group">
+                <label for="password">Password</label>
+                <div class="input-wrapper">
+                  <input type="password" id="password" required autocomplete="current-password" placeholder="Your password" minlength="6" />
+                  <span id="copyToast" class="copy-toast">Copied!</span>
+                  <button type="button" id="togglePasswordBtn" class="pwd-toggle-btn" disabled title="View password" aria-label="Show or hide password"><span id="eyeIcon">Show</span></button>
+                </div>
+              </div>
+              <div class="forgot" id="forgotWrap"><a id="forgotLink" href="#" role="button">Forgot password?</a></div>
+              <button type="submit" id="btnSubmit" class="btn btn-primary"><span id="btnText">Sign In</span></button>
+            </form>
+            <div class="toggle-mode">Don't have an account? <a id="toggleLink" href="#" role="button">Sign Up</a></div>
+            <div class="legal">By continuing you agree to our <a href="/legal/terms.html">Terms</a> and <a href="/legal/privacy.html">Privacy Policy</a>.</div>
+            <div class="lang-row"><a href="#" class="lang-opt" data-lang="en">EN</a><span class="lang-sep">|</span><a href="#" class="lang-opt" data-lang="fr">FR</a><span class="lang-sep">|</span><a href="#" class="lang-opt" data-lang="nl">NL</a></div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script>
+      // The two tabs switch the screen. Sign-in itself lives in the module script below (it loads Firebase, which can be slower than a click),
+      // so the wanted mode is remembered here and applied when the module is ready.
+      document.querySelectorAll("[data-mode]").forEach(function (b) {
+        b.addEventListener("click", function () {
+          var signup = b.getAttribute("data-mode") === "signup";
+          window.__tfWantSignup = signup;
+          if (window.tfSetMode) window.tfSetMode(signup);
+          else {
+            document.body.className = signup ? "mode-signup" : "mode-signin";
+            document.querySelectorAll("[data-mode]").forEach(function (x) { x.setAttribute("aria-selected", String(x === b)); });
+          }
         });
-        document.getElementById("authClose").addEventListener("click", closeAuth);
-        backdrop.addEventListener("mousedown", function (e) { if (e.target === backdrop) closeAuth(); });
-        document.addEventListener("keydown", function (e) {
-          if (!backdrop.classList.contains("open")) return;
-          if (e.key === "Escape") { closeAuth(); return; }
-          if (e.key !== "Tab") return;
-          var f = Array.prototype.filter.call(backdrop.querySelectorAll("button, a[href], input, [tabindex]:not([tabindex='-1'])"), function (x) { return !x.disabled && x.offsetParent !== null; });
-          if (!f.length) return;
-          var first = f[0], last = f[f.length - 1];
-          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-        });
-        // A link to #signin or #signup opens the dialog straight away.
-        var h = location.hash.replace("#", "");
-        if (h === "signin" || h === "signup") openAuth(h);
-      })();
+      });
     </script>
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -485,7 +377,7 @@
         document.querySelector("label[for='email']").textContent = t("login_email");
         document.querySelector("label[for='password']").textContent = t("login_password");
         $("forgotLink").textContent = t("login_forgot");
-        $("btnText").textContent = isSignUp ? t("login_signup") : t("login_signin");
+        $("btnText").textContent = isSignUp ? t("login_create_acc") : t("login_signin");
 
         const toggleLink = $("toggleLink");
         if (toggleLink) {
@@ -494,7 +386,7 @@
         }
 
         // Placeholders
-        $("companyName").setAttribute("placeholder", isSignUp ? "Acme Ltd" : "");
+        $("companyName").setAttribute("placeholder", isSignUp ? t("login_company") : "");
         $("email").setAttribute("placeholder", "you@company.com");
       }
 
@@ -512,6 +404,7 @@
         $("loginCard").classList.toggle("show-signup", isSignUp);
         $("forgotWrap").style.display = isSignUp ? "none" : "block";
         translatePage(currentLang);
+        applyMode();
       });
 
       // Initialize language
@@ -525,8 +418,8 @@
       let pwdHideTimer = null;
       let copyToastTimer = null;
 
-      const svgEyeClosed = `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>`;
-      const svgEyeOpen = `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line>`;
+      const svgEyeClosed = "Show";
+      const svgEyeOpen = "Hide";
 
       function hidePassword() {
         pwdInput.type = "password";
@@ -642,8 +535,18 @@
           $("btnSubmit").disabled = false;
         }
       });
-      window.tfSetMode = (signup) => { if (signup !== isSignUp) $("toggleLink").click(); };
-      if (window.__tfWantSignup !== undefined) window.tfSetMode(window.__tfWantSignup);
+
+      // Sign in and Create account are two screens of one page: the body class picks the layout, the form is the same.
+      function applyMode() {
+        document.body.classList.toggle("mode-signup", isSignUp);
+        document.body.classList.toggle("mode-signin", !isSignUp);
+        document.querySelectorAll("[data-mode]").forEach((b) => b.setAttribute("aria-selected", String((b.getAttribute("data-mode") === "signup") === isSignUp)));
+        document.title = (isSignUp ? "Create account" : "Sign in") + " \u2014 TenderFlow";
+        try { history.replaceState(null, "", isSignUp ? "#signup" : location.pathname + location.search); } catch (e) { /* ignore */ }
+      }
+      window.tfSetMode = (signup) => { if (signup !== isSignUp) $("toggleLink").click(); else applyMode(); };
+      const wantSignup = window.__tfWantSignup !== undefined ? window.__tfWantSignup : (location.hash === "#signup" || /[?&]mode=signup/.test(location.search));
+      window.tfSetMode(wantSignup);
     </script>
   </body>
 </html>

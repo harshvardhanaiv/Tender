@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="TenderFlow finds public tenders across the UK, Ireland and Europe, scores how well they fit your business, and drafts the bid for you." />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>TenderFlow — Public tender search and bid workspace</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("tf_theme");
+          if (!t && window.matchMedia("(prefers-color-scheme: dark)").matches) t = "dark";
+          if (t) document.documentElement.setAttribute("data-theme", t);
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
+    <style>
+      :root {
+        --ink: #0C1D30; --slate: #4A5C70; --mute: #7A8899; --line: #DCE2E9; --paper: #F4F6FA; --panel: #FFFFFF;
+        --accent: #4F46E5; --accent-hover: #4338CA; --gold: #F5B82E; --gold-hover: #E5A818; --gold-ink: #1A1304;
+        --pos: #1B7A4B; --pos-soft: #E4F5EC; --neg: #AE3A2E; --neg-soft: #FBEAE8;
+        --navy: #0C1A33; --navy-2: #132747; --chip-tint: #FEF3D0; --chip-ink: #9A6B00;
+        --radius-field: 10px;
+        --font-display: 'Outfit', 'Segoe UI', sans-serif;
+        --font-sans: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+      }
+      :root[data-theme="dark"] {
+        --ink: #E4EBF2; --slate: #B3C0CE; --mute: #8395A8; --line: #243548; --paper: #0A1521; --panel: #101E2D;
+        --accent: #8B85FF; --accent-hover: #756DFF; --pos: #58C08A; --pos-soft: #12301F; --neg: #E07A6E; --neg-soft: #2E1714;
+        --navy: #060E17; --navy-2: #0F2037; --chip-tint: #3A2D0B; --chip-ink: #F5B82E;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html { color-scheme: light dark; scroll-behavior: smooth; }
+      body { font-family: var(--font-sans); background: var(--panel); color: var(--ink); line-height: 1.5; transition: background .2s ease, color .2s ease; }
+      a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+      .wrap { width: 100%; max-width: 1020px; margin: 0 auto; padding: 0 24px; }
+
+      /* Hero */
+      .hero { background: radial-gradient(circle at 85% 0%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 45%), linear-gradient(160deg, var(--navy) 0%, var(--navy-2) 100%); color: #fff; padding: 22px 0 64px; overflow: hidden; }
+      .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 40px; }
+      .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-family: var(--font-display); font-weight: 800; font-size: 19px; letter-spacing: -.02em; color: #fff; }
+      .brand b { color: color-mix(in srgb, var(--accent) 55%, #fff); font-weight: 800; }
+      .topbar nav { display: flex; align-items: center; gap: 22px; font-size: 14px; font-weight: 500; }
+      .topbar nav a { color: rgba(255,255,255,.78); text-decoration: none; padding: 8px 2px; }
+      .topbar nav a:hover { color: #fff; }
+      .hero__grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 48px; align-items: center; }
+      .pill { display: inline-block; background: rgba(245,184,46,.14); color: var(--gold); border: 1px solid rgba(245,184,46,.25); font-size: 11.5px; font-weight: 700; padding: 5px 12px; border-radius: 999px; margin-bottom: 18px; }
+      .hero h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(36px, 5.6vw, 54px); line-height: 1.05; letter-spacing: -.03em; margin-bottom: 18px; }
+      .hero h1 em { font-style: normal; color: var(--gold); }
+      .hero p.lede { font-size: 16px; color: rgba(255,255,255,.78); max-width: 440px; margin-bottom: 26px; }
+      .cta-row { display: flex; flex-wrap: wrap; gap: 12px; }
+      .cta { display: inline-block; text-decoration: none; text-align: center; font-family: var(--font-sans); font-size: 14.5px; font-weight: 700; padding: 13px 22px; border-radius: 10px; cursor: pointer; border: 1.5px solid transparent; transition: background .15s ease, border-color .15s ease; }
+      .cta--gold { background: var(--gold); color: var(--gold-ink); }
+      .cta--gold:hover { background: var(--gold-hover); }
+      .cta--ghost { background: transparent; color: #fff; border-color: rgba(255,255,255,.35); }
+      .cta--ghost:hover { border-color: #fff; background: rgba(255,255,255,.06); }
+
+      .matches { background: #fff; color: #0C1D30; border-radius: 18px; padding: 18px 20px 14px; box-shadow: 0 24px 60px rgba(0,0,0,.35); }
+      .matches__head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 14px; padding-bottom: 12px; border-bottom: 1px solid #E6EAF0; }
+      .live-tag { font-size: 11px; font-weight: 700; color: #1B7A4B; background: #E4F5EC; padding: 3px 9px; border-radius: 999px; }
+      .match { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid #E6EAF0; }
+      .match__t { font-size: 14px; font-weight: 600; }
+      .match__s { font-size: 11.5px; color: #5E6E80; margin-top: 2px; }
+      .score { font-size: 13px; font-weight: 700; color: #1B7A4B; background: #E4F5EC; padding: 6px 11px; border-radius: 8px; flex: none; }
+      .matches__note { font-size: 11px; color: #5E6E80; padding-top: 12px; }
+
+      /* Sources strip */
+      .sources { background: var(--paper); border-bottom: 1px solid var(--line); }
+      .sources .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px 30px; padding-top: 22px; padding-bottom: 22px; font-size: 14.5px; font-weight: 600; }
+      .sources .lab { font-size: 11.5px; letter-spacing: .08em; color: var(--mute); font-weight: 700; }
+
+      /* Sections */
+      section.block { padding: 64px 0; }
+      section.block--tint { background: var(--paper); }
+      h2.sec { font-family: var(--font-display); font-size: clamp(26px, 3.6vw, 32px); font-weight: 700; letter-spacing: -.02em; line-height: 1.25; margin-bottom: 30px; max-width: 520px; }
+      .grid { display: grid; gap: 18px; }
+      .grid--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px; box-shadow: 0 1px 2px rgba(12,29,48,.04); }
+      .card h3 { font-family: var(--font-display); font-size: 16.5px; font-weight: 700; margin: 14px 0 6px; }
+      .card p { font-size: 13.5px; color: var(--slate); }
+      .ico { width: 38px; height: 38px; border-radius: 10px; background: var(--chip-tint); color: var(--chip-ink); display: flex; align-items: center; justify-content: center; flex: none; }
+      .ico svg { width: 18px; height: 18px; }
+      .ico--grey { background: var(--paper); color: var(--slate); }
+      .step__n { width: 34px; height: 34px; border-radius: 50%; background: var(--navy); color: var(--gold); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
+      .step h3 { margin-top: 18px; }
+      .feat { display: flex; gap: 16px; align-items: flex-start; padding: 18px 20px; }
+      .feat h3 { margin: 0 0 3px; font-size: 14.5px; font-family: var(--font-sans); }
+      .feat p { font-size: 13px; }
+
+      /* Stats / final CTA */
+      .band { background: var(--navy); color: #fff; border-radius: 28px; padding: 36px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 28px; margin: 0 auto 56px; max-width: 1088px; }
+      .stats { display: flex; flex-wrap: wrap; gap: 14px 36px; }
+      .stat b { display: block; font-family: var(--font-display); font-size: 38px; color: var(--gold); line-height: 1.1; letter-spacing: -.02em; }
+      .stat span { font-size: 13.5px; color: rgba(255,255,255,.75); }
+      .band__cta h2 { font-family: var(--font-display); font-size: 22px; font-weight: 700; margin-bottom: 14px; }
+      footer.foot { text-align: center; font-size: 12.5px; color: var(--mute); padding: 0 24px 36px; }
+      footer.foot a { color: var(--slate); margin: 0 6px; }
+
+      @media (max-width: 900px) {
+        .hero__grid { grid-template-columns: 1fr; gap: 36px; }
+        .grid--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .grid--3 { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 1100px) { .band { margin-left: 16px; margin-right: 16px; } }
+      @media (max-width: 560px) {
+        .grid--4 { grid-template-columns: 1fr; }
+        .topbar nav a.hide-sm { display: none; }
+        .band { border-radius: 20px; padding: 28px 22px; }
+        .wrap { padding: 0 16px; }
+      }
+
+    </style>
+  </head>
+  <body>
+    <header class="hero">
+      <div class="wrap">
+        <div class="topbar">
+          <a class="brand" href="/home.html" aria-label="TenderFlow"><svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" width="28" height="28" aria-hidden="true"><defs><linearGradient id="heroLogoGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#4f46e5"/></linearGradient></defs><rect width="32" height="32" rx="7" fill="url(#heroLogoGrad)"/><circle cx="14" cy="14" r="5.5" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><line x1="18" y1="18" x2="23.5" y2="23.5" stroke="white" stroke-width="2.5" stroke-linecap="round"/><path d="M11 13.5L13.5 16L17.5 11" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Tender<b>Flow</b></span></a>
+          <nav aria-label="Main">
+            <a class="hide-sm" href="#features">Features</a>
+            <a class="hide-sm" href="/pricing.html">Pricing</a>
+            <a href="/login.html">Log in</a>
+          </nav>
+        </div>
+        <div class="hero__grid">
+          <div>
+            <span class="pill">Public tender search and bid workspace</span>
+            <h1>Find it. Fit it. <em>Win it.</em></h1>
+            <p class="lede">TenderFlow finds public tenders across the UK, Ireland and Europe, scores how well they fit your business, and drafts the bid for you.</p>
+            <div class="cta-row">
+              <a class="cta cta--gold" href="/login.html#signup">Start free</a>
+              <a class="cta cta--ghost" href="/login.html">Log in to TenderFlow</a>
+            </div>
+          </div>
+          <div class="matches" role="img" aria-label="Example list of top tender matches with fit scores">
+            <div class="matches__head"><span>Top matches today</span><span class="live-tag">Live</span></div>
+            <div class="match"><div><div class="match__t">Digital records management service</div><div class="match__s">Sample Council · closes in 38 days</div></div><span class="score">92%</span></div>
+            <div class="match"><div><div class="match__t">Cyber security assurance framework</div><div class="match__s">Example Trust · closes in 21 days</div></div><span class="score">84%</span></div>
+            <div class="match"><div><div class="match__t">Data platform refresh</div><div class="match__s">Example Port Authority · closes in 55 days</div></div><span class="score">78%</span></div>
+            <div class="matches__note">Example tenders for illustration.</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div class="sources" id="sources"><div class="wrap"><span class="lab">LIVE SOURCES</span><span>Find a Tender</span><span>Contracts Finder</span><span>eTenders Ireland</span><span>TED (EU)</span></div></div>
+
+    <section class="block" id="features"><div class="wrap">
+      <h2 class="sec">Win more public sector work with less effort</h2>
+      <div class="grid grid--4">
+        <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span><h3>Faster discovery</h3><p>New tenders from every major source in one search, the moment they are published.</p></div>
+        <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><h3>Smarter priorities</h3><p>AI fit scores show which tenders are worth your time.</p></div>
+        <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span><h3>Fewer barriers</h3><p>Your certificates and past answers are ready to reuse in every bid.</p></div>
+        <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h13"/></svg></span><h3>Simple automation</h3><p>Draft summaries, analyses and proposals from an easy interface.</p></div>
+      </div>
+    </div></section>
+
+    <section class="block block--tint"><div class="wrap">
+      <h2 class="sec">How it works</h2>
+      <div class="grid grid--3">
+        <div class="card step"><div class="step__n">1</div><h3>Search and match</h3><p>Tell us what you sell. We surface the tenders that fit and score each one.</p></div>
+        <div class="card step"><div class="step__n">2</div><h3>Plan your bid</h3><p>Move opportunities through your pipeline and see requirements at a glance.</p></div>
+        <div class="card step"><div class="step__n">3</div><h3>Draft and submit</h3><p>Generate a first draft from your Answer Bank, then refine and submit.</p></div>
+      </div>
+    </div></section>
+
+    <section class="block"><div class="wrap">
+      <h2 class="sec">Everything in one workspace</h2>
+      <div class="grid grid--3">
+        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span><div><h3>Tender search</h3><p>One search across UK, Ireland and EU notices.</p></div></div>
+        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h6"/></svg></span><div><h3>Pipeline</h3><p>Track every bid from watching to won.</p></div></div>
+        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6"/><path d="M5 10v9M19 10v9M9 14v5M15 14v5M3 21h18"/></svg></span><div><h3>Buyer intelligence</h3><p>See who buys what, and how much.</p></div></div>
+        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c1-4 4-5.5 7-5.5s6 1.5 7 5.5"/></svg></span><div><h3>Supplier intelligence</h3><p>Learn from past winners and their contracts.</p></div></div>
+        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></span><div><h3>Growth Studio</h3><p>Turn buying signals into outreach campaigns.</p></div></div>
+        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10l-5 4v-4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg></span><div><h3>Answer Bank</h3><p>Reusable answers and evidence for every bid.</p></div></div>
+      </div>
+    </div></section>
+
+    <div class="band">
+      <div class="stats">
+        <div class="stat"><b>2,198</b><span>Tenders tracked</span></div>
+        <div class="stat"><b>82%</b><span>Average AI fit</span></div>
+        <div class="stat"><b>4</b><span>Live sources</span></div>
+      </div>
+      <div class="band__cta"><h2>Ready to see your matches?</h2><a class="cta cta--gold" href="/login.html">Log in to TenderFlow</a></div>
+    </div>
+    <footer class="foot"><a href="/pricing.html">Pricing</a><a href="/legal/terms.html">Terms</a><a href="/legal/privacy.html">Privacy Policy</a></footer>
+
+  </body>
+</html>

@@ -4036,7 +4036,7 @@ def create_app() -> Flask:
     @app.before_request
     def check_auth():
         allowed_paths = [
-            "/login.html", "/pricing.html", "/api/auth/firebase", "/api/logout",
+            "/login.html", "/home.html", "/pricing.html", "/api/auth/firebase", "/api/logout",
             "/api/auth/forgot-password",
             # Linked from emails and opened (or POSTed by mail clients' one-click unsubscribe)
             # without a session; the handlers do their own checks.
