@@ -1,0 +1,139 @@
+/* "My profile" and "Bid on custom tender" pages: rounded cards on the grey ground, breadcrumb, gold primary actions.
+   Loaded after theme.css, so it wins over the compact shell rules there. */
+:root {
+  --pg-gold: #F2B52E; --pg-gold-ink: #1A1304; --pg-gold-soft: #FDF1D0; --pg-ink: var(--ink); --pg-mute: var(--slate);
+  --pg-card: var(--panel); --pg-ground: #F5F6FA; --pg-line: #E3E7EF; --pg-field: #F7F8FB; --pg-green: #12805C;
+}
+:root[data-theme="dark"] { --pg-gold-soft: #3A2D0B; --pg-ground: #0A1521; --pg-line: #243548; --pg-field: #0E1A27; --pg-green: #38C795; }
+
+.pg-crumb { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--pg-mute); }
+.pg-crumb i { font-style: normal; color: var(--mute); }
+.pg-crumb b { color: var(--pg-ink); font-weight: 600; }
+.pg-title { margin: 0 0 8px; font-size: 32px; line-height: 1.15; font-weight: 800; letter-spacing: -.02em; color: var(--pg-ink); }
+.pg-lead { margin: 0 0 24px; font-size: 16px; color: var(--pg-mute); }
+.pg-card { background: var(--pg-card); border: 1px solid var(--pg-line); border-radius: 20px; padding: 28px 32px; }
+.pg-card h2 { margin: 0 0 18px; font-size: 20px; font-weight: 800; color: var(--pg-ink); }
+.pg-btn { font: 600 15px var(--font-sans); padding: 10px 20px; border-radius: 12px; border: 1px solid var(--pg-line); background: var(--pg-card); color: var(--pg-ink); cursor: pointer; }
+.pg-btn:hover { background: var(--pg-ground); }
+.pg-btn--gold { background: var(--pg-gold); border-color: var(--pg-gold); color: var(--pg-gold-ink); font-weight: 800; }
+.pg-btn--gold:hover { background: #E5A818; border-color: #E5A818; }
+.pg-btn:disabled { opacity: .5; cursor: not-allowed; }
+.pg-field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; min-width: 0; }
+.pg-field > span { font-size: 14px; font-weight: 600; color: var(--pg-mute); }
+.pg-field input, .pg-field textarea { width: 100%; font: 400 16px var(--font-sans); color: var(--pg-ink); background: var(--pg-card); border: 1px solid var(--pg-line); border-radius: 12px; padding: 14px 16px; }
+.pg-field input::placeholder, .pg-field textarea::placeholder { color: var(--mute); }
+.pg-field input:focus, .pg-field textarea:focus { outline: 0; border-color: var(--pg-gold); box-shadow: 0 0 0 3px rgba(242,181,46,.28); }
+.pg-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; }
+.pg-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 6px; }
+.pg-actions--split { justify-content: space-between; }
+
+/* ── page shell for the custom tender page ── */
+body.tf-shell #customTenderModal.modal-overlay { inset: calc(var(--tf-head) + 3px) 0 0 var(--tf-rail) !important; z-index: 150 !important; padding: 0 !important; background: var(--pg-ground) !important;
+  backdrop-filter: none !important; align-items: stretch !important; justify-content: stretch !important; overflow: hidden !important; }
+.ct-page { width: 100%; height: 100%; display: flex; flex-direction: column; background: var(--pg-ground); }
+.pg-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 40px; background: var(--pg-card); border-bottom: 1px solid var(--pg-line); }
+.ct-scroll { flex: 1 1 auto; overflow-y: auto; padding: 36px 40px 48px; }
+.ct-steps { list-style: none; display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 24px; padding: 0; }
+.ct-step { display: inline-flex; align-items: center; gap: 10px; padding: 8px 20px 8px 8px; border-radius: 999px; border: 1px solid var(--pg-line); background: var(--pg-card); color: var(--pg-ink); font: 600 16px var(--font-sans); cursor: pointer; }
+.ct-step span { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: #E9ECF3; color: var(--pg-mute); font-size: 14px; }
+.ct-step.is-active { background: #0C1A33; border-color: #0C1A33; color: #fff; }
+.ct-step.is-active span { background: var(--pg-gold); color: var(--pg-gold-ink); }
+.ct-step.is-done span { background: var(--pg-green); color: #fff; }
+.ct-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 32px; align-items: start; max-width: 1280px; }
+.ct-panel { display: none; }
+.ct-panel.is-active { display: block; }
+.ct-aside h3 { margin: 0 0 14px; font-size: 18px; font-weight: 800; }
+.ct-aside ul { margin: 0 0 20px; padding-left: 20px; display: grid; gap: 10px; font-size: 15px; line-height: 1.45; color: var(--pg-ink); }
+.ct-note { margin: 0; padding: 14px 16px; border-radius: 12px; background: var(--pg-gold-soft); color: var(--pg-ink); font-size: 14px; line-height: 1.5; }
+.ct-error { margin: 0 0 14px; color: #AE3A2E; font-size: 14px; font-weight: 600; }
+.ct-drop { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 30px 20px; margin-bottom: 14px; border: 2px dashed var(--pg-line); border-radius: 16px; background: var(--pg-field); cursor: pointer; color: var(--pg-mute); }
+.ct-drop strong { color: var(--pg-ink); font-size: 16px; }
+.ct-drop span { font-size: 14px; }
+.ct-drop.is-over { border-color: var(--pg-gold); background: var(--pg-gold-soft); }
+.ct-files { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 8px; }
+.ct-files li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid var(--pg-line); border-radius: 12px; font-size: 14px; }
+.ct-files button { background: none; border: 0; color: var(--pg-mute); font-weight: 700; cursor: pointer; }
+.ct-review { display: grid; grid-template-columns: 180px 1fr; gap: 0; margin: 0 0 18px; font-size: 15px; }
+.ct-review dt, .ct-review dd { margin: 0; padding: 12px 0; border-bottom: 1px solid var(--pg-line); }
+.ct-review dt { color: var(--pg-mute); }
+.ct-review dd { font-weight: 600; color: var(--pg-ink); overflow-wrap: anywhere; }
+.ct-check { display: flex; gap: 10px; align-items: center; margin: 4px 0 22px; font-size: 15px; }
+@media (max-width: 960px) { .ct-grid { grid-template-columns: 1fr; } .pg-row { grid-template-columns: 1fr; } .pg-bar, .ct-scroll { padding-left: 16px; padding-right: 16px; } .pg-title { font-size: 26px; } .ct-review { grid-template-columns: 120px 1fr; } }
+
+/* ── My profile ── */
+body.tf-shell #profileModal .profile-modal { background: var(--pg-ground) !important; }
+body.tf-shell #profileModal .profile-header { background: var(--pg-card) !important; color: var(--pg-ink) !important; padding: 14px 40px 0 !important; border-bottom: 1px solid var(--pg-line) !important; align-items: flex-start; flex-wrap: wrap; }
+body.tf-shell #profileModal .profile-header__left { display: flex; flex-direction: column; gap: 6px; padding-bottom: 0; }
+body.tf-shell #profileModal .profile-header__title { font-size: 32px !important; font-weight: 800 !important; letter-spacing: -.02em; color: var(--pg-ink) !important; margin: 10px 0 0 !important; }
+body.tf-shell #profileModal .profile-header__sub { font-size: 16px !important; color: var(--pg-mute) !important; padding-bottom: 22px; }
+body.tf-shell #profileModal .profile-header__close { display: none; }
+body.tf-shell #profileModal .profile-modal .profile-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); align-items: start; gap: 24px 36px; margin: 0 !important; border: 0 !important; background: transparent !important;
+  padding: 32px 40px 24px !important; max-width: 1240px; width: 100%; }
+body.tf-shell #profileModal .profile-body > * { grid-column: 2; min-width: 0; }
+body.tf-shell #profileModal .profile-body > .pf-nav { grid-column: 1; grid-row: 1 / span 12; position: sticky; top: 0; }
+body.tf-shell #profileModal .profile-body > .profile-section { margin: 0 !important; border: 1px solid var(--pg-line) !important; border-radius: 20px !important; background: var(--pg-card); padding: 26px 32px !important; }
+body.tf-shell #profileModal .profile-body > .profile-section[style*="display:none"], body.tf-shell #profileModal .profile-body > .hidden { display: none !important; }
+body.tf-shell #profileModal .profile-section__title { font-size: 20px !important; font-weight: 800 !important; color: var(--pg-ink); margin: 0 0 6px !important; }
+.pf-sub { margin: 0 0 16px; font-size: 15px; color: var(--pg-mute); }
+.pf-nav { display: flex; flex-direction: column; gap: 6px; }
+.pf-nav a { display: block; padding: 14px 18px; border-radius: 12px; font-size: 16px; color: var(--pg-ink); text-decoration: none; cursor: pointer; }
+.pf-nav a:hover { background: rgba(0,0,0,.04); }
+.pf-nav a.is-active { background: var(--pg-gold-soft); font-weight: 700; }
+body.tf-shell #profileModal .profile-grid { grid-template-columns: 1fr 1fr; gap: 20px; }
+body.tf-shell #profileModal .profile-info-label { font-size: 14px; font-weight: 600; color: var(--pg-mute); }
+body.tf-shell #profileModal .profile-info-value { display: block; padding: 13px 16px; border: 1px solid var(--pg-line); border-radius: 12px; background: var(--pg-field); font-size: 16px; color: var(--pg-ink); margin-top: 8px; }
+/* countries as soft rounded cards */
+body.tf-shell #profileModal .profile-country-card { border-radius: 999px; border: 1px solid var(--pg-line); }
+body.tf-shell #profileModal .profile-country-card.active { border-color: #0C1A33; background: #0C1A33; color: #fff; }
+body.tf-shell #profileModal .profile-country-card.active :is(.profile-country-card__name, .profile-country-card__portals) { color: #fff; }
+/* accent colour swatches as round dots */
+body.tf-shell #profileModal .color-swatch { width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--pg-card); box-shadow: 0 0 0 1px var(--pg-line); }
+body.tf-shell #profileModal .color-swatch.active, body.tf-shell #profileModal .color-swatch.selected, body.tf-shell #profileModal .color-swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--pg-ink); }
+/* AI provider cards (built by pages.js from the select, which stays as the source of truth) */
+.pf-ai { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 14px; }
+.pf-ai button { text-align: left; padding: 16px 18px; border-radius: 14px; border: 1px solid var(--pg-line); background: var(--pg-card); color: var(--pg-ink); cursor: pointer; font: 400 14px var(--font-sans); }
+.pf-ai button b { display: block; font-size: 16px; margin-bottom: 2px; }
+.pf-ai button small { color: var(--pg-mute); font-size: 14px; }
+.pf-ai button.is-on { background: var(--pg-gold-soft); border-color: var(--pg-gold); }
+#profileModal #profileSecAI select#aiProviderSelect { display: none; }
+#profileModal #profileSecAI label[for="aiProviderSelect"] { display: none; }
+/* switches */
+#profileModal input.pf-switch { appearance: none; -webkit-appearance: none; width: 50px; height: 30px; border-radius: 999px; background: #CBD2DE; position: relative; cursor: pointer; transition: background .15s; flex: none; margin: 0; }
+#profileModal input.pf-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: transform .15s; }
+#profileModal input.pf-switch:checked { background: var(--pg-green); }
+#profileModal input.pf-switch:checked::after { transform: translateX(20px); }
+/* save bar */
+body.tf-shell #profileModal .profile-footer { background: var(--pg-card) !important; border-top: 1px solid var(--pg-line) !important; padding: 14px 40px !important; justify-content: flex-end; align-items: center; gap: 16px; }
+.pf-unsaved { font-size: 15px; color: var(--pg-mute); }
+body.tf-shell #profileModal .profile-btn-save-global { background: var(--pg-gold) !important; border-color: var(--pg-gold) !important; color: var(--pg-gold-ink) !important; border-radius: 12px !important; font-weight: 800; padding: 12px 22px; }
+body.tf-shell #profileModal .profile-btn-save-global svg { display: none; }
+@media (max-width: 960px) {
+  body.tf-shell #profileModal .profile-modal .profile-body { grid-template-columns: 1fr; padding: 20px 16px; }
+  body.tf-shell #profileModal .profile-body > *, body.tf-shell #profileModal .profile-body > .pf-nav { grid-column: 1; grid-row: auto; position: static; }
+  .pf-nav { flex-direction: row; overflow-x: auto; }
+  body.tf-shell #profileModal .profile-header { padding: 14px 16px 0 !important; }
+  body.tf-shell #profileModal .profile-footer { padding: 12px 16px !important; }
+  body.tf-shell #profileModal .profile-grid { grid-template-columns: 1fr; }
+}
+
+/* the compact shell sizes every button and input; these pages use the larger controls */
+body.tf-shell .pg-btn { font-size: 15px !important; padding: 11px 22px !important; border-radius: 12px !important; line-height: 1.2; height: auto !important; min-height: 0 !important; }
+body.tf-shell .pg-btn--gold { background: var(--pg-gold) !important; border-color: var(--pg-gold) !important; color: var(--pg-gold-ink) !important; }
+body.tf-shell .pg-field :is(input, textarea) { font-size: 16px !important; padding: 14px 16px !important; border-radius: 12px !important; height: auto !important; min-height: 0 !important; background: var(--pg-card) !important; border: 1px solid var(--pg-line) !important; }
+body.tf-shell .pg-field :is(input, textarea):focus { border-color: var(--pg-gold) !important; box-shadow: 0 0 0 3px rgba(242,181,46,.28) !important; }
+body.tf-shell .ct-step { font-size: 16px !important; border-radius: 999px !important; padding: 8px 20px 8px 8px !important; }
+body.tf-shell .ct-step.is-active { background: #0C1A33 !important; color: #fff !important; border-color: #0C1A33 !important; }
+body.tf-shell .pg-card { border-radius: 20px !important; box-shadow: none !important; }
+body.tf-shell .ct-aside { border-radius: 20px !important; }
+body.tf-shell .ct-note { border-radius: 12px !important; }
+body.tf-shell .ct-drop { border-radius: 16px !important; }
+body.tf-shell .pf-ai button { border-radius: 14px !important; }
+body.tf-shell .pf-nav a { border-radius: 12px !important; }
+body.tf-shell #profileModal .profile-header { flex: none !important; min-height: 0 !important; }
+body.tf-shell #profileModal .profile-header__left { flex: 1 1 auto; margin-right: 0; }
+body.tf-shell #profileModal .profile-grid { border: 0 !important; padding: 0 !important; background: transparent !important; }
+body.tf-shell #profileModal .profile-info-label { text-transform: none !important; letter-spacing: 0 !important; font-size: 14px !important; }
+body.tf-shell #profileModal .profile-info-item { gap: 0; }
+body.tf-shell #profileModal .profile-modal { display: flex; flex-direction: column; }
+body.tf-shell #profileModal .profile-footer { flex: none; }
+body.tf-shell #profileModal .profile-btn-save-global:disabled { opacity: .55; }
