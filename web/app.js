@@ -21325,105 +21325,68 @@ async function showSupplierSummaryModal(supplierId) {
     const bullets = data.summary_bullets || [];
     const awards = data.awards || [];
 
-    const bulletsHtml = bullets.map(b => `
-      <div style="padding: 10px 14px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 12.5px; color: #1e293b; line-height: 1.5; margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
-        ${b.replace(/\*\*(.*?)\*\*/g, '<strong style="color: #0f172a;">$1</strong>')}
-      </div>
-    `).join("");
-
-    const topAuthsList = (m.top_authorities || []).map(a => `
-      <div style="display:flex; justify-content:space-between; padding: 7px 0; border-bottom: 1px dashed #cbd5e1; font-size: 12px;">
-        <span style="font-weight: 700; color: #0f172a;">🏛️ ${esc(a.authority_name)}</span>
-        <span style="font-weight: 700; color: #2563eb;">${a.count} won (${formatCurrencyVal(a.total_value)})</span>
-      </div>
-    `).join("") || '<div style="font-size: 12px; color: #64748b;">No specific authority history</div>';
-
-    const awardsSummaryHtml = awards.map(a => `
-      <div style="padding: 12px 14px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 8px; font-size: 12px;">
-        <div style="font-weight: 700; color: #0f172a; font-size: 13px;">${esc(a.tender_title)}</div>
-        <div style="margin-top: 6px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; color: #475569; font-size: 11.5px;">
-          <span>🏛️ <strong>Authority:</strong> ${esc(a.authority_name)}</span>
-          <span>💰 <strong>Value:</strong> <strong style="color: #059669;">${formatCurrencyVal(a.contract_value, a.currency)}</strong></span>
-          <span>📅 <strong>Signed:</strong> ${esc(a.date_signed || '—')}</span>
-          ${a.contract_duration ? `<span>⏱️ <strong>Duration:</strong> ${esc(a.contract_duration)}</span>` : ''}
-        </div>
-        ${buildSupplierNoticeHtml(a, true) ? `<div style="margin-top: 6px;">${buildSupplierNoticeHtml(a, true)}</div>` : ''}
-      </div>
-    `).join("") || '<div style="font-size: 12px; color: #64748b;">No contract awards recorded</div>';
-
-    const companySummaryBlock = data.company_summary ? `
-      <!-- Company Overview (1 Paragraph) -->
-      <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 18px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
-        <h4 style="margin:0 0 10px; font-size:14px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:6px;">
-          🏢 Company Executive Overview
-        </h4>
-        <p style="margin:0; font-size:13px; line-height:1.65; color:#334155;">${esc(data.company_summary)}</p>
-      </div>
-    ` : '';
-
-    const contractWinBlock = data.contract_win_analysis ? `
-      <!-- Contract Award Win Analysis (2-3 Lines) -->
-      <div style="background: linear-gradient(135deg, #f0fdf4, #dcfce7); border: 1px solid #bbf7d0; border-radius: 10px; padding: 16px; margin-bottom: 20px;">
-        <h4 style="margin:0 0 8px; font-size:14px; font-weight:800; color:#166534; display:flex; align-items:center; gap:6px;">
-          🏆 Contract Win Analysis &amp; Procurement Strategy
-        </h4>
-        <div style="font-size:12.5px; line-height:1.6; color:#14532d; font-weight:500;">${esc(data.contract_win_analysis)}</div>
-      </div>
-    ` : '';
+    const money = (v) => {
+      const n = Number(v) || 0;
+      if (n >= 1e9) return `£${(n / 1e9).toFixed(2).replace(/\.?0+$/, "")}bn`;
+      if (n >= 1e6) return `£${(n / 1e6).toFixed(1).replace(/\.0$/, "")}m`;
+      if (n >= 1e3) return `£${Math.round(n / 1e3)}k`;
+      return `£${Math.round(n)}`;
+    };
+    const plain = (b) => esc(b).replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+    const section = (title, bodyHtml, { tint = false, collapsible = true } = {}) => `
+      <section class="bdx-card bdx-sec${tint ? " bdx-card--tint" : ""}">
+        <div class="bdx-sec-head"><h3>${title}</h3>${collapsible ? `<button type="button" class="bdx-toggle" data-bdx-toggle>Hide</button>` : ""}</div>
+        <div class="bdx-sec-body">${bodyHtml}</div>
+      </section>`;
+    const chips = [
+      s.company_number ? `Reg #${esc(s.company_number)}` : "",
+      esc(s.region || "UK"),
+      esc(s.sme_status || "Non-SME") + (/sme/i.test(s.sme_status || "") ? "" : " enterprise"),
+      esc(s.vcse_status || "Non-VCSE"),
+    ].filter(Boolean).map((c) => `<span class="bdx-chip">${c}</span>`).join("");
+    const contactRow = (label, val) => `<div class="bdx-row"><span>${label}</span><strong>${val}</strong></div>`;
+    const _c = supplierContactDisplays(s);
+    const authRows = (m.top_authorities || []).map((x) => contactRow(`🏛️ ${esc(x.authority_name)}`, `${x.count} won (${formatCurrencyVal(x.total_value)})`)).join("")
+      || '<p class="bdx-text">No specific authority history</p>';
+    const awardRows = awards.map((a) => `
+      <div class="bdx-award"><strong>${esc(a.tender_title)}</strong>
+        <small>${esc(a.authority_name)} · ${formatCurrencyVal(a.contract_value, a.currency)} · ${esc(a.date_signed || "—")}${a.contract_duration ? " · " + esc(a.contract_duration) : ""}</small>
+        ${buildSupplierNoticeHtml(a, true) ? `<div style="margin-top:6px;">${buildSupplierNoticeHtml(a, true)}</div>` : ""}
+      </div>`).join("") || '<p class="bdx-text">No contract awards recorded</p>';
 
     content.innerHTML = `
-      <!-- Summary Cards Banner -->
-      <div style="background: linear-gradient(135deg, #eff6ff, #dbeafe); border: 1px solid #bfdbfe; border-radius: 12px; padding: 18px; margin-bottom: 20px;">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;">
-          <div>
-            <h3 style="margin: 0 0 4px; font-size: 17px; font-weight: 800; color: #1e3a8a;">${esc(displayName(s.name))}</h3>
-            <div style="font-size: 12px; color: #1e40af; display: flex; gap: 12px; flex-wrap: wrap; font-weight: 600;">
-              <span>🏢 Reg #${esc(s.company_number)}</span>
-              <span>📍 ${esc(s.region || 'UK')}</span>
-              <span>🌱 ${esc(s.sme_status || 'Non-SME')}</span>
-              <span>🤝 ${esc(s.vcse_status || 'Non-VCSE')}</span>
-            </div>
-          </div>
-          <button type="button" class="btn" style="background: #1e3a8a; color: #fff; font-size: 11px; padding: 7px 14px; font-weight: 700; border-radius: 6px; border: none; cursor: pointer;" onclick="navigator.clipboard.writeText(document.getElementById('rawSummaryText').innerText).then(() => window.showToast &amp;&amp; window.showToast('Summary copied to clipboard!'))">
-            📋 Copy Summary Text
-          </button>
+      <div class="bdx-card">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
+          <h3 class="bdx-title" style="margin:0 0 14px;">${esc(displayName(s.name))}</h3>
+          <button type="button" class="bdx-btn bdx-btn--dark" onclick="navigator.clipboard.writeText(document.getElementById('rawSummaryText').innerText).then(()=>window.showToast&&window.showToast('Summary copied','success'))">Copy summary text</button>
         </div>
-        <div id="rawSummaryText" style="display:none;">${esc((data.company_summary || '') + '\n\n' + (data.contract_win_analysis || ''))}</div>
-      </div>
-
-      ${companySummaryBlock}
-
-      ${contractWinBlock}
-
-      <!-- Essential Supplier & Contact Extracted Profile -->
-      <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 20px;">
-        <h4 style="margin: 0 0 12px; font-size: 14px; font-weight: 800; color: #0f172a;">📋 Essential Supplier Information</h4>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; font-size: 12px;">
-          <div><strong>📧 Contact Email:</strong> ${s.email ? `<a href="mailto:${esc(s.email)}" style="color:#2563eb; font-weight:600;">${esc(s.email)}</a>` : '<span style="color:#94a3b8;">N/A</span>'}</div>
-          <div><strong>📞 Contact Phone:</strong> ${s.phone ? `<a href="tel:${esc(s.phone)}" style="color:#2563eb; font-weight:600;">${esc(s.phone)}</a>` : '<span style="color:#94a3b8;">N/A</span>'}</div>
-          <div><strong>🌐 Website:</strong> ${s.website ? `<a href="${esc(s.website.startsWith('http') ? s.website : 'https://' + s.website)}" target="_blank" style="color:#2563eb; font-weight:600;">${esc(s.website)} ↗</a>` : '<span style="color:#94a3b8;">N/A</span>'}</div>
-          <div><strong>🏠 Registered Address:</strong> ${esc(s.address || 'N/A')}</div>
+        <div class="bdx-chips">${chips}</div>
+        <div class="bdx-stats">
+          <div class="bdx-stat"><b>${Number(m.total_awards) || 0}</b><span>Public sector awards</span></div>
+          <div class="bdx-stat"><b>${money(m.total_value)}</b><span>Total stated value</span></div>
+          <div class="bdx-stat"><b>${money(m.avg_value)}</b><span>Average award</span></div>
+          <div class="bdx-stat"><b>${Number(m.non_competitive_ratio || 0).toFixed(1)}%</b><span>Direct awards</span></div>
         </div>
+        <div id="rawSummaryText" style="display:none;">${esc((data.company_summary || "") + "\n\n" + (data.contract_win_analysis || ""))}</div>
       </div>
-
-      <!-- Key Executive Takeaways -->
-      <div style="margin-bottom: 20px;">
-        <h4 style="margin: 0 0 12px; font-size: 14px; font-weight: 800; color: #0f172a;">⚡ Key Executive Takeaways</h4>
-        ${bulletsHtml}
-      </div>
-
-      <!-- Primary Contracting Clients -->
-      <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 20px;">
-        <h4 style="margin: 0 0 10px; font-size: 14px; font-weight: 800; color: #0f172a;">🏛️ Primary Contracting Clients</h4>
-        ${topAuthsList}
-      </div>
-
-      <!-- Extracted Contract Award Highlights -->
-      <div>
-        <h4 style="margin: 0 0 12px; font-size: 14px; font-weight: 800; color: #0f172a;">📜 Extracted Contract Award Highlights (${awards.length})</h4>
-        ${awardsSummaryHtml}
-      </div>
+      ${data.company_summary ? section("Company executive overview", `<p class="bdx-text">${esc(data.company_summary)}</p>`) : ""}
+      ${data.contract_win_analysis ? section("Contract win analysis and procurement strategy", `<p class="bdx-text">${esc(data.contract_win_analysis)}</p>`, { tint: true }) : ""}
+      ${section("Essential supplier information", [
+        contactRow("Registration", esc(s.company_number || "—")),
+        contactRow("Email", _c.email),
+        contactRow("Phone", _c.phone),
+        contactRow("Website", _c.website),
+        contactRow("Registered address", esc(s.address || "N/A")),
+      ].join(""))}
+      ${bullets.length ? section("Key executive takeaways", bullets.map((b) => `<p class="bdx-text" style="margin-bottom:10px;">${plain(b)}</p>`).join("")) : ""}
+      ${section("Primary contracting clients", authRows)}
+      ${section(`Extracted contract award highlights (${awards.length})`, awardRows)}
     `;
+    content.querySelectorAll("[data-bdx-toggle]").forEach((btn) => btn.addEventListener("click", () => {
+      const sec = btn.closest(".bdx-sec");
+      const collapsed = sec.classList.toggle("is-collapsed");
+      btn.textContent = collapsed ? "Show" : "Hide";
+    }));
   } catch (err) {
     content.innerHTML = `<div style="padding: 24px; text-align: center; color: #ef4444; font-size: 13px;">Failed to load executive summary: ${esc(err.message)}</div>`;
   }
@@ -22022,54 +21985,49 @@ async function showBDPlaybookModal(supplierId, awardId) {
     const bannerLinkedinCompanyUrl = _bc.linkedinUrl;
     const bannerLinkedinPeopleUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(s.name)}`;
 
+    const ringColor = score >= 80 ? "var(--bdx-green)" : (score >= 60 ? "#b45309" : "#b91c1c");
+    const tile = (label, html) => `<div class="bdx-contact"><span>${label}</span>${html}</div>`;
+    const tabs = [["1. Executive summary", "exec"], ["2. Why now", "why"], ["3. Who to contact", "who"], ["4. Outreach angle", "angle"]];
+    const stack = (inner) => `<div style="display:flex; flex-direction:column; gap:20px;">${inner}</div>`;
+
     content.innerHTML = `
-      <!-- Top Banner with Target & Priority Score -->
-      <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
-          <div>
-            <div style="font-size:11px; font-weight:800; text-transform:uppercase; color:#7c3aed; letter-spacing:0.06em;">Target Prospect Account &amp; Won Contract Intelligence</div>
-            <h2 style="margin:4px 0 6px; font-size:22px; font-weight:800; color:#0f172a;">${esc(s.name)}</h2>
-            <div style="font-size:12px; color:#475569; display:flex; gap:14px; flex-wrap:wrap; font-weight:600; align-items:center;">
-              <span>🏢 <strong>Reg:</strong> ${chUrl ? `<a href="${esc(chUrl)}" target="_blank" rel="noopener noreferrer" style="color:#7c3aed; text-decoration:underline; font-weight:700;">#${esc(chNum)} ↗</a>` : (chNum ? `#${esc(chNum)}` : '<span style="color:#94a3b8; font-weight:normal;">Unlisted in CH</span>')}</span>
-              <span>📍 <strong>Region:</strong> ${esc(cleanText(s.region, 'UK'))}</span>
-              <span>📧 <strong>Email:</strong> ${bannerEmailDisplay}</span>
-              <span>📞 <strong>Phone:</strong> ${bannerPhoneDisplay}</span>
-              <span>🌐 <strong>Website:</strong> ${bannerWebsiteDisplay}</span>
-              <span>💼 <strong>LinkedIn:</strong> <a href="${esc(bannerLinkedinCompanyUrl)}" target="_blank" rel="noopener noreferrer" style="color:#0a66c2; font-weight:700; text-decoration:underline;">Company ↗</a> · <a href="${esc(bannerLinkedinPeopleUrl)}" target="_blank" rel="noopener noreferrer" style="color:#0a66c2; font-weight:700; text-decoration:underline;">Find People ↗</a></span>
+      <div class="bdx-card">
+        <div class="bdx-hero">
+          <div style="min-width:0;">
+            <div class="bdx-eyebrow">Target prospect account</div>
+            <h2 class="bdx-title">${esc(s.name)}</h2>
+            <div class="bdx-chips">
+              ${chNum ? `<span class="bdx-chip">${chUrl ? `<a href="${esc(chUrl)}" target="_blank" rel="noopener noreferrer">Reg #${esc(chNum)}</a>` : `Reg #${esc(chNum)}`}</span>` : ""}
+              <span class="bdx-chip">${esc(cleanText(s.region, "UK"))}</span>
             </div>
-            <div style="font-size:12px; color:#475569; display:flex; gap:14px; flex-wrap:wrap; font-weight:600; margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0;">
-              <span>📜 Won Contract: <strong>${esc(cleanText(a.tender_title, 'Public Sector Contract'))}</strong> (${formatCurrencyVal(a.contract_value)})</span>
-              <span>🏛️ Authority: <strong>${esc(cleanText(a.authority_name, 'UK Authority'))}</strong></span>
+            <div class="bdx-contacts">
+              ${tile("Email", bannerEmailDisplay)}
+              ${tile("Phone", bannerPhoneDisplay)}
+              ${tile("Website", bannerWebsiteDisplay)}
+              ${tile("LinkedIn", `<a href="${esc(bannerLinkedinCompanyUrl)}" target="_blank" rel="noopener noreferrer">Company</a> / <a href="${esc(bannerLinkedinPeopleUrl)}" target="_blank" rel="noopener noreferrer">Find people</a>`)}
             </div>
-            ${chUrl && !s.company_number ? `
-              <div style="margin-top:8px; font-size:11.5px;">
-                <a href="${esc(chUrl)}" target="_blank" rel="noopener noreferrer" style="color:#7c3aed; text-decoration:underline; font-weight:700;">
-                  🏛️ View Official Companies House Record &amp; Officers ↗
-                </a>
-              </div>
-            ` : ''}
+            <div class="bdx-facts">
+              <div>Won contract: <strong>${esc(cleanText(a.tender_title, "Public Sector Contract"))}</strong> (${formatCurrencyVal(a.contract_value)})</div>
+              <div>Authority: <strong>${esc(cleanText(a.authority_name, "UK Authority"))}</strong></div>
+            </div>
           </div>
-          <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-            <div style="background:${scoreBg}; border:1px solid ${scoreColor}; border-radius:12px; padding:8px 16px; text-align:center;">
-              <div style="font-size:10px; font-weight:800; text-transform:uppercase; color:${scoreColor};">Sales Priority</div>
-              <div style="font-size:22px; font-weight:900; color:${scoreColor}; font-family:monospace;">${score}/100</div>
-            </div>
-            <div style="display:flex; flex-direction:column; gap:6px;">
-              <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                <button type="button" class="btn" style="background-color:#7c3aed; color:#fff; font-size:11.5px; padding:8px 14px; font-weight:700; border-radius:6px; border:none; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 4px rgba(124,58,237,0.25);" onclick="window.downloadBDPlaybook('markdown')" title="Download full playbook as Markdown file (.md)">
-                  <span>📥</span> <span>Download Playbook (.md)</span>
-                </button>
-              </div>
-            </div>
+          <div class="bdx-side">
+            <div class="bdx-ring" style="--p:${Math.max(0, Math.min(100, score))}; --c:${ringColor};"><div class="bdx-ring__in"><b>${score}</b><small>out of 100</small></div></div>
+            <div class="bdx-side__label">Sales priority</div>
+            <button type="button" class="bdx-btn bdx-btn--primary" data-bdx-draft>Draft outreach email</button>
+            <button type="button" class="bdx-btn" onclick="window.downloadBDPlaybook('markdown')" title="Download full playbook as Markdown file (.md)">Download playbook (.md)</button>
           </div>
         </div>
         <div id="rawFullPlaybookText" style="display:none;">${esc(JSON.stringify(pb, null, 2))}</div>
         <div id="rawMarkdownPlaybookText" style="display:none;">${esc(fullMarkdownText)}</div>
       </div>
 
-      <!-- 10-Section Playbook Grid -->
-      <div style="display:grid; grid-template-columns:1fr; gap:20px;">
-        
+      <div class="bdx-tabs" role="tablist">
+        ${tabs.map(([label, key], i) => `<button type="button" role="tab" class="bdx-tab" data-bdx-tab="${key}" aria-selected="${i === 0}">${label}</button>`).join("")}
+      </div>
+
+      <div class="bdx-panel is-active" data-bdx-panel="exec">
+        ${stack(`
         <!-- 1. Executive Summary -->
         <div style="background:linear-gradient(135deg, #ffffff, #faf5ff); border:1px solid #e9d5ff; border-left:5px solid #7c3aed; border-radius:12px; padding:20px; box-shadow:0 2px 5px rgba(0,0,0,0.02);">
           <h4 style="margin:0 0 10px; font-size:15px; font-weight:800; color:#4c1d95; display:flex; align-items:center; gap:8px;">
@@ -22110,6 +22068,10 @@ async function showBDPlaybookModal(supplierId, awardId) {
           ${renderBattlecardHtml()}
         </div>
 
+        `)}
+      </div>
+      <div class="bdx-panel" data-bdx-panel="why">
+        ${stack(`
         <!-- 4. Why Now: Context & Delivery Risks -->
         <div style="background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:20px; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
           <h4 style="margin:0 0 12px; font-size:15px; font-weight:800; color:#4c1d95; display:flex; align-items:center; gap:8px;">
@@ -22127,26 +22089,35 @@ async function showBDPlaybookModal(supplierId, awardId) {
           ` : ''}
         </div>
 
-        <!-- 5. Target Contacts -->
-        ${renderContactsHtml()}
-
-        <!-- 6. Ways In -->
-        ${renderWaysInHtml()}
-
-        <!-- 7. Sales Scripts -->
-        ${renderSalesScriptsHtml()}
-
-        <!-- 8. Objection Handling -->
-        ${renderObjectionsHtml()}
-
-        <!-- 9. Outreach Cadence -->
-        ${renderCadenceHtml()}
-
-        <!-- 10. Traceable Sources & Verification -->
-        ${renderSourcesHtml()}
-
+        `)}
+      </div>
+      <div class="bdx-panel" data-bdx-panel="who">
+        ${stack(`
+          ${renderContactsHtml()}
+          ${renderWaysInHtml()}
+        `)}
+      </div>
+      <div class="bdx-panel" data-bdx-panel="angle">
+        ${stack(`
+          ${renderSalesScriptsHtml()}
+          ${renderObjectionsHtml()}
+          ${renderCadenceHtml()}
+          ${renderSourcesHtml()}
+        `)}
       </div>
     `;
+
+    const showTab = (key) => {
+      content.querySelectorAll("[data-bdx-tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.bdxTab === key)));
+      content.querySelectorAll("[data-bdx-panel]").forEach((p) => p.classList.toggle("is-active", p.dataset.bdxPanel === key));
+    };
+    content.querySelectorAll("[data-bdx-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.bdxTab)));
+    const draftBtn = content.querySelector("[data-bdx-draft]");
+    if (draftBtn) draftBtn.addEventListener("click", () => {
+      showTab("angle");
+      const target = content.querySelector("#emailV1ContentText");
+      (target ? target.parentElement : content.querySelector('[data-bdx-panel="angle"]')).scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   } catch (err) {
     content.innerHTML = `<div style="padding: 24px; text-align: center; color: #ef4444; font-size: 13px;">Failed to generate BD Playbook: ${esc(err.message)}</div>`;
   }
