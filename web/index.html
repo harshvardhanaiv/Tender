@@ -45,7 +45,7 @@
   <link rel="stylesheet" href="/mobile.css?v=4" />
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=20" />
-  <link rel="stylesheet" href="/pages.css?v=1" />
+  <link rel="stylesheet" href="/pages.css?v=4" />
   <link rel="stylesheet" href="/funding.css?v=25" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
@@ -1607,8 +1607,9 @@
     <div class="modal" style="max-width: 850px; width: 95%;">
       <div class="modal__header">
         <div>
+          <div class="pg-crumb"><span>Bid content</span><i>/</i><b>History</b></div>
           <h2 class="modal__title" id="historyModalTitle">History</h2>
-          <p class="modal__subtitle">Analyses, summaries and bid responses you have generated. Open one to load its saved result.</p>
+          <p class="modal__subtitle">Everything you have generated, grouped by tender so related outputs stay together.</p>
         </div>
         <button id="btnCloseHistoryModal" class="btn btn--icon" aria-label="Close history">×</button>
       </div>
@@ -1946,49 +1947,46 @@
   <!-- ══ PRICING & PLANS OVERLAY MODAL ══ -->
   <div id="pricingModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="pricingModalTitle">
     <div class="modal modal--wide pricing-modal">
-      <div class="modal__header" style="display:flex; justify-content:space-between; align-items:center; padding:18px 24px; border-bottom:1px solid var(--border); background:var(--surface-2);">
+      <div class="modal__header bl-head">
         <div>
-          <h2 id="pricingModalTitle" class="modal__title" style="margin:0; font-size:1.25rem; font-weight:700;">Plans &amp; Pricing</h2>
-          <div id="pricingModalSubText" style="font-size: 13px; color: var(--muted); margin-top: 4px;">
-            Choose a plan or top up credits to fuel your tender searches &amp; AI proposals
-          </div>
+          <div class="pg-crumb"><span>Account</span><i>/</i><b>Billing &amp; credits</b></div>
+          <h2 id="pricingModalTitle" class="modal__title">Billing &amp; credits</h2>
+          <div id="pricingModalSubText" class="modal__subtitle">Credits pay for AI summaries, analyses and proposals. Your plan sets the monthly allowance.</div>
         </div>
-        <div style="display:flex; align-items:center; gap:10px;">
-          <button id="btnPricingPortal" type="button" class="btn btn--secondary btn--small hidden" style="display:none; font-size:12px; padding:6px 12px;">⚙️ Manage Subscription</button>
-          <button id="btnPricingModalCloseX" class="btn btn--icon" aria-label="Close" title="Close" style="font-size:18px; line-height:1;">×</button>
-        </div>
-      </div>
-      <div class="modal__body" style="padding: 24px; overflow-y: auto; max-height: 75vh;">
-        <!-- Balance banner -->
-        <div id="pricingModalBalanceBanner" style="display:flex; align-items:center; justify-content:space-between; background:var(--primary-bg, #eff6ff); border:1px solid var(--primary-light, #bfdbfe); border-radius:12px; padding:14px 18px; margin-bottom:24px;">
-          <div>
-            <div style="font-size:11px; text-transform:uppercase; font-weight:700; color:var(--muted); letter-spacing:0.05em;">Current Subscription</div>
-            <div style="font-size:15px; font-weight:700; color:var(--text); margin-top:2px;" id="pricingModalBalanceText">
-              <span id="pricingModalBalanceAmt">—</span> credits available on the <span id="pricingModalPlanName">—</span> plan
-            </div>
-          </div>
-          <div>
-            <span id="pricingModalPlanBadge" class="plan-badge plan-badge--free">Free</span>
-          </div>
-        </div>
-
-        <!-- Plans section title -->
-        <h3 class="pricing-section-title" style="margin-top:0; margin-bottom:14px; font-size:15px; font-weight:700; color:var(--text);">Monthly Subscription Plans</h3>
-        <div id="pricingModalPlanGrid" class="plan-grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:20px; margin-bottom:32px;">
-          <!-- Rendered dynamically by JavaScript -->
-          <div class="plan-card" style="min-height:240px; padding:20px; border-radius:12px; background:var(--surface); border:1px solid var(--border);"><span class="topbar-skeleton" style="width:100%; height:180px; display:block;"></span></div>
-          <div class="plan-card" style="min-height:240px; padding:20px; border-radius:12px; background:var(--surface); border:1px solid var(--border);"><span class="topbar-skeleton" style="width:100%; height:180px; display:block;"></span></div>
-        </div>
-
-        <!-- Top-up Credit Packs section -->
-        <h3 class="pricing-section-title" style="margin-top:0; margin-bottom:14px; font-size:15px; font-weight:700; color:var(--text);">Pay As You Go — Credit Top-up Packs</h3>
-        <div id="pricingModalPackGrid" class="pricing-pack-grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:16px; margin-bottom:12px;">
-          <!-- Rendered dynamically by JavaScript -->
+        <div class="bl-head__actions">
+          <button id="btnPricingPortal" type="button" class="pg-btn hidden" style="display:none;">Manage subscription</button>
+          <button id="btnPricingModalCloseX" class="btn btn--icon" aria-label="Close" title="Close">×</button>
         </div>
       </div>
-      <div class="modal__footer" style="display:flex; justify-content:space-between; align-items:center; padding:14px 24px; background:var(--surface-2); border-top:1px solid var(--border);">
-        <span style="font-size:12px; color:var(--muted);">🔒 Secure 256-bit SSL encrypted payment processing via Stripe</span>
-        <button id="btnPricingModalClose" type="button" class="btn btn--secondary" style="padding:6px 16px;">Close</button>
+      <div class="modal__body bl-body">
+        <section class="bl-balance" id="pricingModalBalanceBanner">
+          <div class="bl-balance__main">
+            <div class="bl-eyebrow">Credits remaining</div>
+            <div class="bl-balance__num" id="pricingModalBalanceAmt">—</div>
+            <div class="bl-balance__sub">Plan: <span id="pricingModalPlanName">—</span> <span id="pricingModalPlanBadge" class="plan-badge plan-badge--free" hidden>Free</span></div>
+          </div>
+          <div class="bl-meter" id="pricingModalMeter" hidden>
+            <div class="bl-meter__row"><span>Remaining of monthly allowance</span><b id="pricingModalMeterText"></b></div>
+            <div class="bl-meter__bar"><i id="pricingModalMeterFill"></i></div>
+          </div>
+        </section>
+
+        <h3 class="bl-h">Plan</h3>
+        <div id="pricingModalPlanGrid" class="bl-plans">
+          <div class="bl-card bl-skel"></div><div class="bl-card bl-skel"></div>
+        </div>
+
+        <h3 class="bl-h">Top up credits</h3>
+        <p class="bl-sub">One-off packs. Credits never expire.</p>
+        <div id="pricingModalPackGrid" class="bl-packs"></div>
+        <div class="bl-buy">
+          <button type="button" id="btnBuySelectedPack" class="pg-btn pg-btn--gold btn-pricing-action" data-action="checkout" disabled>Buy credits</button>
+          <span>You will review the order before paying.</span>
+        </div>
+      </div>
+      <div class="modal__footer">
+        <span>🔒 Secure payment processing via Stripe</span>
+        <button id="btnPricingModalClose" type="button" class="btn btn--secondary">Close</button>
       </div>
     </div>
   </div>
@@ -3336,9 +3334,11 @@
       <!-- Header -->
       <div class="profile-header">
         <div class="profile-header__left">
-          <h2 class="profile-header__title" id="userDocumentsModalTitle">My Documents</h2>
-          <span class="profile-header__sub">Manage your supporting business documents</span>
+          <div class="pg-crumb"><span>Bid content</span><i>/</i><b>Documents</b></div>
+          <h2 class="profile-header__title" id="userDocumentsModalTitle">Documents</h2>
+          <span class="profile-header__sub">Certificates, policies and evidence attached to your bids.</span>
         </div>
+        <button type="button" id="btnDocsUploadTop" class="pg-btn pg-btn--gold dc-upload">Upload document</button>
         <button type="button" id="userDocumentsClose" class="profile-header__close" aria-label="Close">×</button>
       </div>
 
@@ -3367,6 +3367,7 @@
           <div class="profile-docs-list-wrap" style="margin-top: 16px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
               <div class="profile-docs-list-title" style="margin-bottom: 0;">My Uploaded Documents</div>
+              <div id="userDocsChips" class="pg-chips" role="group" aria-label="Filter documents"></div>
               <div style="display: flex; align-items: center; gap: 6px;">
                 <label for="userDocsCompanyFilter"
                   style="font-size: 11px; font-weight: 600; color: #64748b;">Target / Filter:</label>
@@ -3514,7 +3515,7 @@
   <script src="/growth-inbox.js?v=5"></script>
   <script src="/growth-studio.js?v=27"></script>
   <script src="/email-outreach.js?v=5"></script>
-  <script src="/pages.js?v=1" defer></script>
+  <script src="/pages.js?v=2" defer></script>
   <script src="/shell.js?v=8"></script>
   <script src="/search-filters.js?v=12"></script>
   <script>
