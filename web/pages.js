@@ -205,6 +205,12 @@
     window.openCustomTenderPage = open;
   }
 
-  function init() { initProfile(); initCustomTender(); }
+  // "Upload document" in the Documents header uses the same file picker as the drop strip
+  function initDocuments() {
+    const btn = $("btnDocsUploadTop");
+    if (btn) btn.addEventListener("click", () => { const z = $("profileUploadZone"); if (z) z.click(); });
+  }
+
+  function init() { initProfile(); initCustomTender(); initDocuments(); }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 })();

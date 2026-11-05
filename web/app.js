@@ -17193,6 +17193,7 @@ function renderHistoryList() {
   const emptyState = $("historyEmptyState");
   const countLabel = $("historyCountLabel");
   if (!container) return;
+  updateHistoryPillCounts();
   if (state.historyFilterType === "viewed") {
     container.innerHTML = "";
     renderRecentViews(container, emptyState, countLabel);
@@ -17247,64 +17248,64 @@ function renderHistoryList() {
 
   emptyState.style.display = "none";
 
-  let html = "";
+  // Day, then tender, then one row per kind of output (latest run first), so related outputs stay together
+  const TYPE_ROW = { proposal: ["Proposal", "Bid proposal draft"], analysis: ["Analysis", "Tender analysis"], summary: ["Summary", "Tender summary"] };
+  const dayStart = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime(); };
+  const todayMs = dayStart(new Date());
+  const dayLabel = (iso) => {
+    const diff = Math.round((todayMs - dayStart(iso)) / 86400000);
+    if (diff === 0) return "Today";
+    if (diff === 1) return "Yesterday";
+    return new Date(iso).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: diff > 300 ? "numeric" : undefined });
+  };
+  const titleKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const days = new Map();
   groups.forEach(group => {
     const item = group.latest;
-    const earlier = group.runs.slice(1);
-    const formattedDate = new Date(item.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-    let typeLabel = "";
-    let iconClass = "";
-    let badgeClass = "";
-    let iconEmoji = "";
+    const dk = String(dayStart(item.created_at));
+    if (!days.has(dk)) days.set(dk, { label: dayLabel(item.created_at), tenders: new Map() });
+    const tk = item.source && item.resource_id ? `${item.source}|${item.resource_id}` : "t|" + titleKey(item.tender_title);
+    const day = days.get(dk);
+    if (!day.tenders.has(tk)) day.tenders.set(tk, { title: item.tender_title || "Untitled", companies: new Set(), rows: [] });
+    const tender = day.tenders.get(tk);
+    if (item.company) tender.companies.add(item.company);
+    tender.rows.push(group);
+  });
 
-    if (item.type === "analysis") {
-      typeLabel = "Analysis";
-      iconClass = "icon--analysis";
-      badgeClass = "badge--analysis";
-      iconEmoji = "🔍";
-    } else if (item.type === "summary") {
-      typeLabel = "Summary";
-      iconClass = "icon--summary";
-      badgeClass = "badge--summary";
-      iconEmoji = "📋";
-    } else if (item.type === "proposal") {
-      typeLabel = "Proposal";
-      iconClass = "icon--proposal";
-      badgeClass = "badge--proposal";
-      iconEmoji = "📝";
-    }
-
-    let detailsText = "";
-    if (item.type === "analysis" || item.type === "proposal") {
-      detailsText = item.company ? `Company: <span class="history-card__company">${esc(item.company)}</span>` : "Default Profile";
-    } else {
-      detailsText = "General Summary";
-    }
-
-    html += `
-      <div class="history-card" data-id="${item.id}" style="cursor: pointer;">
-        <div class="history-card__icon-wrapper ${iconClass}">
-          ${iconEmoji}
-        </div>
-        <div class="history-card__info">
-          <h4 class="history-card__title" title="${esc(item.tender_title)}">${esc(item.tender_title)}</h4>
-          <div class="history-card__meta">
-            <span class="history-card__badge ${badgeClass}">${typeLabel}</span>
-            <span>${detailsText}</span>
-            <span class="history-card__date">📅 ${formattedDate}</span>
-            ${earlier.length ? `<button type="button" class="history-card__runs" data-runs-toggle="${item.id}" aria-expanded="false">${group.runs.length} runs</button>` : ""}
+  const timeOf = (iso) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  let html = "";
+  days.forEach(day => {
+    html += `<div class="hs-day"><div class="hs-day__label">${esc(day.label)}</div>`;
+    day.tenders.forEach(tender => {
+      const n = tender.rows.length;
+      const who = tender.companies.size ? ` ${esc([...tender.companies].join(", "))}.` : "";
+      html += `<section class="hs-card"><h4 class="hs-card__title" title="${esc(tender.title)}">${esc(tender.title)}</h4>
+        <p class="hs-card__sub">${n === 1 ? "One output." : n + " outputs combined."}${who}</p>`;
+      tender.rows.forEach(group => {
+        const item = group.latest;
+        const earlier = group.runs.slice(1);
+        const [badge, label] = TYPE_ROW[item.type] || [item.type || "Item", "Saved result"];
+        html += `<div class="hs-row" data-id="${item.id}">
+          <span class="hs-badge hs-badge--${esc(item.type || "other")}">${esc(badge)}</span>
+          <div class="hs-row__main">
+            <div class="hs-row__title">${esc(label)}</div>
+            <div class="hs-row__time">${esc(timeOf(item.created_at))}${earlier.length ? ` <button type="button" class="history-card__runs" data-runs-toggle="${item.id}" aria-expanded="false">${group.runs.length} runs</button>` : ""}</div>
+            ${earlier.length ? `<div class="history-card__earlier hidden" data-runs-for="${item.id}">${earlier.map(r => `<div class="history-card__earlier-row"><span>${esc(new Date(r.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}</span> <button type="button" class="btn-history-view" data-id="${r.id}">Open</button></div>`).join("")}</div>` : ""}
           </div>
-          ${earlier.length ? `<div class="history-card__earlier hidden" data-runs-for="${item.id}">${earlier.map(r => `<div class="history-card__earlier-row"><span>📅 ${esc(new Date(r.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }))}</span> <button class="btn-history-view" data-id="${r.id}">View</button> <button class="btn-history-delete" data-id="${r.id}" title="Delete history record">🗑️</button></div>`).join("")}</div>` : ""}
-        </div>
-        <div class="history-card__actions">
-          <button class="btn-history-view" data-id="${item.id}">View</button>
-          <button class="btn-history-delete" data-id="${item.id}" title="Delete history record">🗑️</button>
-        </div>
-      </div>
-    `;
+          <div class="hs-row__act">
+            <button type="button" class="btn-history-view" data-id="${item.id}">Open</button>
+            <button type="button" class="btn-history-download" data-id="${item.id}" data-type="${esc(item.type)}" data-title="${esc(item.tender_title || "history")}">Download</button>
+            <button type="button" class="btn-history-delete" data-id="${item.id}" title="Delete this history record" aria-label="Delete">Delete</button>
+          </div>
+        </div>`;
+      });
+      html += `</section>`;
+    });
+    html += `</div>`;
   });
 
   container.innerHTML = html;
+  updateHistoryPillCounts();
 
   container.querySelectorAll("[data-runs-toggle]").forEach(btn => {
     btn.addEventListener("click", (e) => {
@@ -17315,15 +17316,6 @@ function renderHistoryList() {
     });
   });
 
-  // Bind click event to card itself (excluding buttons)
-  container.querySelectorAll(".history-card").forEach(card => {
-    card.addEventListener("click", (e) => {
-      if (e.target.closest("button")) return;
-      loadHistoryItem(card.dataset.id);
-    });
-  });
-
-  // Bind view action
   container.querySelectorAll(".btn-history-view").forEach(btn => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -17331,7 +17323,13 @@ function renderHistoryList() {
     });
   });
 
-  // Bind delete events
+  container.querySelectorAll(".btn-history-download").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      downloadHistoryItem(btn.dataset.id, btn.dataset.title, btn.dataset.type);
+    });
+  });
+
   container.querySelectorAll(".btn-history-delete").forEach(btn => {
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
@@ -17341,6 +17339,50 @@ function renderHistoryList() {
       }
     });
   });
+}
+
+// Counts on the type chips (All, Proposal, Analysis, Summary, Recently viewed)
+function updateHistoryPillCounts() {
+  const items = state.historyItems || [];
+  const count = (type) => type === "all" ? items.length
+    : type === "viewed" ? (window.RecentViews ? window.RecentViews.list().length : 0)
+    : items.filter(i => i.type === type).length;
+  document.querySelectorAll("#historyFilterPills .pill").forEach(pill => {
+    let n = pill.querySelector(".pill__n");
+    if (!n) { n = document.createElement("span"); n.className = "pill__n"; pill.append(" ", n); }
+    n.textContent = String(count(pill.dataset.type));
+  });
+}
+
+// Saves a history result as a readable Markdown file
+async function downloadHistoryItem(id, title, type) {
+  try {
+    const res = await fetch(`/api/analyses/${id}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Could not load this item");
+    const toMd = (v, depth) => {
+      const pad = "  ".repeat(depth);
+      if (v == null || v === "") return "";
+      if (Array.isArray(v)) return v.map(x => (typeof x === "object" && x !== null ? `${pad}-\n${toMd(x, depth + 1)}` : `${pad}- ${x}`)).join("\n") + "\n";
+      if (typeof v === "object") return Object.entries(v).map(([k, x]) => {
+        const label = k.replace(/_/g, " ");
+        return (typeof x === "object" && x !== null) ? `${pad}**${label}**\n${toMd(x, depth + 1)}` : `${pad}**${label}:** ${x}\n`;
+      }).join("");
+      return `${pad}${v}\n`;
+    };
+    const body = `# ${title}\n\n_${type || "history"} · ${new Date(data.analysis.created_at || Date.now()).toLocaleString("en-GB")}_\n\n${toMd(data.analysis.analysis_json, 0)}`;
+    const blob = new Blob([body], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${String(title).replace(/[^a-z0-9]+/gi, "_").slice(0, 60) || "history"}_${type || "item"}.md`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    await showAlert("Could not download: " + err.message);
+  }
 }
 
 async function loadHistoryItem(id) {
@@ -24635,12 +24677,45 @@ function filterAndRenderUserDocuments() {
   const filterVal = filter ? filter.value : "all";
   let docs = state.userDocuments || [];
 
-  if (filterVal !== "all") {
+  if (filterVal === "global") {
+    docs = docs.filter(d => d.type !== "profile");
+  } else if (filterVal !== "all") {
     const profileId = parseInt(filterVal);
     docs = docs.filter(d => d.type === "profile" && d.profile_id === profileId);
   }
 
   renderUserDocuments(docs);
+  renderDocFilterChips();
+}
+
+// Chips with counts beside the Documents list; the (hidden) select stays the source of truth for the filter.
+function renderDocFilterChips() {
+  const box = $("userDocsChips");
+  const sel = $("userDocsCompanyFilter");
+  if (!box || !sel) return;
+  const all = state.userDocuments || [];
+  if (![...sel.options].some(o => o.value === "global")) {
+    const o = document.createElement("option");
+    o.value = "global";
+    o.textContent = "Global";
+    sel.insertBefore(o, sel.options[1] || null);
+  }
+  const countFor = (v) => v === "all" ? all.length
+    : v === "global" ? all.filter(d => d.type !== "profile").length
+    : all.filter(d => d.type === "profile" && String(d.profile_id) === v).length;
+  box.textContent = "";
+  [...sel.options].forEach((o) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pg-chip" + (sel.value === o.value ? " is-on" : "");
+    const label = o.value === "all" ? "All" : o.textContent.replace(/^[^\w]+/, "").replace(/\s*\(Default\)$/, "");
+    b.append(label + " ");
+    const n = document.createElement("span");
+    n.textContent = String(countFor(o.value));
+    b.appendChild(n);
+    b.addEventListener("click", () => { sel.value = o.value; sel.dispatchEvent(new Event("change", { bubbles: true })); });
+    box.appendChild(b);
+  });
 }
 
 async function loadUserDocuments() {
@@ -24665,6 +24740,20 @@ async function loadUserDocuments() {
   }
 }
 
+// Status, bar length and wording for a document's expiry date (Documents page)
+function docExpiryInfo(doc) {
+  if (!doc.expiry_date) return { cls: "none", label: "No expiry", note: "No expiry", pct: 100, title: "No expiry date set. Use Dates to add one." };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const exp = new Date(doc.expiry_date + (String(doc.expiry_date).includes("T") ? "" : "T00:00:00"));
+  if (isNaN(exp.getTime())) return { cls: "none", label: "No expiry", note: "No expiry", pct: 100, title: "" };
+  const days = Math.ceil((exp - today) / 86400000);
+  const when = formatDocDate(doc.expiry_date);
+  if (days < 0) return { cls: "expired", label: "Expired", note: `Expired ${when}`, pct: 100, title: `Expired ${Math.abs(days)} day(s) ago` };
+  if (days <= 30) return { cls: "soon", label: "Expiring", note: days <= 1 ? "Expires today or tomorrow" : `Expires in ${days} days`, pct: Math.max(8, Math.round(days / 365 * 100)), title: `Expires ${when}` };
+  const mon = exp.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+  return { cls: "valid", label: "Valid", note: `Valid to ${mon}`, pct: Math.min(100, Math.max(12, Math.round(days / 365 * 100))), title: `Valid until ${when}` };
+}
+
 function renderUserDocuments(docs) {
   const list = $("profileDocsList");
   if (!list) return;
@@ -24683,46 +24772,35 @@ function renderUserDocuments(docs) {
     const row = document.createElement("div");
     row.className = "profile-doc-row";
 
-    let badgeHtml = dupIds.has(String(doc.id))
-      ? '<span title="This file is already listed above. Delete one copy." style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:500; margin-left:8px; border:1px solid #fde68a; vertical-align:middle;">Duplicate</span>'
-      : '';
-    const duplicateBadge = badgeHtml;
-    badgeHtml = '';
-    if (doc.type === 'profile' && doc.company_name) {
-      badgeHtml = `<span style="background-color: var(--primary-light, #e0e7ff); color: var(--primary, #4f46e5); padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500; margin-left: 8px; border: 1px solid var(--primary-border, #c7d2fe); vertical-align: middle;">Company: ${esc(doc.company_name)}</span>`;
-    } else {
-      badgeHtml = `<span style="background-color: #f3f4f6; color: #4b5563; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500; margin-left: 8px; border: 1px solid #e5e7eb; vertical-align: middle;">Global Document</span>`;
-    }
-
-    badgeHtml += duplicateBadge;
-
+    const isGlobal = !(doc.type === "profile" && doc.company_name);
     const downloadUrl = doc.type === 'profile'
       ? `/api/company-profiles/${doc.profile_id}/documents/${doc.id}/download`
       : `/api/user-documents/${doc.id}/download`;
 
-    const issueStr = doc.issue_date ? `<span>📅 Issued: ${formatDocDate(doc.issue_date)}</span>` : "";
-    const expiryStr = doc.expiry_date ? `<span>⏳ Expires: ${formatDocDate(doc.expiry_date)}</span>` : "";
-    const datesText = [issueStr, expiryStr].filter(Boolean).join("<span style='margin:0 4px; opacity:0.5;'>•</span>");
-    const expiryBadge = getExpiryBadgeHtml(doc.expiry_date);
-    const datesRowHtml = (datesText || expiryBadge)
-      ? `<div class="doc-dates-row" style="font-size:11px; color:var(--text-secondary, #64748b); margin-top:2px;">${datesText} ${expiryBadge}</div>`
-      : `<div class="doc-dates-row doc-dates-prompt" style="font-size:11px; color:#94a3b8; margin-top:2px; cursor:pointer;" title="Click calendar to set issue & expiry dates">📅 Click calendar to set dates</div>`;
+    // Validity: how long is left on the document, shown as a bar plus a status pill
+    const exp = docExpiryInfo(doc);
+    const dupBadge = dupIds.has(String(doc.id))
+      ? '<span class="dc-dup" title="This file is already listed above. Delete one copy.">Duplicate</span>' : "";
+    const desc = (isGlobal ? "Applies to all profiles" : "") + (doc.file_size ? `${isGlobal ? " · " : ""}${cpFormatBytes(doc.file_size)}` : "");
 
+    row.className = "profile-doc-row dc-row";
     row.innerHTML = `
-      <div class="profile-doc-row__icon">📄</div>
-      <div class="profile-doc-row__info">
-        <div style="display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
-          <a class="profile-doc-row__name" href="${downloadUrl}" target="_blank" title="Click to download">${esc(doc.filename)}</a>
-          ${badgeHtml}
-        </div>
-        <div class="profile-doc-row__size">${cpFormatBytes(doc.file_size)}</div>
-        ${datesRowHtml}
+      <div class="dc-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></div>
+      <div class="dc-main">
+        <a class="profile-doc-row__name" href="${downloadUrl}" target="_blank" title="Click to download">${esc(doc.filename)}</a>
+        <div class="dc-desc">${esc(desc)} ${dupBadge}</div>
       </div>
-      <div style="display: flex; align-items: center; gap: 4px;">
-        <button type="button" class="btn-doc-action btn-doc-icon-btn btn-doc-edit-dates" title="Set Issue & Expiry Dates">📅</button>
-        <button type="button" class="btn-doc-action btn-doc-icon-btn profile-doc-row__preview" title="Preview Document">👁️</button>
-        <a href="${downloadUrl}" target="_blank" class="btn-doc-action btn-doc-icon-btn" title="Download Document">⬇️</a>
-        <button type="button" class="btn-doc-action btn-doc-icon-btn profile-doc-row__delete" data-id="${doc.id}" title="Delete Document">🗑️</button>
+      <span class="dc-badge">${esc(isGlobal ? "Global" : doc.company_name)}</span>
+      <div class="dc-expiry doc-dates-prompt" title="${esc(exp.title)}">
+        <div class="dc-bar"><i class="dc-bar--${exp.cls}" style="width:${exp.pct}%"></i></div>
+        <span>${esc(exp.note)}</span>
+      </div>
+      <span class="dc-status dc-status--${exp.cls}">${esc(exp.label)}</span>
+      <div class="dc-actions">
+        <button type="button" class="btn-doc-edit-dates" title="Set issue and expiry dates">Dates</button>
+        <button type="button" class="profile-doc-row__preview" title="Preview document">View</button>
+        <a href="${downloadUrl}" target="_blank" title="Download document">Download</a>
+        <button type="button" class="profile-doc-row__delete dc-del" data-id="${doc.id}" title="Delete document">Delete</button>
       </div>
     `;
 
@@ -26249,6 +26327,20 @@ async function renderPricingModalContent() {
   const userPlanNorm = norm(currentPlan);
   const subs = catalog.subscriptions || [];
 
+  // Monthly allowance meter: the current plan's credits per month against what is left
+  const meter = $("pricingModalMeter");
+  const curSub = subs.find((p) => userPlanNorm !== "free" && norm(p.plan) === userPlanNorm);
+  const allowance = curSub ? Number(curSub.credits) || 0 : 0;
+  if (meter) {
+    const left = Number(state.creditBalance);
+    const show = allowance > 0 && Number.isFinite(left) && left >= 0;
+    meter.hidden = !show;
+    if (show) {
+      $("pricingModalMeterText").textContent = `${Math.min(left, allowance).toLocaleString()} of ${allowance.toLocaleString()}`;
+      $("pricingModalMeterFill").style.width = Math.max(2, Math.min(100, (left / allowance) * 100)) + "%";
+    }
+  }
+
   if (planGrid) {
     planGrid.innerHTML = "";
     subs.forEach((p) => {
@@ -26287,42 +26379,16 @@ async function renderPricingModalContent() {
         "Priority alerts & dedicated support"
       ];
 
-      const featureItemsHtml = featuresList.map(f => `
-        <li style="display:flex; align-items:center; gap:8px; margin-bottom:8px; font-size:13px; color:var(--text);">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
-            <rect x="3" y="3" width="18" height="18" rx="4" ry="4" fill="none" stroke="#22c55e"></rect>
-            <path d="M9 12l2 2 4-4" stroke="#22c55e"></path>
-          </svg>
-          ${f}
-        </li>`).join("");
-
       const div = document.createElement("div");
-      div.className = "plan-card" + (isFeatured ? " plan-card--featured" : "") + (isCurrent ? " plan-card--current" : "");
-      div.style.cssText = "display:flex; flex-direction:column; padding:22px; border-radius:14px; background:var(--surface); border:1px solid var(--border); transition:all 0.2s ease;";
-      if (isCurrent) {
-        div.style.borderColor = "#15803d";
-        div.style.boxShadow = "0 6px 24px rgba(21, 128, 61, 0.12)";
-      }
-
+      div.className = "bl-card bl-plan" + (isFeatured ? " plan-card--featured" : "") + (isCurrent ? " bl-card--current" : "");
       div.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-          <h3 style="margin:0; font-size:1.2rem; font-weight:700; color:var(--text);">${p.label}</h3>
-          <div>
-            <span class="plan-card__badge" style="background:#ef4444;color:#fff;font-weight:700;padding:2px 8px;border-radius:99px;font-size:11px;">50% OFF</span>
-            ${isCurrent ? '<span class="plan-card__badge" style="background:#15803d;color:#fff;padding:2px 8px;border-radius:99px;font-size:11px;margin-left:4px;">Current</span>' : (isFeatured ? '<span class="plan-card__badge" style="background:#2563eb;color:#fff;padding:2px 8px;border-radius:99px;font-size:11px;margin-left:4px;">Popular</span>' : '')}
-          </div>
+        <div class="bl-plan__top">
+          <h3>${esc(p.label)}</h3>
+          ${isCurrent ? '<span class="bl-tag bl-tag--green">Current</span>' : '<span class="bl-tag">50% off</span>'}
         </div>
-        <div class="plan-card__price" style="font-size:1.6rem; font-weight:800; margin-bottom:4px; color:var(--text);">
-          <span style="text-decoration: line-through; color: #94a3b8; font-size: 0.6em; font-weight: 500; margin-right: 6px;">£${cutPrice}</span>
-          £${priceVal}<span style="font-size:0.5em; font-weight:500; color:var(--muted);">/mo + taxes</span>
-        </div>
-        <div style="color: #16a34a; font-size:12px; font-weight: 600; margin-bottom:16px;">50% special discount &middot; Billed monthly</div>
-        <ul style="list-style:none; padding:0; margin:0 0 20px 0; flex:1;">
-          ${featureItemsHtml}
-        </ul>
-        <button type="button" class="btn ${isFeatured ? 'btn--primary' : 'btn--secondary'} btn-pricing-action" data-plan="${p.id}" data-action="${action}" style="width:100%; border-radius:8px; font-weight:600; padding:10px 16px;" ${btnDisabled ? 'disabled' : ''}>
-          ${btnLabel === 'Subscribe' ? `Subscribe — £${priceVal}/mo + taxes` : btnLabel}
-        </button>
+        <div class="bl-price"><s>£${cutPrice}</s> <b>£${priceVal}</b> <span>per month + taxes</span></div>
+        <ul>${featuresList.map(f => `<li>${esc(f)}</li>`).join("")}</ul>
+        <button type="button" class="bl-btn ${isCurrent ? "bl-btn--muted" : (isFeatured ? "bl-btn--gold" : "bl-btn--dark")} btn-pricing-action" data-plan="${esc(p.id)}" data-action="${action}" ${btnDisabled ? "disabled" : ""}>${esc(btnLabel)}</button>
       `;
       planGrid.appendChild(div);
     });
@@ -26330,22 +26396,34 @@ async function renderPricingModalContent() {
 
   if (packGrid) {
     packGrid.innerHTML = "";
-    (catalog.packs || []).forEach((pack) => {
-      const pDiv = document.createElement("div");
-      pDiv.className = "plan-card";
-      pDiv.style.cssText = "padding:18px; border-radius:12px; background:var(--surface-2); border:1px solid var(--border); display:flex; flex-direction:column; justify-content:space-between;";
+    const packs = catalog.packs || [];
+    const perCredit = (pk) => (Number(pk.amount_gbp) / Number(pk.credits)) || Infinity;
+    const best = packs.length > 1 ? packs.reduce((a, c) => (perCredit(c) < perCredit(a) ? c : a), packs[0]) : null;
+    const buy = $("btnBuySelectedPack");
+    const select = (pk) => {
+      packGrid.querySelectorAll(".bl-pack").forEach((el) => el.classList.toggle("is-on", el.dataset.pack === pk.id));
+      if (buy) {
+        buy.disabled = false;
+        buy.dataset.plan = pk.id;
+        buy.textContent = `Buy ${Number(pk.credits).toLocaleString()} credits for £${pk.amount_gbp}`;
+      }
+    };
+    packs.forEach((pack) => {
+      const pDiv = document.createElement("button");
+      pDiv.type = "button";
+      pDiv.className = "bl-card bl-pack";
+      pDiv.dataset.pack = pack.id;
       pDiv.innerHTML = `
-        <div>
-          <h4 style="margin:0 0 6px 0; font-size:1.05rem; font-weight:700; color:var(--text);">${pack.label}</h4>
-          <div style="font-size:1.3rem; font-weight:800; color:var(--text); margin-bottom:8px;">£${pack.amount_gbp}</div>
-          <div style="font-size:12px; color:var(--muted); margin-bottom:14px; line-height:1.4;">${pack.credits} credits added instantly to your balance.</div>
-        </div>
-        <button type="button" class="btn btn--secondary btn-pricing-action" data-plan="${pack.id}" data-action="checkout" style="width:100%; font-size:13px; padding:8px 12px;">
-          Buy ${pack.credits} Credits
-        </button>
+        ${best && best.id === pack.id ? '<span class="bl-tag">Best value</span>' : ""}
+        <b class="bl-pack__n">${Number(pack.credits).toLocaleString()}</b>
+        <span class="bl-pack__u">credits</span>
+        <b class="bl-pack__p">£${pack.amount_gbp}</b>
+        <span class="bl-pack__pc">${(perCredit(pack) * 100).toFixed(1)}p per credit</span>
       `;
+      pDiv.addEventListener("click", () => select(pack));
       packGrid.appendChild(pDiv);
     });
+    if (packs.length) select(packs[Math.min(1, packs.length - 1)]);
   }
 
   // Handle plan & pack action clicks
