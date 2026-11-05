@@ -114,6 +114,10 @@ _CONSULTATION_PATTERN = (
     r"|\yhra\y\s+(consultation|screening)"
     # a neighbouring authority asking this council for its view ("Consultation from Central Bedfordshire Council on application ...")
     r"|^\s*consultation\s+(from|by|on|request|response)\y"
+    # "Courtesy consultation ...", "Adjacent Authority Consultation : ...", "Neigbouring Authority Consultation: ..." (live check 2026-11-05)
+    r"|^\s*(formal\s+|courtesy\s+|adjacent\s+|adjoining\s+|neighbou?ring\s+|neigbouring\s+|out\s+of\s+district\s+(planning\s+)?)+"
+    r"(authority\s+|authoirty\s+|borough\s+|district\s+|council\s+)?(re)?consultation\y"
+    r"|^\s*(re)?consultation\s*(only\y|[-:]|request\y|in\s+relation|with\s+(adjoining|adjacent|neighbou?ring)|(outline|full|reserved|variation)\y)"
 )
 _CONSULTATION_RE = re.compile(_CONSULTATION_PATTERN.replace(r"\y", r"\b"), re.I)
 _CONSULTATION_SCORE_CAP = 25
@@ -321,8 +325,7 @@ def _backfill_consultation_flag() -> None:
             cur = conn.cursor()
             cur.execute(f"UPDATE planning_applications SET is_consultation = {_CONSULTATION_REGEX_SQL} WHERE is_consultation IS NULL")
             # rows flagged before the neighbouring-authority wording was added to the rule (Re-test 8 P1); only ever turns the flag on
-            cur.execute("UPDATE planning_applications SET is_consultation = TRUE WHERE is_consultation IS NOT TRUE "
-                        r"AND COALESCE(description, '') ~* '^\s*consultation\s+(from|by|on|request|response)\y'")
+            cur.execute(f"UPDATE planning_applications SET is_consultation = TRUE WHERE is_consultation IS NOT TRUE AND {_CONSULTATION_REGEX_SQL}")
             conn.commit()
         finally:
             conn.close()

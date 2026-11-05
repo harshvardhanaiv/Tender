@@ -1825,6 +1825,19 @@ def api_delete_profile_document(profile_id: int, doc_id: int):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _missing_file_response():
+    """A stored document whose file is gone (Re-test 8 G1): a page that says what to do when a browser or the viewer asked for it,
+    the JSON error for anything else. Used to show the raw JSON in the viewer."""
+    message = "This file is missing from the server. Please upload it again from Documents."
+    best = request.accept_mimetypes.best_match(["application/json", "text/html"])
+    if best == "text/html" and request.accept_mimetypes["text/html"] >= request.accept_mimetypes["application/json"]:
+        page = ("<!doctype html><meta charset=utf-8><title>File missing</title>"
+                "<body style=\"font:15px system-ui,sans-serif;padding:32px;color:#334155\"><h3 style=\"margin:0 0 8px\">File missing</h3>"
+                f"<p>{message}</p></body>")
+        return page, 404, {"Content-Type": "text/html; charset=utf-8"}
+    return jsonify({"error": "File not found on disk", "message": message}), 404
+
+
 @profiles_bp.get("/api/company-profiles/<int:profile_id>/documents/<int:doc_id>/download")
 def api_download_profile_document(profile_id: int, doc_id: int):
     username = session.get("username", "admin")
@@ -1843,7 +1856,7 @@ def api_download_profile_document(profile_id: int, doc_id: int):
             
         filename, file_path = row
         if not os.path.exists(file_path):
-            return jsonify({"error": "File not found on disk"}), 404
+            return _missing_file_response()
             
         inline = request.args.get('inline') == 'true'
         return send_file(file_path, as_attachment=not inline, download_name=filename)
@@ -2146,7 +2159,7 @@ def api_download_user_document(doc_id: int):
             
         filename, file_path = row
         if not os.path.exists(file_path):
-            return jsonify({"error": "File not found on disk"}), 404
+            return _missing_file_response()
             
         inline = request.args.get('inline') == 'true'
         return send_file(file_path, as_attachment=not inline, download_name=filename)

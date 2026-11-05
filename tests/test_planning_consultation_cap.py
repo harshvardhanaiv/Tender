@@ -57,6 +57,17 @@ def test_a_neighbouring_authority_consultation_is_a_consultation_not_an_approval
     assert "is_consultation" not in _mark_consultation(row(description="Erection of 40 dwellings, following consultation with the parish"))
 
 
+def test_courtesy_and_adjoining_authority_consultations_match_the_rule():
+    """Re-test 8 P1 on live: these led the list at 95-99 because the rule only knew "Consultation from ..."."""
+    from tender_app.blueprints.planning_bp import _CONSULTATION_RE as rx
+    for d in ("Courtesy Consultation for residential development of 270 new dwellings", "Adjacent Authority Consultation : Outline application",
+              "Neigbouring Authority Consultation: (Buckinghamshire Council)", "Adjoining Authority Consultation: Full planning application",
+              "Neighbouring borough consultation for: Outline application", "Consultation - Submission of Reserved Matters", "Formal Consultation from Surrey Heath"):
+        assert rx.search(d), d
+    for d in ("Erection of 40 dwellings following public consultation", "Outline application for 300 homes", "Change of use to consultation rooms"):
+        assert not rx.search(d), d
+
+
 def test_the_page_labels_the_consultation_cap():
     js = (ROOT / "web" / "planning.js").read_text(encoding="utf-8")
     assert '"consultation" ? "Consultation / screening cap"' in js

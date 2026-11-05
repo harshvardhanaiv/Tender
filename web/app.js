@@ -19672,6 +19672,16 @@ function openSupplierIntelligenceModal(initialQuery = "", options = {}) {
 
 function openSupplierIntelligenceForTender(supplierOrAuthName, tenderTitle, isAuthoritySearch = false) {
   const query = (supplierOrAuthName || tenderTitle || "").trim();
+  if (isAuthoritySearch && query) {
+    // Search by the buyer's name matched suppliers whose NAME contains it (0-2 hits for "Government Commercial Agency"); the
+    // "Won from (buyer)" filter finds everyone awarded by it (Re-test 8 T3).
+    try {
+      if ($("txtSupplierSearch")) $("txtSupplierSearch").value = "";
+      if ($("txtSupplierBuyer")) $("txtSupplierBuyer").value = query;
+      _supplierRefine.buyer = query;
+    } catch (_) { /* fall through to a name search */ }
+    if (_supplierRefine.buyer === query) { openSupplierIntelligenceModal("", { skipFastPreview: true }); return; }
+  }
   // "Find suppliers who win with X" passes the awarding authority's name, not a supplier's --
   // the backend deliberately widens an authority-name search to every supplier it has ever
   // awarded to (a real, separate feature from plain supplier-name search), which can go from a
