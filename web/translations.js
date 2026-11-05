@@ -61,7 +61,7 @@ window.I18N_TRANSLATIONS = {
     
     // Login keys
     "login_welcome": "Welcome back",
-    "login_sub": "Sign in to search and bid on tenders",
+    "login_sub": "Sign in to search and bid on tenders.",
     "login_google": "Continue with Google",
     "login_or_email": "or use email",
     "login_company": "Company name",
@@ -187,7 +187,7 @@ window.I18N_TRANSLATIONS = {
     
     // Login keys
     "login_welcome": "Bienvenue",
-    "login_sub": "Connectez-vous pour rechercher et soumissionner",
+    "login_sub": "Connectez-vous pour rechercher et soumissionner.",
     "login_google": "Continuer avec Google",
     "login_or_email": "ou e-mail",
     "login_company": "Nom de l'entreprise",
@@ -308,7 +308,7 @@ window.I18N_TRANSLATIONS = {
     
     // Login keys
     "login_welcome": "Welkom terug",
-    "login_sub": "Meld u aan om aanbestedingen te zoeken en te bieden",
+    "login_sub": "Meld u aan om aanbestedingen te zoeken en te bieden.",
     "login_google": "Doorgaan met Google",
     "login_or_email": "of e-mail",
     "login_company": "Bedrijfsnaam",
