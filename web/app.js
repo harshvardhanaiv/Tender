@@ -14776,7 +14776,32 @@ _setupDragAndDrop('label[for="bidTenderFiles"]', 'bidTenderFiles', handleBidFile
 _setupDragAndDrop('label[for="bidCompanyFiles"]', 'bidCompanyFiles', handleBidCompanyDocUpload);
 _setupDragAndDrop('label[for="bidWinningBidFiles"]', 'bidWinningBidFiles', handleBidWinningBidUpload);
 
-$("btnUploadCustomTender")?.addEventListener("click", openCustomBidModal);
+$("btnUploadCustomTender")?.addEventListener("click", () => (window.openCustomTenderPage ? window.openCustomTenderPage() : openCustomBidModal()));
+
+// Hand-over from the "Bid on custom tender" page (pages.js): opens the bid assistant with those details and files already in place.
+window.startCustomBid = function (d) {
+  openCustomBidModal();
+  const row = {
+    title: d.title,
+    contracting_authority: d.buyer || "Custom tender",
+    description: d.text || "Custom tender opportunity",
+    estimated_value_eur: d.value || "—",
+    estimated_value: d.value || "",
+    procedure: "—",
+    procurement_type: "—",
+    submission_deadline: d.deadline || "—",
+    contract_duration_in_months_or_years_including_any_options_and_renewals: "—",
+    source: "custom",
+    resource_id: "custom-" + Date.now(),
+    url: d.link || "",
+  };
+  _bidRow = row;
+  state.bidUploadedFiles = (d.files || []).slice();
+  renderBidUploadedFiles();
+  const ta = $("bidTenderText");
+  if (ta && d.text) ta.value = d.text;
+  if (d.addToPipeline) Promise.resolve(trackTender(row, "watching")).catch(() => { /* the bid assistant still opens */ });
+};
 $("btnHistory")?.addEventListener("click", openHistoryModal);
 $("btnCloseHistoryModal")?.addEventListener("click", closeHistoryModal);
 $("historySearchInput")?.addEventListener("input", renderHistoryList);
@@ -18879,7 +18904,7 @@ function updateProfileSaveButtonState(isDirty) {
         <polyline points="17 21 17 13 7 13 7 21"></polyline>
         <polyline points="7 3 7 8 15 8"></polyline>
       </svg>
-      Save Profile`;
+      Save changes`;
   } else {
     btn.classList.remove("profile-btn-save--lit");
     if (!btn.classList.contains("profile-btn-saved")) {
@@ -18889,7 +18914,7 @@ function updateProfileSaveButtonState(isDirty) {
           <polyline points="17 21 17 13 7 13 7 21"></polyline>
           <polyline points="7 3 7 8 15 8"></polyline>
         </svg>
-        Save Profile`;
+        Save changes`;
     }
   }
 }
@@ -19321,7 +19346,7 @@ function initProfile() {
             <polyline points="17 21 17 13 7 13 7 21"></polyline>
             <polyline points="7 3 7 8 15 8"></polyline>
           </svg>
-          Save Profile`;
+          Save changes`;
       }
     });
   }

@@ -45,6 +45,7 @@
   <link rel="stylesheet" href="/mobile.css?v=4" />
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=20" />
+  <link rel="stylesheet" href="/pages.css?v=1" />
   <link rel="stylesheet" href="/funding.css?v=25" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
@@ -1999,16 +2000,17 @@
       <!-- Header -->
       <div class="profile-header">
         <div class="profile-header__left">
-          <h2 class="profile-header__title" id="profileModalTitle">User Profile</h2>
-          <span class="profile-header__sub">Manage your account details and user roles</span>
+          <div class="pg-crumb"><span>Account</span><i>/</i><b>My profile</b></div>
+          <h2 class="profile-header__title" id="profileModalTitle">My profile</h2>
+          <span class="profile-header__sub">Your account, what you search for and how AI helps you.</span>
         </div>
         <button type="button" id="profileClose" class="profile-header__close" aria-label="Close">×</button>
       </div>
 
       <div class="profile-body">
         <!-- User Details Section -->
-        <div class="profile-section">
-          <h3 class="profile-section__title">My Account</h3>
+        <div class="profile-section" id="profileSecAccount" data-pf-nav="Account">
+          <h3 class="profile-section__title">Account</h3>
           <div class="profile-grid">
             <div class="profile-info-item">
               <span class="profile-info-label">Email / Username</span>
@@ -2030,7 +2032,7 @@
         </div>
 
         <!-- ── Tender Countries & Portals Section ── -->
-        <div class="profile-section" id="profileCountriesSection" style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px;">
+        <div class="profile-section" id="profileCountriesSection" data-pf-nav="Countries &amp; portals">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
             <div>
               <h3 class="profile-section__title" style="margin: 0; font-size: 16px; font-weight: 700;">Tender Countries &amp; Portals</h3>
@@ -2062,8 +2064,8 @@
         </div>
 
         <!-- Profile Colour Section -->
-        <div class="profile-section" style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px;">
-          <h3 class="profile-section__title">Profile colour</h3>
+        <div class="profile-section" id="profileSecAppearance" data-pf-nav="Appearance">
+          <h3 class="profile-section__title">Appearance</h3>
           <p style="margin: 0; font-size: 12px; color: var(--muted);">Used for buttons, links, and highlights across the app.</p>
           
           <div class="profile-color-swatches" id="profileColorSwatches">
@@ -2122,8 +2124,9 @@
         </div>
 
         <!-- AI Model Settings Section -->
-        <div class="profile-section" style="margin-top: 20px; border-top: 1px solid var(--border); padding-top: 20px;">
-          <h3 class="profile-section__title" style="margin-bottom: 12px;">AI Model Settings</h3>
+        <div class="profile-section" id="profileSecAI" data-pf-nav="AI provider">
+          <h3 class="profile-section__title" style="margin-bottom: 12px;">AI provider</h3>
+          <p class="pf-sub">Used to write summaries, analyses and bid proposals.</p>
           <div style="display: flex; flex-direction: column; gap: 12px;">
             <div style="display: flex; flex-direction: column; gap: 4px;">
               <label for="aiProviderSelect" class="profile-info-label" style="font-weight: 600;">AI Provider</label>
@@ -2158,14 +2161,14 @@
         </div>
 
         <!-- ── Email Automation Settings ── -->
-        <div class="profile-section" style="margin-top: 0;">
+        <div class="profile-section" id="profileSecAlerts" data-pf-nav="Alerts">
           <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
             <div>
               <h3 class="profile-section__title" style="margin:0; font-size:16px; font-weight:700;">Tender alert emails</h3>
               <p style="margin:2px 0 0 0; font-size:12px; color:var(--muted);">Get notified when new tenders match your saved searches</p>
             </div>
             <label style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; cursor:pointer;">
-              <input type="checkbox" id="emailAlertsToggle" checked> Alerts on
+              <input type="checkbox" id="emailAlertsToggle" class="pf-switch" checked> <span>Alerts on</span>
             </label>
           </div>
 
@@ -2314,14 +2317,82 @@
       <!-- ── Sticky Bottom Save Footer ── -->
       <div class="profile-footer">
         <span id="profileGlobalSaveStatus" style="font-size: 13px; color: var(--muted); display: none; margin-right: auto; font-weight: 500;"></span>
+        <span id="profileUnsavedNote" class="pf-unsaved hidden">Unsaved changes will be lost</span>
         <button type="button" id="btnSaveProfileGlobal" class="btn btn--primary profile-btn-save-global" disabled>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
             <polyline points="17 21 17 13 7 13 7 21"></polyline>
             <polyline points="7 3 7 8 15 8"></polyline>
           </svg>
-          Save Profile
+          Save changes
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ BID ON A CUSTOM TENDER (3-step page; logic in pages.js, hands over to the bid assistant in app.js) ══ -->
+  <div id="customTenderModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="ctHeading">
+    <div class="ct-page">
+      <div class="pg-bar">
+        <div class="pg-crumb"><span>Find work</span><i>/</i><b>Bid on custom tender</b></div>
+        <button type="button" id="ctCancel" class="pg-btn">Cancel</button>
+      </div>
+      <div class="ct-scroll">
+        <h1 class="pg-title" id="ctHeading">Bid on a tender that is not in search</h1>
+        <p class="pg-lead">Found a tender elsewhere, or got an invitation? Add it here and use the same bid tools.</p>
+        <ol class="ct-steps" aria-label="Steps">
+          <li><button type="button" class="ct-step is-active" data-ct-step="1"><span>1</span>Details</button></li>
+          <li><button type="button" class="ct-step" data-ct-step="2"><span>2</span>Documents</button></li>
+          <li><button type="button" class="ct-step" data-ct-step="3"><span>3</span>Review</button></li>
+        </ol>
+        <div class="ct-grid">
+          <div class="ct-main">
+            <section class="pg-card ct-panel is-active" data-ct-panel="1">
+              <h2>Tender details</h2>
+              <label class="pg-field"><span>Tender title</span><input type="text" id="ctInTitle" maxlength="300" placeholder="e.g. Digital records management service" autocomplete="off"></label>
+              <div class="pg-row">
+                <label class="pg-field"><span>Buyer</span><input type="text" id="ctInBuyer" maxlength="200" placeholder="e.g. Sample Council" autocomplete="off"></label>
+                <label class="pg-field"><span>Submission deadline</span><input type="date" id="ctInDeadline"></label>
+              </div>
+              <div class="pg-row">
+                <label class="pg-field"><span>Estimated value (GBP)</span><input type="number" id="ctInValue" min="0" step="1" inputmode="numeric" placeholder="e.g. 250000"></label>
+                <label class="pg-field"><span>Link to notice (optional)</span><input type="url" id="ctInLink" placeholder="https://"></label>
+              </div>
+              <p class="ct-error" id="ctError" role="alert" hidden></p>
+              <div class="pg-actions"><button type="button" class="pg-btn pg-btn--gold" data-ct-next="2">Continue</button></div>
+            </section>
+
+            <section class="pg-card ct-panel" data-ct-panel="2">
+              <h2>Tender documents</h2>
+              <label class="ct-drop" for="ctFiles" id="ctDrop">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg>
+                <strong>Add the tender documents</strong>
+                <span>PDF, Word, Excel or text, up to 5 MB each. Drop them here or click to choose.</span>
+                <input type="file" id="ctFiles" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.md" hidden>
+              </label>
+              <ul class="ct-files" id="ctFileList"></ul>
+              <label class="pg-field"><span>Or paste tender details (optional)</span><textarea id="ctInText" rows="5" placeholder="Paste the requirements, scope or invitation text"></textarea></label>
+              <div class="pg-actions pg-actions--split"><button type="button" class="pg-btn" data-ct-next="1">Back</button><button type="button" class="pg-btn pg-btn--gold" data-ct-next="3">Continue</button></div>
+            </section>
+
+            <section class="pg-card ct-panel" data-ct-panel="3">
+              <h2>Review</h2>
+              <dl class="ct-review" id="ctReview"></dl>
+              <label class="ct-check"><input type="checkbox" id="ctInPipeline" checked> Add this tender to Pipeline (with its deadline)</label>
+              <div class="pg-actions pg-actions--split"><button type="button" class="pg-btn" data-ct-next="2">Back</button><button type="button" class="pg-btn pg-btn--gold" id="ctStart">Open bid assistant</button></div>
+            </section>
+          </div>
+          <aside class="pg-card ct-aside">
+            <h3>What you get</h3>
+            <ul>
+              <li>Tender summary and fit analysis</li>
+              <li>Requirements checklist from your documents</li>
+              <li>First-draft answers from your Answer Bank</li>
+              <li>A card in Pipeline with the deadline</li>
+            </ul>
+            <p class="ct-note">Reading documents uses credits from your balance.</p>
+          </aside>
+        </div>
       </div>
     </div>
   </div>
@@ -3443,6 +3514,7 @@
   <script src="/growth-inbox.js?v=5"></script>
   <script src="/growth-studio.js?v=27"></script>
   <script src="/email-outreach.js?v=5"></script>
+  <script src="/pages.js?v=1" defer></script>
   <script src="/shell.js?v=8"></script>
   <script src="/search-filters.js?v=12"></script>
   <script>
