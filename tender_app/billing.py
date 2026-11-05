@@ -432,9 +432,20 @@ def create_checkout_session(
     try:
         session = stripe.checkout.Session.create(**session_params)
     except Exception as ex:
-        if "paypal" in str(ex).lower():
-            session_params["payment_method_types"] = ["card"]
+        text = str(ex).lower()
+        if "payment_method_types" in text:
+            # Newer Stripe API versions manage payment methods from the Dashboard and reject this parameter.
+            session_params.pop("payment_method_types", None)
             session = stripe.checkout.Session.create(**session_params)
+        elif "paypal" in text:
+            session_params["payment_method_types"] = ["card"]
+            try:
+                session = stripe.checkout.Session.create(**session_params)
+            except Exception as ex2:
+                if "payment_method_types" not in str(ex2).lower():
+                    raise
+                session_params.pop("payment_method_types", None)
+                session = stripe.checkout.Session.create(**session_params)
         else:
             raise ex
 

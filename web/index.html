@@ -45,7 +45,7 @@
   <link rel="stylesheet" href="/mobile.css?v=4" />
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=20" />
-  <link rel="stylesheet" href="/pages.css?v=4" />
+  <link rel="stylesheet" href="/pages.css?v=29" />
   <link rel="stylesheet" href="/funding.css?v=25" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
@@ -71,7 +71,7 @@
       </svg>
       <div class="tf-brand__text">
         <div class="tf-brand__name">Tender<span class="brand__title-flow">Flow</span><span id="headerPlanBadge" class="plan-badge plan-badge--pending"></span></div>
-        <div class="tf-brand__sub">Public tender search and bid workspace</div>
+        <div class="tf-brand__sub">Bid workspace</div>
       </div>
     </div>
 
@@ -224,6 +224,11 @@
       </div>
     </nav>
     <div class="tf-main">
+  <div class="pg-pagehead" id="tenderSearchHead">
+    <div class="pg-crumb"><span>Find work</span><i>/</i><b>Tender search</b></div>
+    <h1 class="pg-title">Tender search</h1>
+    <p class="pg-lead">Search live public tenders and past awards across the UK and Ireland.</p>
+  </div>
   <main class="app-layout">
     <!-- ── LEFT FILTER SIDEBAR ─────────────────────────────────────────── -->
     <aside class="filter-sidebar" id="filterSidebar" style="flex-direction:column !important; height:100% !important; overflow:hidden !important;">
@@ -1166,8 +1171,10 @@
       <!-- Header -->
       <div class="cp-header">
         <div class="cp-header__left">
-          <h2 class="cp-header__title" id="cpModalTitle">Company Profiles</h2>
+          <div class="pg-crumb"><span>Bid content</span><i>/</i><b>Company profiles</b></div>
+          <h2 class="cp-header__title" id="cpModalTitle">Company profiles</h2>
           <span class="cp-header__sub" id="cpStepLabel"></span>
+          <p class="cp-header__lead">Each profile holds the details, documents and answers used when you bid. The default profile is used unless you pick another.</p>
         </div>
         <button id="cpClose" class="cp-header__close" aria-label="Close">×</button>
       </div>
@@ -1653,6 +1660,7 @@
     <div class="modal modal--wide modal--dashboard">
       <div class="modal__header modal__header--dashboard">
         <div>
+          <div class="pg-crumb"><span>Find work</span><i>/</i><b>Pipeline</b></div>
           <h2 class="modal__title" id="dashboardTitle">Pipeline</h2>
           <p class="modal__subtitle" id="dashboardSubtitle">Tenders you are tracking, grouped by bid stage</p>
         </div>
@@ -2401,8 +2409,9 @@
       <!-- Header -->
       <div class="profile-header">
         <div class="profile-header__left">
+          <div class="pg-crumb"><span>Market intelligence</span><i>/</i><b>Supplier intelligence</b></div>
           <div class="profile-header__title-row">
-            <h2 class="profile-header__title" id="supplierIntelTitle">Supplier Intelligence</h2>
+            <h2 class="profile-header__title" id="supplierIntelTitle">Supplier intelligence</h2>
             <span class="profile-header__scope" id="lblSupplierScope" title="Where the awards come from: England and UK-wide notices in full; Scotland and Wales in part; Northern Ireland and Ireland name no winners on their portals">England and UK-wide public sector</span>
           </div>
           <span class="profile-header__sub">Past winners and award histories<span id="lblSupplierCountWrap" hidden> for <strong id="lblSupplierCount"></strong> suppliers</span>. <span id="lblSupplierCoverage">Awards from Contracts Finder and Find a Tender.</span> <span id="lblSupplierLastSync"></span></span>
@@ -2596,6 +2605,7 @@
     <div class="profile-modal planning-page">
       <div class="profile-header">
         <div class="profile-header__left">
+          <div class="pg-crumb"><span>Market intelligence</span><i>/</i><b>Planning leads</b></div>
           <div class="profile-header__title-row">
             <h2 class="profile-header__title" id="planningLeadsTitle">Planning leads</h2>
             <span class="profile-header__scope">UK private sector</span>
@@ -2603,6 +2613,12 @@
           <span class="profile-header__sub" id="planningLeadsSub">Major and medium planning applications: developers, agents and schemes months before they reach tender</span>
         </div>
         <button type="button" id="planningLeadsClose" class="profile-header__close" aria-label="Close">×</button>
+      </div>
+
+      <div id="planningStats" class="pl-stats" aria-label="Planning figures">
+        <div class="pl-stat"><span>Major and medium schemes</span><b id="plStatTotal">…</b></div>
+        <div class="pl-stat"><span>Submitted in the last 7 days</span><b id="plStatSubmitted">…</b></div>
+        <div class="pl-stat"><span>Approved in the last 7 days</span><b id="plStatApproved">…</b></div>
       </div>
 
       <form id="planningFilterBar" class="tf-filterbar tf-filterbar--page" role="search" aria-label="Filter planning applications">
@@ -2964,8 +2980,9 @@
       <!-- Modal Header -->
       <div class="profile-header">
         <div class="profile-header__left">
+          <div class="pg-crumb"><span>Market intelligence</span><i>/</i><b>Buyer intelligence</b></div>
           <div class="profile-header__title-row">
-            <h2 class="profile-header__title" id="buyerIntelTitle">Buyer Intelligence</h2>
+            <h2 class="profile-header__title" id="buyerIntelTitle">Buyer intelligence</h2>
             <span class="profile-header__scope">UK public sector</span>
           </div>
           <span class="profile-header__sub">Discover buying authorities, incumbent suppliers, upcoming renewals &amp; repeat rate analytics</span>
@@ -3500,7 +3517,7 @@
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=2"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=284"></script>
+  <script src="/app.js?v=288"></script>
   <script src="/planning.js?v=23"></script>
   <script src="/funding.js?v=11"></script>
   <script src="/grants-board.js?v=1"></script>
@@ -3515,7 +3532,7 @@
   <script src="/growth-inbox.js?v=5"></script>
   <script src="/growth-studio.js?v=27"></script>
   <script src="/email-outreach.js?v=5"></script>
-  <script src="/pages.js?v=2" defer></script>
+  <script src="/pages.js?v=11" defer></script>
   <script src="/shell.js?v=8"></script>
   <script src="/search-filters.js?v=12"></script>
   <script>

@@ -28,7 +28,10 @@ def api_get_company_profiles():
         conn = _get_db()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT id, name, profile_text, meta_json, COALESCE(is_default, FALSE) FROM company_profiles WHERE username = %s ORDER BY is_default DESC, name ASC",
+            "SELECT id, name, profile_text, meta_json, COALESCE(is_default, FALSE), "
+            "(SELECT COUNT(*) FROM company_profile_documents d WHERE d.profile_id = company_profiles.id AND d.username = company_profiles.username), "
+            "(SELECT COUNT(*) FROM answer_bank a WHERE a.profile_id = company_profiles.id AND a.username = company_profiles.username) "
+            "FROM company_profiles WHERE username = %s ORDER BY is_default DESC, name ASC",
             (username,),
         )
         rows = cursor.fetchall()
@@ -41,6 +44,8 @@ def api_get_company_profiles():
                 "profile_text": r[2],
                 "meta_json": r[3] or "{}",
                 "is_default": bool(r[4]),
+                "document_count": int(r[5] or 0),   # shown on the Company profiles cards
+                "answer_count": int(r[6] or 0),
             }
             for r in rows
         ]

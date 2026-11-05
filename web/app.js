@@ -15399,6 +15399,8 @@ function renderCpProfilesList() {
           ${metaTags || `<span class="cp-profile-card__preview">${esc((p.profile_text || "").slice(0, 80))}</span>`}
         </div>
       </div>
+      ${Number.isFinite(p.document_count) ? `<div class="cp-profile-card__stats"><div><b>${p.document_count}</b><span>Documents</span></div><div><b>${p.answer_count || 0}</b><span>Answers</span></div></div>
+      ${p.document_count === 0 ? `<div class="cp-profile-card__warn">No documents yet. Bids will lack certificates.</div>` : ""}` : ""}
       <div class="cp-profile-card__actions">
         ${defaultAction}
         <button class="cp-profile-card__btn cp-profile-card__btn--edit" title="Edit profile" data-id="${p.id}">
@@ -15411,6 +15413,14 @@ function renderCpProfilesList() {
     `;
     container.appendChild(card);
   });
+
+  // A dashed "New profile" tile ends the grid; it does what the footer button does
+  const newTile = document.createElement("button");
+  newTile.type = "button";
+  newTile.className = "cp-newtile";
+  newTile.innerHTML = `<i>+</i><span>New profile</span>`;
+  newTile.addEventListener("click", () => $("cpNewProfileBtn")?.click());
+  container.appendChild(newTile);
 
   container.querySelectorAll(".cp-profile-card__btn--set-default").forEach(btn => {
     btn.addEventListener("click", async (e) => {
@@ -19469,6 +19479,7 @@ let _currentSupplierFilterSme = false;
 let _currentSupplierFilterVcse = false;
 let _currentSupplierDateRange = "all";
 let _selectedSupplierId = null;
+const _supplierListNeverAutoOpens = false;
 let _supplierDetailInflight = "";   // the profile request in flight: the same one is not sent twice (re-test 2 SN3)
 let _supplierDetailMergedKey = "";  // which records the open profile combines, so a list that arrives merged reloads it (SN2)
 let _currentLoadedSuppliers = [];
@@ -19773,6 +19784,7 @@ function closeSupplierIntelligenceModal() {
   const modal = $("supplierIntelligenceModal");
   const wasOpen = modal && !modal.classList.contains("hidden");
   modal?.classList.add("hidden");
+  modal?.classList.remove("sd-open");
   if (wasOpen) setSupplierAddress(null);
 }
 
@@ -19853,6 +19865,14 @@ const KNOWN_APP_PATHS = /^\/(funding|planning|buyers|suppliers|growth|answers|do
       new MutationObserver(sync).observe(modal, { attributes: true, attributeFilter: ["class"] });
     }
     const settle = () => {
+      // Nothing open any more: whichever section title is still on the tab (switching fast between sections can leave an old
+      // one) goes back to the search page's, and a section address is released.
+      if (!document.querySelector(".modal-overlay:not(.hidden)")) {
+        try {
+          if (/ · TenderFlow$/.test(document.title) && document.title !== "Tender search") document.title = "Tender search";
+          if (SECTION_ROUTES.some((x) => x.path === location.pathname)) history.replaceState(null, "", "/");
+        } catch (_) { /* no history */ }
+      }
       const r = SECTION_ROUTES.find((x) => location.pathname === x.path);
       if (!r) return;
       const modal = document.getElementById(r.modal);
@@ -20199,42 +20219,28 @@ function renderSupplierListData(data, query) {
     return;
   }
 
-  container.innerHTML = suppliers.map(s => {
+  // A table: one row per supplier, the bar showing its contracts won against the busiest supplier on this page (Re-test 8 redesign).
+  const maxWon = Math.max(1, ...suppliers.map((s) => Number(s.direct_awards !== undefined ? s.direct_awards : s.total_awards) || 0));
+  const head = `<div class="sp-head" role="row"><span>Supplier</span><span>Region</span><span>Size</span><span>Contracts won</span><span class="sp-val">Total value</span><span class="sp-fw">Frameworks</span><span class="sp-track">Watch</span></div>`;
+  container.innerHTML = head + suppliers.map(s => {
     const isActive = s.id === _selectedSupplierId ? "active" : "";
-    const smeBadge = s.sme_status === "SME"
-      ? '<span class="badge-sme" title="🌱 Small &amp; Medium Enterprise (SME): Business verified with <250 employees and turnover ≤ €50M.">🌱 SME</span>'
-      : (s.sme_status === "Non-SME Enterprise" || s.sme_status === "Non-SME")
-        ? '<span class="badge-non-sme" title="🏢 Non-SME Enterprise: Large corporation with ≥250 employees or turnover > €50M.">Large Corp</span>'
-        : '';
-    const vcseBadge = s.vcse_status === "VCSE" 
-      ? '<span class="badge-vcse" title="🤝 Voluntary, Community &amp; Social Enterprise (VCSE): Non-profit organisation, registered charity, or social enterprise.">🤝 VCSE</span>'
-      : '';
-
-    const fwBadge = s.framework_appointments_count > 0 
-      ? `<span style="font-size:10px; color:#1e40af; background:#eff6ff; border:1px solid #bfdbfe; padding:1px 4px; border-radius:4px; font-weight:700; margin-left:4px;" title="Appointed to ${s.framework_appointments_count} framework agreement(s)">🏛️ ${s.framework_appointments_count} FW</span>` 
-      : '';
-
+    const isSme = s.sme_status === "SME";
+    const isLarge = s.sme_status === "Non-SME Enterprise" || s.sme_status === "Non-SME";
+    const sizeBadge = isSme ? '<span class="sp-badge sp-badge--sme" title="Small or medium enterprise">SME</span>'
+      : isLarge ? '<span class="sp-badge" title="Large corporation">Large corp</span>' : '<span class="sp-faint">–</span>';
+    const vcseBadge = s.vcse_status === "VCSE" ? '<span class="sp-badge sp-badge--vcse" title="Voluntary, community or social enterprise">VCSE</span>' : "";
+    const won = Number(s.direct_awards !== undefined ? s.direct_awards : s.total_awards) || 0;
+    const reg = (s.company_number && s.company_number !== "Not available" && !String(s.company_number).startsWith("NO_REG_")) ? "#" + esc(s.company_number) : "Reg: not available";
+    const watch = window.TFWatch ? window.TFWatch.buttonHtml("supplier", s.id, s.name, "supplier_intelligence", { label: true }) : "";
     return `
-      <div class="supplier-item-card ${isActive}" data-supplier-id="${s.id}" style="cursor: pointer; padding: 7px 9px; margin-bottom: 5px;" onclick="window.loadSupplierDetail && window.loadSupplierDetail(${s.id})">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
-          <div style="display:flex; align-items:center; gap:6px; min-width:0; flex:1;">
-            <div style="font-weight:700; font-size:12.5px; color:var(--text, #0f172a); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(s.name)}">${esc(displayName(s.name))}</div>
-          </div>
-          <div style="font-weight:700; font-size:11px; color:var(--primary, #2563eb); white-space:nowrap; flex-shrink:0;" title="Wins and published value of direct contracts. A notice shared by several suppliers is counted once; framework ceilings are shown separately.">
-            ${s.direct_awards !== undefined ? s.direct_awards : s.total_awards} won (${formatCurrencyVal(s.total_value)})${fwBadge}
-          </div>
-        </div>
-        <div style="font-size:10.5px; color:var(--muted, #64748b); margin-top:3px; display:flex; align-items:center; justify-content:space-between; gap:6px;">
-          <div style="display:flex; align-items:center; gap:5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-            <span style="font-family:monospace; font-weight:600; color:var(--text, #334155);">${(s.company_number && s.company_number !== 'Not available' && !s.company_number.startsWith('NO_REG_')) ? '#' + esc(s.company_number) : 'Reg: Not available'}</span>
-            <span>·</span>
-            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">📍 ${esc(s.region || 'UK')}</span>
-          </div>
-          <div style="display:flex; gap:3px; flex-shrink:0;">
-            ${smeBadge}
-            ${vcseBadge}
-          </div>
-        </div>
+      <div class="supplier-item-card sp-row ${isActive}" role="row" data-supplier-id="${s.id}" onclick="if (event.target.closest('[data-watch]')) return; window.loadSupplierDetail && window.loadSupplierDetail(${s.id})">
+        <div class="sp-name"><b title="${esc(s.name)}">${esc(displayName(s.name))}</b><small>${reg}</small></div>
+        <div class="sp-region">${esc(s.region || "UK")}</div>
+        <div class="sp-size">${sizeBadge}${vcseBadge}</div>
+        <div class="sp-won" title="Wins of direct contracts. A notice shared by several suppliers is counted once."><b>${won}</b><i class="sp-bar"><i style="width:${Math.max(3, Math.round(won / maxWon * 100))}%"></i></i></div>
+        <div class="sp-val" title="Published value of direct contracts; framework ceilings are shown separately.">${formatCurrencyVal(s.total_value)}</div>
+        <div class="sp-fw" title="Frameworks the supplier is appointed to">${s.framework_appointments_count > 0 ? s.framework_appointments_count : "–"}</div>
+        <div class="sp-track">${watch}</div>
       </div>
     `;
   }).join("");
@@ -20256,21 +20262,23 @@ function renderSupplierListData(data, query) {
 
   if (suppliers.length > 0) {
     const currentStillVisible = _selectedSupplierId && suppliers.some(s => s.id === _selectedSupplierId);
-    if (currentStillVisible) {
+    const drawerOpen = $("supplierIntelligenceModal")?.classList.contains("sd-open");
+    if (currentStillVisible && drawerOpen) {
       // The first (fast) list can arrive before records are merged; when the merged list arrives the open profile must follow it,
       // or it shows one record's totals under a card that shows the company's (re-test 2 SN2).
       const shown = suppliers.find(s => s.id === _selectedSupplierId);
       const key = shown && Array.isArray(shown.merged_ids) ? shown.merged_ids.filter((i) => i != null).join(",") : "";
       if (key !== _supplierDetailMergedKey) loadSupplierDetail(_selectedSupplierId);
     }
-    if (!currentStillVisible) {
+    if (!currentStillVisible && !_supplierListNeverAutoOpens) {
       // Prefer an exact name match over whatever the backend ranked first (by award value) --
       // defense-in-depth alongside the backend's own exact-match ORDER BY boost, so a deep link
       // like ?open=supplier&q=GRAHAM resolves to "GRAHAM" rather than a bigger, merely
       // similarly-named supplier such as "John Graham Construction Ltd, t/a GRAHAM".
       const trimmedQuery = (query || "").trim().toLowerCase();
       const exactMatch = trimmedQuery && suppliers.find(s => (s.name || "").trim().toLowerCase() === trimmedQuery);
-      loadSupplierDetail((exactMatch || suppliers[0]).id);
+      // The list is a table now: a profile opens by itself only for an exact name match, otherwise the reader picks a row
+      if (exactMatch) loadSupplierDetail(exactMatch.id);
     }
   }
 }
@@ -20656,6 +20664,28 @@ function supplierContactDisplays(s, opts = {}) {
   return { email, phone, website, linkedinUrl, linkedinExact: !!exactLinkedin, lookingUp };
 }
 
+// The supplier profile slides in over the table from the right; the table itself is never replaced.
+function openSupplierDrawer() {
+  const modal = $("supplierIntelligenceModal");
+  if (!modal) return;
+  modal.classList.add("sd-open");
+  const panel = $("supplierDetailPanel");
+  if (panel && !$("supplierDetailClose")) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.id = "supplierDetailClose";
+    b.className = "sd-close";
+    b.setAttribute("aria-label", "Close supplier profile");
+    b.textContent = "×";
+    b.addEventListener("click", closeSupplierDrawer);
+    panel.parentElement.appendChild(b);
+  }
+}
+function closeSupplierDrawer() {
+  $("supplierIntelligenceModal")?.classList.remove("sd-open");
+  document.querySelectorAll(".supplier-item-card.active").forEach((el) => el.classList.remove("active"));
+}
+
 async function loadSupplierDetail(supplierId) {
   const _cardNow = (_currentLoadedSuppliers || []).find((s) => String(s.id) === String(supplierId));
   const _mergedNow = _cardNow && Array.isArray(_cardNow.merged_ids) ? _cardNow.merged_ids.filter((i) => i != null).join(",") : "";
@@ -20665,6 +20695,7 @@ async function loadSupplierDetail(supplierId) {
   _supplierDetailMergedKey = _mergedNow;
   _selectedSupplierId = supplierId;
   if (_supplierAddressQuery !== null && /^\/suppliers(\/|$)/.test(location.pathname)) setSupplierAddress(_supplierAddressQuery, supplierId);
+  openSupplierDrawer();
 
   document.querySelectorAll(".supplier-item-card").forEach(el => {
     if (el.getAttribute("data-supplier-id") == supplierId) {
