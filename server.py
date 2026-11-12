@@ -3425,9 +3425,9 @@ def verify_and_clean_bid_claims(bid_response: dict, ground_truth_str: str, check
         # P3a-2: Monetary figures
         def _replace_money(m):
             raw = m.group(0)
-            core_raw = raw.rstrip()
+            core_raw = raw.rstrip().rstrip(".,;:").rstrip()
             if not _money_in_source(core_raw):
-                # keep the space the pattern swallowed, or the next word runs into the tag ("]and")
+                # keep the space / full stop the pattern swallowed, or the next word runs into the tag ("]and")
                 return f"[PLACEHOLDER: insert verified figure — '{core_raw}' not found in company data]" + raw[len(core_raw):]
             return raw
         if strict_numbers or is_thin_profile:

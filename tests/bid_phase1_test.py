@@ -64,6 +64,8 @@ ok(not bw.ends_cleanly("Our approach covers bookings and"), "dangling 'and' = cu
 ok(bw.ends_cleanly("Key points:\n- Monthly reports\n- Open-book accounts"), "a bullet may end without a full stop")
 ok(not bw.ends_cleanly("| Room | Rate |\n| Hall | £25"), "half a table row = cut off")
 ok(bw.ends_cleanly("See the plan [NEEDS INPUT: figure]"), "ends on a placeholder")
+ok(bw.ends_cleanly("We look forward to working with you.\n\nYours faithfully,\n\nHemant\nAIVHUB LTD\n+44 7976735746"),
+   "a letter may end on its signature block (live run 1 false alarm)")
 
 # 3. write_question: retries a cut-off answer, then marks it; never returns a silent partial answer
 calls = []
@@ -179,6 +181,9 @@ br = {
 full = server.verify_and_clean_bid_claims(br, "org name: aivhub ltd. isms policy iso 27001", [],
                                           tender_facts="sinking fund £2,500 pa. weighting 40%")["cover_letter"]["content"]
 ok("[PLACEHOLDER: insert verified figure — '£20,000' not found in company data] and" in full, "tag keeps the following space")
+end = server.verify_and_clean_bid_claims({"cover_letter": {"content": "Over ten years it totals £25,000."}, "itt_question_responses": []},
+                                         "org", [], tender_facts="sinking fund £2,500")["cover_letter"]["content"]
+ok(end.endswith("company data]."), f"the sentence keeps its full stop (live run 2): {end}")
 out = bw.PLACEHOLDER_RE.sub("", full)  # what is left as asserted prose
 ok("£20,000" not in out and "60%" not in out, "invented money and percentage replaced")
 ok("£2,500" in out and "40%" in out, "the buyer's own figures kept")

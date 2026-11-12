@@ -176,6 +176,9 @@ def ends_cleanly(text: str) -> bool:
         return False
     if t[-1] in ".!?)]\"'”’:|*`":
         return True
+    # A letter ends with a signature block (name, company, email, phone), not a full stop.
+    if re.search(r"\b(yours (faithfully|sincerely|truly)|kind regards|best regards|with regards)\b", t[-500:], re.I):
+        return True
     last_line = t.splitlines()[-1]
     # A bullet or heading may end without a full stop; a prose paragraph may not.
     return bool(_LIST_LINE.match(last_line) or last_line.lstrip().startswith("#"))
