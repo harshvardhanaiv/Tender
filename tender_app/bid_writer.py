@@ -189,8 +189,15 @@ def question_prompt(q: dict, *, title: str, authority: str, company: str, tender
                     winning_bids: str, other_questions: list[dict], closed_note: str = "",
                     lang_instruction: str = "") -> str:
     others = "\n".join(f"- {o['number']}: {o['text'][:140]}" for o in other_questions if o is not q)[:3000]
+    budget = int(q.get("budget_words") or 500)
     limit_line = (f"HARD WORD LIMIT: {q['word_limit']} words (the buyer stops reading after it)."
-                  if q.get("word_limit") else f"Target length: about {q['budget_words']} words.")
+                  if q.get("word_limit") else
+                  f"LENGTH: at most {budget} words - this question's share of the bid by its weighting. "
+                  f"Aim for {int(budget * 0.85)}-{budget} words; do not go over. Tables count, and each "
+                  f"[NEEDS INPUT]/[CONFIRM] tag counts as one word."
+                  if q.get("weight_pct") is not None else
+                  f"LENGTH: at most {budget} words. This question is not weighted: answer it completely, and "
+                  f"keep factual answers short. Each [NEEDS INPUT]/[CONFIRM] tag counts as one word.")
     weight_line = f"Weighting: {q['weighting']}" if q.get("weighting") else "Weighting: not stated"
     return f"""Write the answer to ONE question in a tender response for {company}.
 
@@ -230,6 +237,54 @@ Return ONLY valid JSON with no markdown fences:
 {lang_instruction}"""
 
 
+OVER_BUDGET_TOLERANCE = 1.10  # an answer may run 10% over its weighting budget before it is condensed
+_FIGURE_RE = re.compile(r"£\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m|bn|million|billion)?|\d+(?:\.\d+)?\s?%", re.I)
+
+
+def answer_words(text: str) -> int:
+    """Words in an answer as the buyer will count them once it is filled in: each [NEEDS INPUT: ...] or
+    [CONFIRM: ...] tag stands for one figure or name, so it counts as one word, not the words of its hint."""
+    return len(PLACEHOLDER_RE.sub("X", text or "").split())
+
+
+def word_cap(q: dict) -> int:
+    """The most words an answer may have: the buyer's limit, else the weighting budget plus the tolerance."""
+    limit = _as_int(q.get("word_limit"))
+    if limit:
+        return limit
+    return int(int(q.get("budget_words") or 500) * OVER_BUDGET_TOLERANCE)
+
+
+def _figures(text: str) -> set[str]:
+    return {re.sub(r"[\s,]", "", m.group(0)).lower() for m in _FIGURE_RE.finditer(PLACEHOLDER_RE.sub(" ", text or ""))}
+
+
+def condense_prompt(q: dict, answer: str, words: int) -> str:
+    limit = _as_int(q.get("word_limit"))
+    # Aim well under the cap: asked to trim a small overrun, models hand back nearly the same text.
+    target = int((limit or int(q.get("budget_words") or 500)) * 0.85)
+    pct = max(40, min(95, round(100 * target / max(1, words))))
+    return f"""This tender answer is {words} words; the limit for it is {target} words. Cut it to about {pct}% of its
+current length by deleting whole sentences, bullets and table rows - rewording alone will not get it short enough.
+
+QUESTION {q['number']}:
+{q['text']}
+
+Rules:
+- Delete in this order: restated question text, introductions and summaries that repeat the body, generic claims
+  ("we are committed to..."), duplicated points, then the least important detail.
+- Keep every fact, commitment and figure that answers the question.
+- Keep every [NEEDS INPUT: ...] and [CONFIRM: ...] tag exactly as written. Never replace a tag with a figure, name or date.
+- Add nothing new: no new facts, figures, clients, certifications or examples.
+- Keep the headings and the order of the points; tables may be merged or trimmed. Finish every sentence.
+
+ANSWER:
+{answer}
+
+Return ONLY valid JSON with no markdown fences:
+{{"response": "the shortened answer, Markdown allowed"}}"""
+
+
 def write_question(call: Callable[[str, str, int], str], q: dict, prompt: str,
                    system: str = "You are a professional UK public-sector bid writer. Return ONLY valid JSON.") -> dict:
     """Write one answer. `call(system, user, max_tokens)` returns the model's raw text.
@@ -237,6 +292,10 @@ def write_question(call: Callable[[str, str, int], str], q: dict, prompt: str,
     A reply that was cut off (JSON needed repairing, or the text stops mid-sentence) is retried once with
     more room and a shorter target; if it is still cut off the answer is kept but marked, with a visible
     [NEEDS INPUT] tag, so the QA gate blocks a clean export instead of the gap going unnoticed.
+
+    A complete answer over its cap (the buyer's word limit, else the weighting budget + 10%) gets one
+    condensing call. The shorter version is used only if it is complete, shorter, and adds no new £ or %
+    figure; otherwise the long answer stays and the QA gate reports the overrun.
     """
     budget = int(q.get("budget_words") or 500)
     attempts = [
@@ -268,7 +327,20 @@ def write_question(call: Callable[[str, str, int], str], q: dict, prompt: str,
         response = (response + f"\n\n[NEEDS INPUT: this answer was cut off - regenerate question {q['number']}]").strip()
     elif status == "failed" and not response:
         response = f"[NEEDS INPUT: the answer to question {q['number']} could not be generated - regenerate it]"
-    words = len(response.split())
+    condensed_from = None
+    if status == "ok" and answer_words(response) > word_cap(q):
+        before = answer_words(response)
+        try:
+            value, truncated = parse_llm_json_checked(
+                call(system, condense_prompt(q, response, before), max_tokens_for(budget)))
+            short = str(value.get("response") or "").strip() if isinstance(value, dict) else ""
+        except Exception:  # noqa: BLE001 - keep the long answer; the QA gate reports the overrun
+            short, truncated = "", True
+        if (short and not truncated and ends_cleanly(short) and answer_words(short) < before
+                and _figures(short) <= _figures(response)):
+            response, condensed_from = short, before
+            placeholders = [p for p in placeholders if p in short]
+    words = answer_words(response)
     return {
         "question_number": q["number"],
         "question_text": q["text"],
@@ -279,6 +351,7 @@ def write_question(call: Callable[[str, str, int], str], q: dict, prompt: str,
         "word_count": words,
         "placeholders_used": placeholders,
         "status": status,
+        **({"condensed_from_words": condensed_from} if condensed_from else {}),
         **({"error": error} if status == "failed" and error else {}),
     }
 
@@ -496,17 +569,21 @@ def qa_gate(bid_response: dict, closed: bool = False) -> dict:
         sec = f"Question {q.get('question_number') or i + 1}"
         text = str(q.get("response") or "").strip()
         status = q.get("status")
-        words = len(text.split())
+        words = answer_words(text)
         budget = _as_int(q.get("budget_words"))
         limit = _as_int(q.get("word_limit"))
         if not text or status == "failed" or "could not be generated - regenerate" in text:
             add("coverage", "P0", sec, "No answer was written.")
         elif status == "truncated" or "this answer was cut off" in text or not ends_cleanly(text):
             add("truncation", "P0", sec, "The answer stops mid-sentence.")
-        elif budget and words < 0.6 * budget:
+        elif budget and words < 0.6 * budget and (limit or q.get("weighting")):
+            # An unweighted question's budget is an even share, a ceiling not a target: no "short" warning.
             add("coverage", "P1", sec, f"Short: {words} words against a target of about {budget}.")
         if limit and words > limit:
             add("word_limit", "P1", sec, f"{words} words; the buyer's limit is {limit}.")
+        elif not limit and budget and words > budget * OVER_BUDGET_TOLERANCE:
+            add("word_budget", "P2", sec, f"{words} words against a budget of {budget} from its weighting; "
+                                          f"trim it so the higher-weighted answers get the space.")
 
     for label, text in bid_texts(r):
         if label.startswith("Question "):

@@ -94,6 +94,31 @@ def boom(system, user, max_tokens):
 res = bw.write_question(boom, q4, "PROMPT")
 ok(res["status"] == "failed" and "could not be generated" in res["response"], "a failed call is marked, not dropped")
 
+# 3b. Word budgets: an over-long answer is condensed once; a condensed version that is cut off or adds a
+# figure is rejected; [NEEDS INPUT] tags count as one word each
+q7 = by["7"]  # budget 250, cap 275
+long_ans = "We will hold monthly user meetings. " * 60 + "[NEEDS INPUT: frequency]."
+ok(bw.answer_words("Rent is [NEEDS INPUT: annual rent figure agreed with the council] a year.") == 5, "a tag counts as one word")
+calls.clear()
+res = bw.write_question(fake_call_factory([json.dumps({"response": long_ans}),
+                                           json.dumps({"response": "We will hold user meetings [NEEDS INPUT: frequency]."})]), q7, "PROMPT")
+ok(len(calls) == 2 and res["status"] == "ok" and res["word_count"] == 6 and res.get("condensed_from_words") == 361,
+   "over the cap -> condensed once")
+calls.clear()
+res = bw.write_question(fake_call_factory([json.dumps({"response": "Short and complete answer."})]), q7, "PROMPT")
+ok(len(calls) == 1 and "condensed_from_words" not in res, "within the cap -> no extra call")
+res = bw.write_question(fake_call_factory([json.dumps({"response": long_ans}),
+                                           json.dumps({"response": "We will hold meetings costing £4,000 a year."})]), q7, "PROMPT")
+ok(res["response"] == long_ans.strip() and "condensed_from_words" not in res, "a condensed answer with a new £ figure is rejected")
+res = bw.write_question(fake_call_factory([json.dumps({"response": long_ans}), '{"response": "We will hold meetings and']), q7, "PROMPT")
+ok(res["response"] == long_ans.strip() and res["status"] == "ok", "a cut-off condensed answer is rejected")
+res = bw.write_question(fake_call_factory([json.dumps({"response": long_ans}), "not json at all"]), q7, "PROMPT")
+ok(res["response"] == long_ans.strip(), "a failed condensing call keeps the long answer")
+ok("at most 250 words" in bw.question_prompt(q7, title="T", authority="A", company="C", tender_dissection="",
+                                             clarifications_block="", company_data="", company_context="",
+                                             answer_bank="", winning_bids="", other_questions=[]),
+   "the prompt states the budget as a maximum")
+
 # 4. Prompt carries grounding rules, the clarification answers and the other questions
 prompt = bw.question_prompt(q4, title="Matthewsgreen", authority="Wokingham Borough Council", company="AIVHUB LTD",
                             tender_dissection=json.dumps(STAGE1), clarifications_block=bw.clarifications_block(STAGE1),
@@ -159,6 +184,23 @@ ok(any(i["check"] == "identity" and "Surname" in i["detail"] for i in qa["issues
 ok(any(i["check"] == "identity" and "mahendra.aivhub.com" in i["detail"] for i in qa["issues"]), "email without @ is P0")
 ok(("status", "P1", "Whole bid") in checks and not qa["passed"], "closed tender flagged; gate fails")
 ok(qa["placeholders"] == len(bw.find_placeholders(bid)) == 2, "placeholder count = [Surname] + [CONFIRM]")
+over = bw.qa_gate({"itt_question_responses": [
+    {"question_number": "2", "response": "We plan the year. " * 200, "status": "ok", "budget_words": 600},
+    {"question_number": "3", "response": "We plan the year. " * 160, "status": "ok", "budget_words": 600},
+    {"question_number": "4", "response": "Cost [NEEDS INPUT: annual cost of drains maintenance contract]. " * 300, "status": "ok", "budget_words": 600}]})
+ob = {(i["check"], i["severity"], i["section"]) for i in over["issues"]}
+ok(("word_budget", "P2", "Question 2") in ob and not any(s == "Question 3" for _, _, s in ob), "over budget +10% is P2; within it is not")
+ok(not any(s == "Question 4" and c == "word_budget" for c, _, s in ob), "tag hints don't count towards the budget")
+ok(over["passed"], "a budget overrun alone does not fail the gate")
+short = bw.qa_gate({"itt_question_responses": [
+    {"question_number": "1", "response": "We run venues. " * 50, "status": "ok", "budget_words": 600, "weighting": "10%"},
+    {"question_number": "Organisation information", "response": "We run venues. " * 50, "status": "ok", "budget_words": 500, "weighting": None}]})
+sh = {(i["check"], i["section"]) for i in short["issues"]}
+ok(("coverage", "Question 1") in sh and ("coverage", "Question Organisation information") not in sh,
+   "short is flagged for a weighted question, not an unweighted one")
+ok("not weighted" in bw.question_prompt(dict(q7, weight_pct=None), title="T", authority="A", company="C", tender_dissection="",
+                                        clarifications_block="", company_data="", company_context="", answer_bank="",
+                                        winning_bids="", other_questions=[]), "unweighted prompt says so")
 dup = {"itt_question_responses": [{"question_number": "1", "response": ("The centre will open seven days a week for residents and groups of all ages with fair prices. " * 3).strip(), "status": "ok"},
                                   {"question_number": "2", "response": ("The centre will open seven days a week for residents and groups of all ages with fair prices. " * 3).strip(), "status": "ok"}]}
 ok(any(i["check"] == "duplication" for i in bw.qa_gate(dup)["issues"]), "duplicated paragraph found")
