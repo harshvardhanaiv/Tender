@@ -78,6 +78,31 @@ def _heal_truncated(text: str) -> Any:
     raise ValueError("unrecoverable")
 
 
+def parse_llm_json_checked(text: str) -> tuple[Any, bool]:
+    """Like parse_llm_json, but also says whether the reply was cut off.
+
+    Returns (value, truncated). `truncated` is True when the JSON only parsed after closing open
+    strings/brackets or dropping a ragged tail: the model hit its output limit, so the value is
+    missing whatever it had not written yet. Callers that must not accept a partial answer (the
+    bid writer) check it instead of trusting the silently repaired value.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Model returned an empty response.")
+    cleaned = _strip_fences(text)
+    start = min((i for i in (cleaned.find("{"), cleaned.find("[")) if i != -1), default=-1)
+    if start > 0:
+        cleaned = cleaned[start:]
+    end = max(cleaned.rfind("}"), cleaned.rfind("]"))
+    candidate = cleaned[: end + 1] if end != -1 else cleaned
+    for attempt in (cleaned, candidate, _escape_control_chars_in_strings(candidate)):
+        try:
+            value = json.loads(attempt, strict=False)
+        except ValueError:
+            continue
+        return value, False
+    return parse_llm_json(text), True
+
+
 def parse_llm_json(text: str) -> Any:
     """Parse JSON from model output, repairing the usual damage. Raises ValueError if hopeless."""
     if not isinstance(text, str) or not text.strip():

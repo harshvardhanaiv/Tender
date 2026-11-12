@@ -1693,10 +1693,24 @@ function deepAlertChip(key) {
   return `<span class="deep-alert-chip${red ? " deep-alert-chip--red" : ""}" title="${esc(tip)}">⚠ ${list.some(a => a.kind === "form_due") ? "Form due" : "Changed"}</span>`;
 }
 
+// A readable name for a tracked tender in an alert: never a URL, a raw "pcs:SEP564280" key or link text
+// such as "View Notice" (fix plan E2).
+function cleanAlertTitle(raw, key) {
+  let t = String(raw || "").replace(/https?:\/\/\S+/gi, " ").replace(/\s+/g, " ").trim();
+  if (/^(view|open|see)?\s*(notice|details|tender|opportunity|more|link)?$/i.test(t)) t = "";
+  if (/^[a-z_]+:\S+$/i.test(t) || t === String(key || "")) t = "";
+  if (t.length < 4) t = "";
+  if (t) return t;
+  const src = String(key || "").split(":")[0];
+  const label = (typeof SOURCES_LABEL !== "undefined" && SOURCES_LABEL && SOURCES_LABEL[src]) || src.replace(/_/g, " ");
+  return `A tracked tender${label ? " on " + label : ""}`;
+}
+
 function deepAlertsBannerHtml() {
   if (!_deepAlerts.length) return "";
   const rows = _deepAlerts.slice(0, 8).map(a => {
-    const title = state.pipeline[a.tender_key]?.title || Object.values(state.pipeline).find(p => deepAlertKey(p.tender_key) === deepAlertKey(a.tender_key))?.title || a.title || a.tender_key;
+    const rawTitle = state.pipeline[a.tender_key]?.title || Object.values(state.pipeline).find(p => deepAlertKey(p.tender_key) === deepAlertKey(a.tender_key))?.title || a.title || "";
+    const title = cleanAlertTitle(rawTitle, a.tender_key);
     const keyAttr = Object.values(state.pipeline).find(p => deepAlertKey(p.tender_key) === deepAlertKey(a.tender_key))?.tender_key || a.tender_key;
     return `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:4px">
       <span>⚠</span><div style="flex:1"><button type="button" class="dash-profile-link" data-deep-alert-open="${esc(keyAttr)}" style="font-weight:700">${esc(title)}</button>
@@ -7599,7 +7613,7 @@ async function loadDetails(row) {
   } else if (rid) {
     url = `/api/tender/${encodeURIComponent(source)}/${encodeURIComponent(rid)}${langParam}`;
   } else {
-    $("details").innerHTML = renderSnippetDetails(row);
+    $("details").innerHTML = detailsHeroHtml(row) + renderSnippetDetails(row);
     const snippetUrl = row.detail_url || row.tender_url || "";
     if (btnTab && snippetUrl) { btnTab.href = snippetUrl; btnTab.classList.remove("hidden"); }
     if (state.autoExpandDetails) {
@@ -7613,7 +7627,7 @@ async function loadDetails(row) {
     const res = await fetch(url);
     if (!res.ok) {
       window._detailRow = row;
-      $("details").innerHTML = getDeadlinePassedBannerHtml(row) + fitPanelHtml(row) + trackPanelHtml(row) + renderSnippetDetails(row);
+      $("details").innerHTML = detailsHeroHtml(row) + getDeadlinePassedBannerHtml(row) + fitPanelHtml(row) + trackPanelHtml(row) + renderSnippetDetails(row);
       bindTrackPanelNotes(row);
       const fallbackUrl = row.detail_url || row.tender_url || "";
       if (btnTab && fallbackUrl) {
@@ -7641,7 +7655,7 @@ async function loadDetails(row) {
       state.fitCache[key] = { deep: state.fitCache[key].deep };
     }
     window._detailRow = enrichedRow;
-    $("details").innerHTML = getDeadlinePassedBannerHtml(enrichedRow) + fitPanelHtml(enrichedRow) + trackPanelHtml(enrichedRow) + renderDetailsHtml(data, enrichedRow);
+    $("details").innerHTML = detailsHeroHtml(enrichedRow) + getDeadlinePassedBannerHtml(enrichedRow) + fitPanelHtml(enrichedRow) + trackPanelHtml(enrichedRow) + renderDetailsHtml(data, enrichedRow);
     bindTrackPanelNotes(enrichedRow);
     // Show the new-tab button once we have the external notice URL.
     const tenderUrl = data.detail_url || data.tender_url || enrichedRow.detail_url || enrichedRow.tender_url || "";
@@ -7670,7 +7684,7 @@ async function loadDetails(row) {
     }
   } catch {
     window._detailRow = row;
-    $("details").innerHTML = getDeadlinePassedBannerHtml(row) + trackPanelHtml(row) + renderSnippetDetails(row);
+    $("details").innerHTML = detailsHeroHtml(row) + getDeadlinePassedBannerHtml(row) + trackPanelHtml(row) + renderSnippetDetails(row);
     bindTrackPanelNotes(row);
     // Still try to surface external link from snippet data.
     const fallbackUrl = row.detail_url || row.tender_url || "";
@@ -8194,6 +8208,35 @@ $("pipelinePortalFilter")?.addEventListener("change", renderPipelineBoard);
 $("dashboardModal")?.addEventListener("click", (e) => {
   if (e.target === $("dashboardModal")) closeDashboard();
 });
+
+// The top of the Tender details panel: what the notice is called, who is buying, when it ends and how well it fits (Re-test 8 UI refresh).
+function detailsHeroHtml(row) {
+  const title = String((row && row.title) || "").trim();
+  if (!title) return "";
+  const auth = String((row && row.contracting_authority) || "").trim();
+  const chip = String((row && (row.source_label || statusLabel(row))) || "").trim();
+  let timing;
+  if (isAwardNotice(row)) timing = "Awarded";
+  else if (isClosedTender(row)) timing = "Closed";
+  else {
+    const dl = (row && row.submission_deadline) || "";
+    timing = dl && !/:\s*$/.test(String(dl)) ? "Ends " + noticeDate(dl) : "No deadline";
+  }
+  let fit = "Not scored";
+  if (fitActive()) {
+    const q = getQuickFit(row);
+    if (q) fit = (q.band === "strong" ? "Strong fit" : q.band === "possible" ? "Possible fit" : "Weak fit") + " · " + q.score;
+  }
+  return `<div class="td-hero">
+    ${chip ? `<span class="td-hero__chip">${esc(chip)}</span>` : ""}
+    <h3 class="td-hero__title">${esc(title)}</h3>
+    ${auth && auth !== "Not available" ? `<div class="td-hero__auth">${esc(displayName(auth))}</div>` : ""}
+    <div class="td-hero__cards">
+      <div class="td-hero__card"><small>TIMING</small><b>${esc(timing)}</b></div>
+      <div class="td-hero__card"><small>FIT</small><b>${esc(fit)}</b></div>
+    </div>
+  </div>`;
+}
 
 function fitPanelHtml(row) {
   if (!fitActive()) {
@@ -10355,8 +10398,14 @@ function renderAnalysis(a, row, docCount = 0, docNames = []) {
   let html = getDeadlinePassedBannerHtml(row);
 
   if (docCount > 0) {
-    const names = docNames.map(n => `<span class="file-chip">📄 ${esc(n)}</span>`).join("");
-    html += `<div class="analysis-doc-badge">📋 Analysis based on <strong>${docCount}</strong> tender document${docCount > 1 ? "s" : ""} fetched from portal${names ? `:<div class="file-list" style="margin-top:6px">${names}</div>` : ""}</div>`;
+    // Say which documents the user uploaded: they used to be labelled "fetched from portal" (fix plan H7).
+    const uploadedNames = new Set((state.uploadedFiles || []).map(f => f.filename));
+    const nUploaded = docNames.filter(n => uploadedNames.has(n)).length;
+    const nPortal = Math.max(0, docCount - nUploaded);
+    const origin = nUploaded && nPortal ? ` (${nPortal} from the portal, ${nUploaded} uploaded by you)`
+      : nUploaded ? " uploaded by you" : " fetched from the portal";
+    const names = docNames.map(n => `<span class="file-chip">📄 ${esc(n)}${uploadedNames.has(n) ? " (uploaded)" : ""}</span>`).join("");
+    html += `<div class="analysis-doc-badge">📋 Analysis based on <strong>${docCount}</strong> tender document${docCount > 1 ? "s" : ""}${origin}${names ? `:<div class="file-list" style="margin-top:6px">${names}</div>` : ""}</div>`;
   } else {
     html += `<div class="analysis-doc-badge analysis-doc-badge--none">ℹ️ No tender documents found on portal — analysis based on tender description</div>`;
   }
@@ -12663,6 +12712,33 @@ async function runBidAssistant(isRefresh = false) {
     };
   }
 
+  // Before any credits are spent (fix plan M15, first version): we cannot see documents behind a portal
+  // login, so ask for the buyer's pack and clarification answers, and say when the deadline has passed.
+  {
+    const uploads = state.bidUploadedFiles || [];
+    const packKey = "tf_bid_pack_ok_" + String(rowKey(_bidRow)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 120);
+    const confirmedRecently = (Date.now() - Number(lsGet(packKey, 0) || 0)) < 24 * 3600 * 1000;
+    const warnings = [];
+    if (!uploads.length && !pastedText && _bidRow.source !== "custom") {
+      warnings.push("No buyer documents are attached. Portals such as ProContract, Delta, In-Tend and Atamis keep the questionnaire, updates and clarification answers behind your supplier login, so this bid would be built from the public notice only. Download the full document pack from your portal account and add it under \"Additional supporting documents\".");
+    }
+    if (isClosedTender(_bidRow)) {
+      warnings.push(`The stored deadline (${_bidRow.submission_deadline || "unknown"}) has passed. If the buyer extended it, upload the update so the bid uses the new date.`);
+    }
+    const hasClarFile = uploads.some(f => /clarif|q\s*&\s*a|q and a|questions? and answers|message|update|addend/i.test(f.filename || ""));
+    if (!hasClarFile && !confirmedRecently) {
+      warnings.push("Clarification answers: buyers publish clarification answers, updates and deadline changes inside your portal account, where we cannot see them. If there are any, export them (or print to PDF) and add them too.");
+    }
+    if (warnings.length) {
+      const msg = "Before we write your bid:\n\n" + warnings.map(w => "• " + w).join("\n\n") + "\n\nGenerate now? This uses credits.";
+      const go = window.showConfirm
+        ? await window.showConfirm(msg, "Before we write your bid", { okText: "Generate", cancelText: "Add documents first", danger: false })
+        : window.confirm(msg);
+      if (!go) return;
+      lsSet(packKey, Date.now());
+    }
+  }
+
   // Derive company name from selected profile (bidCompanyName field removed)
   const selectedProfileForName = state.companyProfiles?.find(p => String(p.id) === String($("bidCompanyProfileSelect")?.value || ""));
   const company = selectedProfileForName?.name?.trim() || "";
@@ -12818,7 +12894,7 @@ async function executeProposalTask(task) {
             updateActiveModalProgress(task);
           }
         } else if (event.status === "error") {
-          throw new Error(event.error);
+          throw new Error((event.error || "Generation failed") + (event.refunded ? " (your credits have been refunded)" : ""));
         } else if (event.status === "complete") {
           task.proposal = event.proposal;
 
@@ -13163,14 +13239,16 @@ function renderFormattedMarkdownHtml(text) {
   s = s.replace(/^## (.*$)/gim, '<h3 style="color:var(--primary,#1e3a8a); margin:14px 0 6px; font-size:14px; font-weight:700;">$1</h3>');
   
   // Format unresolved placeholders [PLACEHOLDER:...], [Add...], [Insert...], [Verify...], [Status...]
-  s = s.replace(/(\[(?:PLACEHOLDER|Add|Insert|Verify|Status)[^\]]*\])/gi, '<span class="placeholder-highlight">$1</span>');
+  s = s.replace(/(\[(?:PLACEHOLDER|NEEDS INPUT|CONFIRM|Add|Insert|Verify|Status)[^\]]*\])/gi, '<span class="placeholder-highlight">$1</span>');
   
   return s;
 }
 
 function countUnresolvedPlaceholdersInText(text) {
   if (!text) return 0;
-  const matches = text.match(/\[(?:PLACEHOLDER|Add|Insert|Verify|Status)[^\]]*\]/gi);
+  // Same pattern as the server's QA gate and Appendix C (tender_app/bid_writer.py PLACEHOLDER_RE), so the
+  // count here matches the document (fix plan G9): any [bracketed note], not links, checkboxes or [1].
+  const matches = String(text).match(/\[(?!\d+\])(?![xX ]\])[^\[\]\n]{2,240}\](?!\()/g);
   return matches ? matches.length : 0;
 }
 
@@ -13479,6 +13557,25 @@ function renderProposal(p, row) {
     `;
   }
 
+  // Export checks found when the draft was generated (fix plan M10), and documents that were not fully read.
+  let qaCardHtml = "";
+  const qaIssues = (p.qa_report && Array.isArray(p.qa_report.issues)) ? p.qa_report.issues.filter(i => i.severity !== "P2") : [];
+  const docNotes = [];
+  if (Array.isArray(p.docs_unreadable) && p.docs_unreadable.length) docNotes.push(`No text could be read from: ${p.docs_unreadable.join(", ")} (scanned PDFs need OCR).`);
+  if (Array.isArray(p.docs_cut) && p.docs_cut.length) docNotes.push(`Only part of these was read (context limit): ${p.docs_cut.join(", ")}.`);
+  if (p.tender_closed) docNotes.push(`The submission deadline${p.effective_deadline ? " (" + p.effective_deadline + ")" : ""} has passed.`);
+  if (qaIssues.length || docNotes.length) {
+    const p0n = qaIssues.filter(i => i.severity === "P0").length;
+    qaCardHtml = `
+      <div class="placeholder-warning-card" style="${p0n ? "border-color:#fecaca;background:#fef2f2" : ""}">
+        <h4 class="placeholder-warning-title" style="${p0n ? "color:#991b1b" : ""}">${p0n ? `⛔ ${p0n} export check${p0n === 1 ? "" : "s"} failed: fix before submitting` : "⚠️ Export checks"}</h4>
+        <ul class="placeholder-warning-list">
+          ${qaIssues.map(i => `<li><strong>${esc(i.severity)} · ${esc(i.section)}</strong>: ${esc(i.detail)}</li>`).join("")}
+          ${docNotes.map(n => `<li>${esc(n)}</li>`).join("")}
+        </ul>
+      </div>`;
+  }
+
   const hasClarificationsRun = Boolean(p.clarifications && (p.clarifications.questions?.length || p.clarifications.strategic_notes));
   const stage4WarningBannerHtml = hasClarificationsRun ? "" : `
     <div style="background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 8px; font-weight: 600; font-size: 12px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
@@ -13494,6 +13591,7 @@ function renderProposal(p, row) {
         <div style="flex: 2; min-width: 480px;">
           <div class="ai-draft-banner">⚠️ AI DRAFT — review before submitting</div>
           ${stage4WarningBannerHtml}
+          ${qaCardHtml}
           ${placeholdersWarningCardHtml}
           <div class="analysis-section" style="margin-bottom: 0;">
             <!-- Complete Proposal Download Header -->
@@ -14219,10 +14317,31 @@ async function downloadFullProposalDoc(btnElem = null) {
   if (!_bidRow || !_lastProposal?.bid_response) return;
   const title = _bidRow.title || "Unknown Tender";
   const authority = _bidRow.contracting_authority || "Unknown Authority";
-  const companyName = _lastProposal.dissection?.company_name || _bidRow.company || "Bidding Company";
+  const companyName = _lastProposal.bid_company || _lastProposal.company || _bidRow.company || "[NEEDS INPUT: legal company name]";
 
   const r = _lastProposal.bid_response;
-  const fullTextToScan = JSON.stringify(r);
+  // Only the written text, as Appendix C counts it (scanning the JSON also counted arrays and each tag twice).
+  const fullTextToScan = [
+    r.cover_letter?.content,
+    ...(r.itt_question_responses || []).map(q => q?.response),
+    ...["executive_summary", "understanding_of_requirements", "technical_methodology", "relevant_experience",
+        "team_and_personnel", "quality_and_compliance", "social_value", "pricing_notes", "declarations"]
+      .map(k => r[k]?.content)
+  ].filter(Boolean).map(t => applyPlaceholders(t)).join("\n\n");
+
+  // Export QA gate (fix plan M10): name what blocks a clean export before downloading. The server marks
+  // such a document "DRAFT - NOT READY TO SUBMIT" on its first page.
+  const qaP0 = ((_lastProposal.qa_report || {}).issues || []).filter(i => i.severity === "P0");
+  if (qaP0.length) {
+    const qaMsg = `This draft fails ${qaP0.length} export check${qaP0.length === 1 ? "" : "s"}:\n\n`
+      + qaP0.slice(0, 8).map(i => `• ${i.section}: ${i.detail}`).join("\n")
+      + (qaP0.length > 8 ? `\n• ...and ${qaP0.length - 8} more` : "")
+      + "\n\nIt will download marked \"DRAFT - NOT READY TO SUBMIT\". Download anyway?";
+    const okQa = window.showConfirm
+      ? await window.showConfirm(qaMsg, "Export checks failed", { okText: "Download draft", cancelText: "Go back" })
+      : window.confirm(qaMsg);
+    if (!okQa) return;
+  }
 
   const targetBtns = [
     btnElem instanceof HTMLElement ? btnElem : null,
@@ -14271,7 +14390,11 @@ async function downloadFullProposalDoc(btnElem = null) {
         itt_question_responses: (r.itt_question_responses || r.itт_question_responses || []).map(q => ({
           question_number: applyPlaceholders(q.question_number || ""),
           question_text: applyPlaceholders(q.question_text || ""),
-          response: applyPlaceholders(q.response || "")
+          response: applyPlaceholders(q.response || ""),
+          // Kept so the export QA gate can tell a cut-off or failed answer from a finished one.
+          status: q.status || null,
+          budget_words: q.budget_words || null,
+          word_limit: q.word_limit || null
         })),
         technical_methodology: {
           content: applyPlaceholders(r.technical_methodology?.content || "")
@@ -14371,7 +14494,8 @@ async function downloadFullProposalDoc(btnElem = null) {
           methodology: _methodologyData,
           methodology_image_b64: methodologyImageB64,
           gantt: _lastProposal?.gantt || { unit: _ganttUnit, phases: _ganttPhases },
-          gantt_image_b64: ganttImageB64
+          gantt_image_b64: ganttImageB64,
+          tender_closed: Boolean(_lastProposal?.tender_closed)
         })
       });
       if (!res.ok) {
@@ -14529,11 +14653,19 @@ async function handleBidFileSelect(e) {
   e.target.value = "";
 }
 
+// Uploaded buyer documents belong to one tender. They used to be kept under one key for every tender,
+// so a document uploaded for tender A reappeared (and was sent) when bidding on tender B (fix plan H6/H9).
+function bidDocsStorageSuffix() {
+  try { return _bidRow ? "_" + String(rowKey(_bidRow)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 120) : "_none"; }
+  catch { return "_none"; }
+}
+
 window.saveBidSupportingDocs = function() {
   try {
-    lsSet("tf_bid_uploaded_files", JSON.stringify(state.bidUploadedFiles || []));
+    const sfx = bidDocsStorageSuffix();
+    lsSet("tf_bid_uploaded_files" + sfx, JSON.stringify(state.bidUploadedFiles || []));
     const textVal = $("bidTenderText")?.value || "";
-    lsSet("tf_bid_tender_text", textVal);
+    lsSet("tf_bid_tender_text" + sfx, textVal);
   } catch (err) {
     console.error("Error saving supporting docs:", err);
   }
@@ -14541,17 +14673,21 @@ window.saveBidSupportingDocs = function() {
 
 window.loadBidSupportingDocs = function() {
   try {
-    const savedFiles = lsGet("tf_bid_uploaded_files", null);
+    const sfx = bidDocsStorageSuffix();
+    const savedFiles = lsGet("tf_bid_uploaded_files" + sfx, null);
     if (savedFiles) {
       try {
         state.bidUploadedFiles = JSON.parse(savedFiles) || [];
       } catch {}
     }
-    const savedText = lsGet("tf_bid_tender_text", null);
+    const savedText = lsGet("tf_bid_tender_text" + sfx, null);
     const textarea = $("bidTenderText");
-    if (textarea && savedText !== null && savedText !== undefined) {
-      textarea.value = savedText;
-    }
+    if (textarea) textarea.value = (savedText !== null && savedText !== undefined) ? savedText : "";
+    // The old shared keys could hold another tender's files: drop them.
+    try {
+      localStorage.removeItem(storageKey("tf_bid_uploaded_files"));
+      localStorage.removeItem(storageKey("tf_bid_tender_text"));
+    } catch {}
     renderBidUploadedFiles();
   } catch (err) {
     console.error("Error loading supporting docs:", err);
@@ -14584,6 +14720,8 @@ function renderBidUploadedFiles() {
   if (chk4) {
     if (hasFiles || text) {
       chk4.disabled = false;
+      // Attached buyer documents tick their step, as the winning-bids step already does (fix plan A7).
+      if (hasFiles) chk4.checked = true;
     } else {
       chk4.checked = false;
       chk4.disabled = true;

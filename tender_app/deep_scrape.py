@@ -14,6 +14,7 @@ import threading
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -280,11 +281,27 @@ def _iso_date(raw: str) -> str:
     return ""
 
 
-def _deadline_kind(ctx: str) -> str:
-    low = ctx.lower()
-    if re.search(r"clarification|question|enquir|query", low):
+_NOT_A_DEADLINE = re.compile(
+    r"(published|publication|posted|last (?:updated|modified|edited)|updated on|modified|printed|dispatch|"
+    r"date of notice|notice date|generated|accessed|copyright|created|issued on|date sent|sent on)[^.\n]{0,25}$", re.I)
+_EXPLICIT_LABEL = re.compile(r"(deadline|closing date|closes|close of|submission date|return date|no later than)", re.I)
+
+
+def _deadline_kind(ctx: str, before: str | None = None, iso: str = "", today: str = "") -> str:
+    """'submission' / 'clarification' / 'other' for a date found in page text.
+
+    Decided from the words just BEFORE the date (its label) when they are given, not from the whole
+    150-character window: a "Last updated 12 Nov 2026" next to the word "tender" used to count as a
+    new submission deadline and raised a false "date changed" alert every day (fix plan E1).
+    """
+    label = (before if before is not None else ctx).lower()
+    if _NOT_A_DEADLINE.search(label):
+        return "other"
+    if iso and today and iso == today and not _EXPLICIT_LABEL.search(label):
+        return "other"  # today's date is page chrome (crawl date, "as at") unless it is explicitly labelled
+    if re.search(r"clarification|question|enquir|query", label):
         return "clarification"
-    if re.search(r"tender|bid|submi|return|closing|deadline|expression of interest|response|quotation", low):
+    if re.search(r"tender|bid|submi|return|closing|close|deadline|expression of interest|response|quotation|received by", label):
         return "submission"
     return "other"
 
@@ -295,6 +312,7 @@ def _deadlines(texts: dict[str, str] | str, urls: dict[str, str] | None = None) 
     urls = urls or {}
     found: list[dict[str, str]] = []
     seen: set[str] = set()
+    today = datetime.now(timezone.utc).date().isoformat()
     for where, text in texts.items():
         for m in DATE_RE.finditer(text or ""):
             ctx = re.sub(r"\s+", " ", text[max(0, m.start() - 110): m.end() + 40]).strip()
@@ -304,7 +322,9 @@ def _deadlines(texts: dict[str, str] | str, urls: dict[str, str] | None = None) 
             if key in seen:
                 continue
             seen.add(key)
-            found.append({"date": m.group(0), "iso": _iso_date(m.group(0)), "kind": _deadline_kind(ctx),
+            iso = _iso_date(m.group(0))
+            before = re.sub(r"\s+", " ", text[max(0, m.start() - 80): m.start()])
+            found.append({"date": m.group(0), "iso": iso, "kind": _deadline_kind(ctx, before, iso, today),
                           "context": ctx, "found_in": where, "source_url": urls.get(where, "")})
             if len(found) >= 16:
                 return found

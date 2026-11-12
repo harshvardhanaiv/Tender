@@ -502,7 +502,9 @@ def fetch_find_tender_details(resource_id: str) -> dict[str, Any] | None:
             "contract_duration_in_months_or_years_including_any_options_and_renewals": duration_str,
             "end_of_clarification_period": "",
             "allow_suppliers_to_make_an_online_expression_of_interest": "",
-            "contract_awarded_in_lots": "Yes" if tender.get("lots") else "No",
+            # Find a Tender's OCDS carries one lot even for a tender that is not divided into lots, so a
+            # single entry is not evidence of lots (fix plan B3).
+            "contract_awarded_in_lots": "Yes" if len(tender.get("lots") or []) > 1 else "No",
             "eu_funding": "",
             "date_of_publication_invitation": _fmt_iso(release.get("date", "")),
             "ted_links_for_published_notices": "",
