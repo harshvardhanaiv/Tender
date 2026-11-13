@@ -12784,10 +12784,19 @@ async function runBidAssistant(isRefresh = false) {
     // A2: public documents on the notice count as buyer documents (the EEF brief is a public PDF).
     // M16: a fit check from the notice before credits are spent, alongside the public document lookup.
     const notCustom = _bidRow.source !== "custom";
-    const [publicDocs, fitCheck] = await Promise.all([
-      (!uploads.length && !pastedText && notCustom) ? fetchPublicTenderDocs(_bidRow) : Promise.resolve([]),
-      notCustom ? fetchBidCheck(_bidRow, $("bidCompanyProfileSelect")?.value || "") : Promise.resolve(null),
-    ]);
+    // N9: the 3-6 s fit check used to show nothing, so people clicked Generate again.
+    const _busyBtns = ["btnRunBidAssistant", "btnReRunBidAssistant"].map(id => $(id)).filter(Boolean);
+    const _busyText = _busyBtns.map(b => b.textContent);
+    _busyBtns.forEach(b => { b.disabled = true; b.textContent = "⏳ Checking fit…"; });
+    let publicDocs, fitCheck;
+    try {
+      [publicDocs, fitCheck] = await Promise.all([
+        (!uploads.length && !pastedText && notCustom) ? fetchPublicTenderDocs(_bidRow) : Promise.resolve([]),
+        notCustom ? fetchBidCheck(_bidRow, $("bidCompanyProfileSelect")?.value || "") : Promise.resolve(null),
+      ]);
+    } finally {
+      _busyBtns.forEach((b, i) => { b.disabled = false; b.textContent = _busyText[i]; });
+    }
     const pre = bidPreflight(_bidRow, uploads, pastedText, wbTitles, confirmedRecently,
                              { proposal: creditCostText("proposal"), download: creditCostText("download") },
                              isClosedTender(_bidRow), publicDocs, fitCheck);
@@ -13366,6 +13375,7 @@ function renderProposal(p, row) {
         <button type="button" class="pill bid-tab-btn" data-tab="tab-response" style="padding: 6px 12px; font-weight: 600; border-radius: 6px;">📝 Stage 3: Bid Draft</button>
         <button type="button" class="pill bid-tab-btn" data-tab="tab-clarifications" style="padding: 6px 12px; font-weight: 600; border-radius: 6px;">❓ Stage 4: Clarifications</button>
       </div>
+      <button id="btnDownloadProposalPdf" class="btn btn--small" title="PDF with a page count for each section" style="background-color: #fff; color: #1e3a8a; border: 1px solid #1e3a8a; padding: 7px 14px; font-size: 12px; border-radius: 6px; font-weight: 700; cursor: pointer; white-space: nowrap; flex: 0 0 auto;">Download PDF</button>
       <button id="btnDownloadFullProposalHeader" class="btn btn--small" style="background-color: #1e3a8a; color: #fff; border: none; padding: 7px 14px; font-size: 12px; border-radius: 6px; font-weight: 700; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 6px rgba(37,99,235,0.25); display: flex; align-items: center; gap: 6px; white-space: nowrap; flex: 0 0 auto; min-width: max-content;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         <span>Download Full Proposal (.docx)</span>
@@ -13374,6 +13384,14 @@ function renderProposal(p, row) {
   `;
 
   html += getDeadlinePassedBannerHtml(row);
+
+  // R1 / R2 / N5: what the bidder must know before submitting (also printed at the top of the downloaded draft).
+  if (p.needs_financial_upload) {
+    html += `<div style="margin:0 0 12px;padding:10px 14px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;font-size:12.5px;color:#78350f"><b>A heavily weighted question is financial.</b> Upload your financial model or P&amp;L (.xlsx or .csv, with "financial" or "P&amp;L" in the file name) under step 5 and re-run, so the figures replace the [NEEDS INPUT] gaps.</div>`;
+  }
+  if (p.writer_note) {
+    html += `<div style="margin:0 0 12px;padding:10px 14px;border:1px solid #cbd5e1;background:#f8fafc;border-radius:8px;font-size:12.5px;color:#0f172a;white-space:pre-line"><b>Bid writer's note</b> <span style="color:#64748b">(printed at the top of the download; remove before submission)</span>\n${esc(p.writer_note)}</div>`;
+  }
 
   // ----------------------------------------------------
   // Tab 1: Tender Dissection (Stage 1)
@@ -13423,7 +13441,7 @@ function renderProposal(p, row) {
             </tr>
             <tr>
               <td style="padding:8px; border:1px solid #e2e8f0; font-weight:600; background:#f8fafc">Submission Deadline</td>
-              <td style="padding:8px; border:1px solid #e2e8f0">${esc(submissionDeadlineText(d.submission_deadline))}</td>
+              <td style="padding:8px; border:1px solid #e2e8f0">${esc(p.deadline_display || submissionDeadlineText(d.submission_deadline))}</td>
             </tr>
           </tbody>
         </table>
@@ -13859,10 +13877,12 @@ function bidPortalSteps(row) {
 // What a full buyer pack usually holds, ticked against the uploaded file names.
 const _EXPECTED_DOCS = [
   ["Invitation / instructions (ITT, EOI or RFQ document)", /\bitt\b|invitation|instruction|\beoi\b|expression|\brfq\b|\brfp\b|tender doc|doc(?:ument)?\s*(?:no\.?\s*)?1\b/i],
-  ["Questionnaire or response template", /question|template|response|\bsq\b|method statement|doc(?:ument)?\s*(?:no\.?\s*)?4\b/i],
-  ["Specification / scope", /spec|scope|requirement|brief|heads of terms/i],
-  ["Pricing schedule or commercial terms", /pric|cost|commercial|financ|rate card|heads of terms/i],
-  ["Updates, addenda and clarification answers", /clarif|q\s*&\s*a|q and a|update|addend|message|amend|corrig/i],
+  // N7: a combined brief / ITT / RFI holds the instructions, questions, specification and fee requirements in one
+  // file, so one file name can tick several boxes. A spreadsheet is a price schedule or Q&A, not just a "spec".
+  ["Questionnaire or response template", /question|template|response|\bsq\b|method statement|doc(?:ument)?\s*(?:no\.?\s*)?4\b|\bbrief\b|\bitt\b|\brfi\b|\brfq\b|\brfp\b|invitation/i],
+  ["Specification / scope", /spec|scope|requirement|brief|heads of terms|terms of reference|\btor\b|volume\s*3|\bitt\b|\brfq\b/i],
+  ["Pricing schedule or commercial terms", /pric|cost|commercial|financ|rate card|heads of terms|\bfee|\bbrief\b|\bboq\b|bill of quantit|terms of reference|\btor\b|volume\s*3|\bxlsx?\b/i],
+  ["Updates, addenda and clarification answers", /clarif|q\s*&\s*a|q and a|\bq\s*a\b|questions? and answers|\brfi\b|update|addend|message|amend|corrig/i],
 ];
 
 // The "Before we write your bid" box (fix plan M15): expected documents, portal steps, deadline, past bids, cost.
@@ -13905,7 +13925,7 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
       ? `The stored deadline (${noticeDate(dl)}) has passed. If the buyer extended it, upload the update so the bid uses the new date.`
       : "This tender is marked as closed and the notice gives no deadline. If it is still open, upload the buyer's latest documents so the bid uses the right date.");
   } else if (hasDate && !custom) {
-    info.push(`Deadline we will use: ${noticeDate(dl)} (from the notice). A later date in the documents you upload replaces it - check it matches your portal.`);
+    info.push(`Deadline we will use: ${noticeDate(dl)} (from the notice, which gives no time zone). A later date in the documents you upload replaces it. The draft shows the deadline with the buyer's time zone and the UK time - check it matches your portal.`);
   }
   const hasClarFile = names.some(n => _EXPECTED_DOCS[4][1].test(n));
   if (!hasClarFile && !confirmedRecently && !custom) {
@@ -14039,7 +14059,7 @@ function creditCostText(kind) {
 function labelChargedDownloads() {
   const cost = creditCostText("download");
   if (!cost) return;
-  ["btnDownloadCoveringLetter", "btnDownloadFullProposal", "btnDownloadFullProposalHeader", "btnDownloadFullProposalS1",
+  ["btnDownloadCoveringLetter", "btnDownloadFullProposal", "btnDownloadFullProposalHeader", "btnDownloadProposalPdf", "btnDownloadFullProposalS1",
    "btnDownloadFullProposalS2", "btnDownloadFullProposalS4", "btnDownloadDissection", "btnDownloadChecklist",
    "btnDownloadClarifications"].forEach(id => {
     const b = $(id);
@@ -14055,6 +14075,7 @@ function wireBidResultButtons() {
   $("btnDownloadCoveringLetter")?.addEventListener("click", downloadCoveringLetterDoc);
   $("btnDownloadFullProposal")?.addEventListener("click", downloadFullProposalDoc);
   $("btnDownloadFullProposalHeader")?.addEventListener("click", downloadFullProposalDoc);
+  $("btnDownloadProposalPdf")?.addEventListener("click", downloadFullProposalPdf);
   $("btnDownloadFullProposalS1")?.addEventListener("click", downloadFullProposalDoc);
   $("btnDownloadFullProposalS2")?.addEventListener("click", downloadFullProposalDoc);
   $("btnDownloadFullProposalS4")?.addEventListener("click", downloadFullProposalDoc);
@@ -14606,7 +14627,8 @@ async function downloadCoveringLetterDoc() {
 async function downloadFullProposalDoc(btnElem = null) {
   if (!_bidRow || !_lastProposal?.bid_response) return;
   const title = _bidRow.title || "Unknown Tender";
-  const authority = _bidRow.contracting_authority || "Unknown Authority";
+  // N4: the buyer named in the buyer's own documents beats the notice's (a parent company, an agent).
+  const authority = _lastProposal.buyer_name || _bidRow.contracting_authority || "Unknown Authority";
   const companyName = _lastProposal.bid_company || _lastProposal.company || _bidRow.company || "[NEEDS INPUT: legal company name]";
 
   const r = _lastProposal.bid_response;
@@ -14684,7 +14706,8 @@ async function downloadFullProposalDoc(btnElem = null) {
           // Kept so the export QA gate can tell a cut-off or failed answer from a finished one.
           status: q.status || null,
           budget_words: q.budget_words || null,
-          word_limit: q.word_limit || null
+          word_limit: q.word_limit || null,
+          page_limit: q.page_limit || null
         })),
         technical_methodology: {
           content: applyPlaceholders(r.technical_methodology?.content || "")
@@ -14786,7 +14809,12 @@ async function downloadFullProposalDoc(btnElem = null) {
           gantt: _lastProposal?.gantt || { unit: _ganttUnit, phases: _ganttPhases },
           gantt_image_b64: ganttImageB64,
           tender_closed: Boolean(_lastProposal?.tender_closed),
-          format_requirements: _lastProposal?.dissection?.format_requirements || null
+          format_requirements: _lastProposal?.dissection?.format_requirements || null,
+          writer_note: _lastProposal?.writer_note || "",
+          dissection_rulings: {
+            clarification_rulings: _lastProposal?.dissection?.clarification_rulings || [],
+            published_clarifications: _lastProposal?.dissection?.published_clarifications || []
+          }
         })
       });
       if (!res.ok) {
@@ -14810,6 +14838,70 @@ async function downloadFullProposalDoc(btnElem = null) {
       resetButtons();
     }
   }, resetButtons);
+}
+
+// N6: PDF export with the page count of every section; a section over its page limit is named.
+async function downloadFullProposalPdf() {
+  if (!_bidRow || !_lastProposal?.bid_response) return;
+  const btn = $("btnDownloadProposalPdf");
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "Building PDF..."; }
+  try {
+    const r = _lastProposal.bid_response;
+    const title = _bidRow.title || "Tender";
+    const res = await fetch("/api/download-proposal-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        authority: _lastProposal.buyer_name || _bidRow.contracting_authority || "",
+        company_name: _lastProposal.bid_company || _lastProposal.company || _bidRow.company || "",
+        tender_closed: Boolean(_lastProposal.tender_closed),
+        writer_note: _lastProposal.writer_note || "",
+        dissection_rulings: {
+          clarification_rulings: _lastProposal.dissection?.clarification_rulings || [],
+          published_clarifications: _lastProposal.dissection?.published_clarifications || []
+        },
+        bid_response: {
+          document_title: applyPlaceholders(r.document_title || ""),
+          cover_letter: { content: applyPlaceholders(r.cover_letter?.content || "") },
+          itt_question_responses: (r.itt_question_responses || []).map(q => ({
+            question_number: q.question_number || "", question_text: q.question_text || "",
+            response: applyPlaceholders(q.response || ""), status: q.status || null,
+            budget_words: q.budget_words || null, word_limit: q.word_limit || null, page_limit: q.page_limit || null
+          })),
+          ...Object.fromEntries(["executive_summary", "understanding_of_requirements", "technical_methodology",
+            "relevant_experience", "team_and_personnel", "quality_and_compliance", "social_value", "pricing_notes",
+            "declarations"].map(k => [k, { content: applyPlaceholders(r[k]?.content || "") }]))
+        }
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error((err && err.error) || `PDF creation failed (HTTP ${res.status})`);
+    }
+    refreshCredits();
+    let counts = [];
+    try { counts = JSON.parse(res.headers.get("X-Page-Counts") || "[]"); } catch (e) { /* header optional */ }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_bid.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const over = counts.filter(c => c.over);
+    const summary = counts.filter(c => /^Question|Covering/.test(c.label)).map(c => `${c.label}: ${c.pages} p${c.limit ? "/" + c.limit : ""}`).join(", ");
+    if (over.length && typeof showToastError === "function") {
+      showToastError("Over the page limit: " + over.map(c => `${c.label} is ${c.pages} pages (limit ${c.limit})`).join("; "));
+    } else if (summary && typeof showToast === "function") {
+      showToast("PDF ready. Pages: " + summary);
+    }
+  } catch (err) {
+    showToastError("Failed to download PDF: " + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
 }
 
 async function downloadDissectionDoc() {

@@ -16,6 +16,8 @@ import re
 from typing import Any, Callable
 
 from tender_app.llm_json import parse_llm_json_checked
+from tender_app.bid_release4 import (limit_from_text as _limit_from_text,
+                                     find_ruling_conflicts as _find_ruling_conflicts)
 
 NEEDS_COMPANY = "[NEEDS INPUT: legal company name]"
 
@@ -126,7 +128,7 @@ def extract_questions(stage1: dict | None) -> list[dict]:
             "text": text,
             "weighting": "" if weight_raw is None else str(weight_raw),
             "weight_pct": _as_pct(weight_raw),
-            "word_limit": _as_int(q.get("word_limit")),
+            "word_limit": _as_int(q.get("word_limit")) or _limit_from_text(text),
             "page_limit": _as_int(q.get("page_limit")),
             "mandatory": bool(q.get("mandatory", True)),
         })
@@ -360,6 +362,7 @@ def write_question(call: Callable[[str, str, int], str], q: dict, prompt: str,
         "question_number": q["number"],
         "question_text": q["text"],
         "word_limit": q.get("word_limit"),
+        "page_limit": q.get("page_limit"),
         "weighting": q.get("weighting") or None,
         "budget_words": budget,
         "response": response,
@@ -656,7 +659,7 @@ _GENERATED_NAME = re.compile(r"(?<![Tt]he )(?<![Aa] )(?<![Aa]ny )(?<![Ee]ach )\b
 _EMAIL_FIELD = re.compile(r"\be-?mail\s*(?:address)?\s*[:\-]\s*([^\s,;()<>\[\]]+)", re.I)
 
 
-def qa_gate(bid_response: dict, closed: bool = False) -> dict:
+def qa_gate(bid_response: dict, closed: bool = False, rulings: list | None = None) -> dict:
     """Checks a draft before export. Returns {"issues": [...], "p0": n, "placeholders": n, "passed": bool}.
 
     P0 (blocks a clean export): a scored question missing, failed or cut off; a section that stops
@@ -729,6 +732,8 @@ def qa_gate(bid_response: dict, closed: bool = False) -> dict:
                 if dup_pairs <= 3:
                     add("duplication", "P1", f"{paras[a][0]} / {paras[b][0]}",
                         "A paragraph is repeated almost word for word.")
+    for _sec, _detail in _find_ruling_conflicts(rulings or [], bid_texts(r)):
+        add("ruling_conflict", "P0", _sec, _detail)
     if closed:
         add("status", "P1", "Whole bid", "The tender's stored deadline has passed.")
 

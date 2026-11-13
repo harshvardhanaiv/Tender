@@ -321,4 +321,26 @@ for part in ("word/document.xml", "word/header1.xml", "word/footer1.xml", "word/
     _md.parseString(z.read(part))
 ok(True, "every package part is well-formed XML")
 
+
+# Release 4: the writer's note in the .docx, grouped placeholders (R5), and the PDF export with page counts (N6)
+note_body = {"title": "Office cleaning", "authority": "Chemonics Group UK Limited", "company_name": "AIVHUB LTD",
+             "writer_note": "Advice: No-bid (fit 0/100). No print capability. Submission deadline: 23/11/2026 18:00 GMT+2 (16:00 UK time).",
+             "bid_response": {"cover_letter": {"content": "Dear Olha. " + "We write. " * 40},
+                              "itt_question_responses": [{"question_number": "1", "question_text": "Q", "status": "ok",
+                                                          "response": "Answer [CONFIRM: partner name] and [CONFIRM: partner name] again. " * 3}]},
+             "dissection_rulings": {"published_clarifications": [{"question": "VAT?", "answer": "Prices must exclude VAT."}]}}
+rn = client.post("/api/download-proposal", headers={"X-CSRF-Token": "t"}, json=note_body)
+zn = zipfile.ZipFile(io.BytesIO(rn.data))
+xn = zn.read("word/document.xml").decode("utf-8")
+ok("Bid writer&apos;s note (remove before submission)" in xn and "16:00 UK time" in xn, "docx opens with the bid writer's note")
+ok("[CONFIRM: partner name] x 6" in xn, "Appendix C groups the repeated placeholder with a count")
+try:
+    import pymupdf  # noqa: F401
+    rp = client.post("/api/download-proposal-pdf", headers={"X-CSRF-Token": "t"}, json=note_body)
+    import json as _json
+    pc = _json.loads(rp.headers.get("X-Page-Counts", "[]"))
+    ok(rp.status_code == 200 and rp.data[:4] == b"%PDF" and any(c["label"] == "Question 1" for c in pc), "PDF export with a page count per section")
+except ImportError:
+    print("  (PyMuPDF not installed here: PDF export check skipped)")
+
 print(f"bid_phase1_route_test: {PASSED} checks passed")

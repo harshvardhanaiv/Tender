@@ -6880,6 +6880,8 @@ requirements that are not clearly written. If something is ambiguous, you flag i
 Do deep research on all provided documents and sub-link pages. Ensure you target specific clauses, financial values, 
 security accreditations (like ISO, Cyber Essentials), exact deadlines, and technical specifications. Avoid generalities.
 
+Spreadsheets appear as "[Sheet: <name> | <kind>]" blocks. A price_schedule sheet lists the line items the bidder must price (name every item and quantity in the dissection); a clarifications sheet holds the buyer's published questions and answers and its answers OVERRIDE the original tender text (put them in published_clarifications and clarification_rulings). Ignore sheets that are clearly about a different project (leftover tabs) and never price them. The buyer's own documents decide the buyer's name, the addressee and the time zone of every deadline.
+
 You must return ONLY valid JSON. No preamble, no explanation, no markdown fences. Raw JSON only."""
 
     STAGE_1_USER = """Analyse the following tender documents in full and extract every structured 
@@ -6920,8 +6922,9 @@ use "NOT STATED" string where a field was expected but missing):
   "key_dates": [
     {{
       "event": "string — every dated step in the timetable other than the submission deadline, e.g. Expression of interest window, Sample deadline, Site visit, Bidder briefing, Selection questionnaire return, Award, Contract start",
-      "date": "string — DD/MM/YYYY, or a range DD/MM/YYYY - DD/MM/YYYY",
+      "date": "string — DD/MM/YYYY, or a range DD/MM/YYYY - DD/MM/YYYY (list every date given, e.g. both site-visit days)",
       "bidder_action": "boolean — true when the bidder had to do something by this date (register, express interest, send samples, attend)",
+      "contact": "string or null — who to book or send it to, if named, e.g. 'book with Susan Moore'",
       "source": "string — which document"
     }}
   ],
@@ -6958,6 +6961,22 @@ use "NOT STATED" string where a field was expected but missing):
       "source": "string — e.g. Clarification log 6 Nov, message 4.1"
     }}
   ],
+  "clarification_rulings": [
+    {{
+      "topic": "string — the rule the buyer changed or confirmed, e.g. VAT basis of prices, partial bids, installation, delivery phasing",
+      "ruling": "string — what the buyer now requires. A Q&A or clarification answer OVERRIDES the original tender text: if the Q&A corrects an earlier clause (e.g. 'prices must exclude VAT; the earlier wording was a clerical error') the ruling is the corrected rule",
+      "source": "string — which document or sheet"
+    }}
+  ],
+  "bid_addressee": "string or null — the person or team the buyer's own cover-letter template or instructions say the bid letter goes to, e.g. 'Olha Brusniak, Project Officer'. The issuing entity named in the buyer's documents (not the notice) is contracting_authority",
+  "required_submission_documents": [
+    {{
+      "name": "string — a document the bidder must submit, e.g. Technical offer, Commercial offer (price schedule), Annex 1 cover letter, DDQ, registration pack",
+      "kind": "string — technical / commercial / form / registration / other",
+      "separate_file": "boolean — true when the buyer wants it as its own file"
+    }}
+  ],
+  "separate_technical_commercial": "boolean — true when the buyer says technical and commercial offers must be submitted separately",
   "mandatory_requirements": [
     {{
       "requirement": "string — exact wording",
@@ -7753,6 +7772,13 @@ Return ONLY this JSON structure:
                                 "content": f"(Failed to parse: {str(e)})"
                             })
 
+                # R1: the bidder's own financial model / P&L, uploaded with the tender documents, is the bidder's data:
+                # the writers may take figures from it (it is not buyer text).
+                for _d in list(documents):
+                    if re.search(r"financ|p&l|p and l|profit|accounts|cash ?flow|forecast|projection|budget model", str(_d.get("name") or ""), re.I) \
+                            and "(uploaded by the user)" in str(_d.get("name") or ""):
+                        company_documents.append({"name": _d["name"].replace(" (uploaded by the user)", ""), "content": _d["content"]})
+
                 # Smart chunking - Pre-summarisation pass if combined size > 400,000 chars (~100k tokens)
                 total_len = sum(len(doc["content"]) for doc in documents)
                 if total_len > 400000:
@@ -7944,8 +7970,18 @@ Return ONLY this JSON structure:
                 else:
                     yield json.dumps({"status": "progress", "stage": 4, "message": "No questionnaire found in the documents: drafting a general outline... (Stage 4/5)"}) + "\n"
 
-                authority_name = authority or (stage1_result.get("contracting_authority") if isinstance(stage1_result, dict) else None) or "Contracting Authority"
-                greeting_target = f"Dear {authority_name} Procurement Team," if authority_name and "unknown" not in authority_name.lower() else "Dear Sir/Madam,"
+                # N4: the buyer's documents override the notice for the buyer's name and the addressee.
+                from tender_app.bid_release4 import (buyer_name as _buyer_name, addressee as _addressee,
+                                                     rulings_block as _rulings_block, rulings_list as _rulings_list,
+                                                     submission_structure_note as _structure_note,
+                                                     writer_note as _writer_note, deadline_display as _deadline_display)
+                authority_name = (_buyer_name(stage1_result if isinstance(stage1_result, dict) else {}, authority or "")
+                                  or "Contracting Authority")
+                _addr = _addressee(stage1_result if isinstance(stage1_result, dict) else {})
+                if _addr:
+                    greeting_target = f"Dear {_addr},"
+                else:
+                    greeting_target = f"Dear {authority_name} Procurement Team," if authority_name and "unknown" not in authority_name.lower() else "Dear Sir/Madam,"
 
                 _writer_key = _ai_key if (_ai_provider != "deepseek" or _ai_key) else DEEPSEEK_API_KEY
 
@@ -7977,11 +8013,21 @@ Return ONLY this JSON structure:
 PUBLISHED CLARIFICATION ANSWERS FROM THE BUYER:
 {clar_block}
 
+{_rulings_block(stage1_result if isinstance(stage1_result, dict) else {})}{_structure_note(stage1_result if isinstance(stage1_result, dict) else {})}
 COMPANY: {bid_company}
 COMPANY DATA: {company_structured_data}
 CHECKLIST STATUS: {checklist_status_summary}
 OPEN CLARIFICATION POINTS: {critical_clarifications_summary}
 {writer_notes}"""
+
+                # R1: a heavily weighted financial question needs the bidder's own model or P&L; ask for it.
+                _fin_re = re.compile(r"financ|business plan|budget|income|cash ?flow|viab|sustainab|revenue|profit|p ?& ?l", re.I)
+                _have_fin_file = any(re.search(r"\.(xlsx|xlsm|csv)\b|p&l|profit|financ|accounts", str(d.get("name") or ""), re.I)
+                                     for d in list(documents) + list(company_documents))
+                _needs_financials = bool(q_mode and not _have_fin_file and any(
+                    (q.get("weight_pct") or 0) >= 25 and _fin_re.search(q.get("text") or "") for q in questions))
+                if _needs_financials:
+                    yield json.dumps({"status": "progress", "stage": 4, "message": "A heavily weighted question is financial: upload your financial model or P&L (xlsx/csv, with 'financial' or 'P&L' in the file name) and re-run to replace the [NEEDS INPUT] gaps with real figures."}) + "\n"
 
                 section_writers = []
                 if q_mode:
@@ -8085,17 +8131,31 @@ Return ONLY valid JSON with no markdown fences:
                 })
 
                 def _run_writer_agent(w):
-                    try:
+                    from tender_app.bid_writer import ends_cleanly as _ends_cleanly
+
+                    def _once(tokens):
                         res = call_deepseek_stage(
                             system="You are a senior UK public-sector proposal writer. Return ONLY valid JSON.",
                             user=w["prompt"],
                             api_key=DEEPSEEK_API_KEY,
-                            max_tokens=w.get("max_tokens", 3000),
+                            max_tokens=tokens,
                             _provider=_ai_provider, _key=_ai_key, _model=_ai_model
                         )
-                        if isinstance(res, dict):
-                            return w["key"], res
-                        return w["key"], _parse_json_robust(str(res))
+                        return res if isinstance(res, dict) else _parse_json_robust(str(res))
+
+                    def _cut(res):
+                        # A section that stops mid-sentence hit the token limit (Chemonics "Declarations").
+                        return isinstance(res, dict) and any(
+                            isinstance(v, dict) and str(v.get("content") or "").strip() and not _ends_cleanly(str(v["content"]))
+                            for v in res.values())
+                    try:
+                        base = int(w.get("max_tokens", 3000))
+                        res = _once(base)
+                        if _cut(res):
+                            retry = _once(int(base * 1.8))
+                            if isinstance(retry, dict) and not _cut(retry):
+                                res = retry
+                        return w["key"], res
                     except Exception as w_err:
                         print(f"Writer {w['name']} error: {w_err}")
                         return w["key"], {}
@@ -8183,7 +8243,7 @@ Return ONLY valid JSON with no markdown fences:
                         "placeholder_text": ph["tag"],
                         "what_bidder_must_provide": ph["tag"].strip("[]"),
                     })
-                qa_report = qa_gate(stage3_result, closed=tender_closed)
+                qa_report = qa_gate(stage3_result, closed=tender_closed, rulings=_rulings_list(stage1_result))
                 for issue in identity_issues:
                     qa_report["issues"].append({"check": "identity", "severity": "P1", "section": "Company profile",
                                                 "detail": f"Profile field: {issue}. It was left out of the bid; correct it in your profile."})
@@ -8257,6 +8317,10 @@ Return ONLY valid JSON with no markdown fences:
                     "bid_decision": bid_decision,
                     "stage_warnings": passed_stages,
                     "effective_deadline": effective_deadline.strftime("%d/%m/%Y") if effective_deadline else "",
+                    "deadline_display": _deadline_display(stage1_result),
+                    "buyer_name": authority_name,
+                    "writer_note": _writer_note(bid_decision, passed_stages, stage1_result, tender_closed),
+                    "needs_financial_upload": _needs_financials,
                     "docs_used": doc_names,
                     "docs_unreadable": docs_failed,
                     "docs_cut": docs_cut,
@@ -8592,6 +8656,60 @@ Return ONLY valid JSON with no markdown fences:
         return send_file(io.BytesIO(data), as_attachment=True, download_name=f"{safe}_financial_model.xlsx",
                          mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+    @app.post("/api/download-proposal-pdf")
+    @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection)
+    def api_download_proposal_pdf():
+        """The bid as a PDF with a page count per section (QA scorecard N6). Same charge as a .docx download."""
+        from datetime import datetime
+        from tender_app.bid_pdf import build_pdf, text_to_html
+        from tender_app.bid_writer import qa_gate as _qa_gate, SECTION_LABELS
+        from tender_app.bid_release4 import rulings_list as _rl
+        import html as _html
+        body = request.get_json(silent=True) or {}
+        title = str(body.get("title") or "Tender bid")
+        authority = str(body.get("authority") or "")
+        company_name = str(body.get("company_name") or "").strip() or "[NEEDS INPUT: legal company name]"
+        bid = body.get("bid_response") or {}
+        rulings = _rl(body.get("dissection_rulings") or {})
+        qa = _qa_gate(bid, closed=bool(body.get("tender_closed")), rulings=rulings)
+        e = _html.escape
+        front = (f"<h1>{e(str(bid.get('document_title') or 'Tender bid response'))}</h1>"
+                 f"<p>Prepared for: {e(authority)}</p><p>Prepared by: {e(company_name)}</p>"
+                 f"<p>Date: {datetime.now().strftime('%d/%m/%Y')}</p>"
+                 + ('<p class="note">DRAFT - NOT READY TO SUBMIT. Fix before you submit:</p>' + "".join(
+                     f"<p>- {e(i['section'])}: {e(i['detail'])}</p>" for i in qa["issues"] if i["severity"] == "P0")
+                    if not qa.get("passed", True) else ""))
+        sections: list = []
+        note = str(body.get("writer_note") or "").strip()
+        if note:
+            sections.append({"label": "Bid writer's note (remove before submission)",
+                             "html": "<h2>Bid writer's note (remove before submission)</h2>" + text_to_html(note)})
+        cl = (bid.get("cover_letter") or {}).get("content") if isinstance(bid.get("cover_letter"), dict) else ""
+        if cl:
+            sections.append({"label": "Covering letter", "html": "<h2>Covering letter</h2>" + text_to_html(cl)})
+        for idx, q in enumerate(bid.get("itt_question_responses") or []):
+            if not isinstance(q, dict):
+                continue
+            num = q.get("question_number") or str(idx + 1)
+            sections.append({
+                "label": f"Question {num}", "page_limit": q.get("page_limit"),
+                "html": f"<h2>Question {e(str(num))}</h2><p class=\"q\">{e(str(q.get('question_text') or ''))}</p>"
+                        + text_to_html(str(q.get("response") or ""))})
+        for key, label in SECTION_LABELS[1:]:
+            obj = bid.get(key)
+            if isinstance(obj, dict) and str(obj.get("content") or "").strip():
+                sections.append({"label": label, "html": f"<h2>{e(label)}</h2>" + text_to_html(obj["content"])})
+        try:
+            data, counts = build_pdf(title, sections, front)
+        except Exception as ex:  # noqa: BLE001
+            print("[pdf export] failed:", ex)
+            return jsonify({"error": "Could not build the PDF. Download the .docx instead."}), 500
+        safe = re.sub(r"[^A-Za-z0-9]+", "_", title).strip("_")[:50] or "tender"
+        resp = send_file(io.BytesIO(data), as_attachment=True, download_name=f"{safe}_bid.pdf", mimetype="application/pdf")
+        resp.headers["X-Page-Counts"] = json.dumps(counts)[:7000]
+        resp.headers["Access-Control-Expose-Headers"] = "X-Page-Counts"
+        return resp
+
     @app.post("/api/download-proposal")
     @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection)
     def api_download_proposal():
@@ -8609,7 +8727,9 @@ Return ONLY valid JSON with no markdown fences:
         # Export QA gate (fix plan M10): a draft that fails a P0 check still downloads, but the document
         # says so on its first page and lists what to fix, so it cannot pass for a finished bid.
         from tender_app.bid_writer import qa_gate as _qa_gate, PLACEHOLDER_RE as _PH_RE
-        export_qa = _qa_gate(bid_response, closed=bool(body.get("tender_closed")))
+        from tender_app.bid_release4 import rulings_list as _export_rulings, group_placeholders as _group_ph
+        export_qa = _qa_gate(bid_response, closed=bool(body.get("tender_closed")),
+                             rulings=_export_rulings(body.get("dissection_rulings") or {}))
         checklist = body.get("checklist") or bid_response.get("checklist") or []
         clarifications = body.get("clarifications") or bid_response.get("clarification_questions") or bid_response.get("clarifications") or []
         methodology_diagram = body.get("methodology") or bid_response.get("methodology") or {}
@@ -8792,6 +8912,14 @@ Return ONLY valid JSON with no markdown fences:
         xml_content.append('    </w:p>')
 
         add_page_break()
+
+        # R2/R3/N5/N8: the bid writer's note: fit advice, dates already passed, the buyer's clarification route,
+        # the deadline with its time zone and the dated actions. For the bidder, not the buyer.
+        _writer_note_text = str(body.get("writer_note") or "").strip()
+        if _writer_note_text:
+            add_heading("Bid writer's note (remove before submission)", size=32, color="B45309")
+            add_paragraphs(_writer_note_text)
+            add_page_break()
 
         # ----------------------------------------------------
         # 2. Table of Contents
@@ -9577,6 +9705,10 @@ Return ONLY valid JSON with no markdown fences:
                         "tag": f"[PLACEHOLDER_NEEDED: {doc_name}]",
                         "action": f"Obtain and attach required {c_type} document: '{doc_name}'"
                     })
+
+        # R5: the same placeholder repeated across sections is listed once with a count and where it appears,
+        # e.g. "[CONFIRM: partner name] x 31", so the to-do list is short enough to work through.
+        placeholders_found = _group_ph(placeholders_found)
 
         if placeholders_found:
             xml_content.append('    <w:tbl>')

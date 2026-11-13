@@ -99,6 +99,9 @@ def _extract_bytes(data: bytes, filename: str, *, max_chars: int = 15_000) -> st
         return _pdf_text(data)[:max_chars]
     if ext in _DOCX_EXTS:
         return _docx_text(data)[:max_chars]
+    if ext in (".xlsx", ".xlsm"):
+        from .xlsx_text import xlsx_to_text
+        return xlsx_to_text(data, max_chars=max_chars)
     if ext in _TEXT_EXTS:
         return data.decode("utf-8", errors="ignore")[:max_chars]
     # Unknown — try UTF-8 decode as last resort

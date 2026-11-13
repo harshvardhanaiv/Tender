@@ -763,8 +763,11 @@ body.tf-shell #bidModal .bid-modal-header__subtitle { font-size: 12px !important
 body.tf-shell #bidModal .bid-modal-header__close, body.tf-shell #analyseModal #btnCloseModal { width: 30px; height: 30px; border-radius: 9px !important; border: 1px solid var(--pg-line) !important; background: var(--pg-card) !important; color: var(--pg-ink) !important; font-size: 15px; line-height: 1; display: flex; align-items: center; justify-content: center; padding: 0; margin-left: auto; }
 
 /* bid assistant: one-line step cards */
-body.tf-shell #bidModal .bid-modal-content { padding: 16px 20px 8px !important; overflow-y: auto; flex: 0 1 auto; }
-body.tf-shell #bidModal .bid-step-card { border: 1px solid var(--pg-line) !important; border-radius: 12px !important; background: var(--pg-card) !important; box-shadow: none !important; margin: 0 0 8px !important; overflow: hidden; }
+/* setup cards keep their own height (never squeezed to slivers by a long result); the result below scrolls instead */
+body.tf-shell #bidModal .bid-modal-content { padding: 16px 20px 8px !important; overflow-y: auto; flex: 0 0 auto; max-height: 34vh; min-height: 120px; }
+/* one "Download Full Proposal" button (the header one); the per-stage copies only repeated it */
+body.tf-shell #bidModal :is(#btnDownloadFullProposalS1, #btnDownloadFullProposalS2, #btnDownloadFullProposalS4) { display: none !important; }
+body.tf-shell #bidModal .bid-step-card { flex: 0 0 auto !important; min-height: 46px;border: 1px solid var(--pg-line) !important; border-radius: 12px !important; background: var(--pg-card) !important; box-shadow: none !important; margin: 0 0 8px !important; overflow: hidden; }
 body.tf-shell #bidModal .bid-step-header { padding: 10px 12px !important; min-height: 0; }
 body.tf-shell #bidModal .bid-step-badge { width: 22px; height: 22px; border-radius: 50% !important; background: var(--pg-gold-soft) !important; color: #6B4A00 !important; font-size: 12px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; }
 body.tf-shell #bidModal .bid-step-title { font-size: 13.5px; font-weight: 700; color: var(--pg-ink); }
