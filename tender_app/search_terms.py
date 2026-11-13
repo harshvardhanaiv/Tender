@@ -44,7 +44,24 @@ def split_terms(query: str | None, limit: int = MAX_TERMS) -> list[str]:
     return seen
 
 
+_TERM_STOP = {"and", "the", "of", "for", "to", "a", "an", "in", "on", "at", "by", "with", "or"}
+
+
+def term_matches(term: str, hay: str) -> bool:
+    """A term matches when it appears as written, or when every meaningful word of it starts a word in the text.
+    "EEF Digital Public Service" finds "...the EEF&#039;s Digital Public Service" (fix plan H5: the notice was
+    missing from its own title search), and "print and signage" finds "Print & Signage" (R11)."""
+    if not term:
+        return True
+    if re.search(r"(?<![a-z0-9])" + re.escape(term), hay):  # as written, starting a word ("eef" is not in "beef")
+        return True
+    words = [w for w in re.findall(r"[a-z0-9]+", term.lower().replace("&", " and ")) if w not in _TERM_STOP]
+    if not words:
+        return False
+    return all(re.search(r"(?<![a-z0-9])" + re.escape(w), hay) for w in words)
+
+
 def matched_terms(terms: list[str], *texts: str) -> list[str]:
     """The terms that appear in any of the texts."""
     hay = " ".join(t for t in texts if t).lower()
-    return [t for t in terms if t in hay]
+    return [t for t in terms if term_matches(t, hay)]

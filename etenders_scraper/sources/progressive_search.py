@@ -136,6 +136,34 @@ def is_invalid_tender_row(row: dict, query: str = "") -> bool:
 
 
 
+# Portals whose own keyword search returns loosely related notices (fix plan H5: 50 unrelated Public Contracts
+# Scotland results for "Matthewsgreen", 112 for EEF's title words). Their rows must contain a query word.
+LOOSE_MATCH_SOURCES = {"pcs"}
+_QUERY_STOP = {"and", "the", "for", "with", "from", "into", "of", "to", "in", "on", "at", "by", "a", "an", "or",
+               "services", "service", "contract", "contracts", "tender", "tenders", "provision", "supply", "framework",
+               "lot", "dps", "uk", "new"}
+
+
+def query_terms(query: str) -> list[str]:
+    q = (query or "").strip().lower()
+    if not q or q == "all":
+        return []
+    q = re.sub(r"^(?:supplier|winner|contractor|buyer|authority|title):\s*", "", q)
+    q = q.replace("&", " and ")
+    return [w for w in re.findall(r"[a-z0-9]+", q) if len(w) >= 3 and w not in _QUERY_STOP]
+
+
+def matches_query(row: dict, query: str) -> bool:
+    """True when the row mentions a meaningful word of the query (or the query has none). "&" counts as "and"."""
+    terms = query_terms(query)
+    if not terms:
+        return True
+    hay = " ".join(str(row.get(k) or "") for k in ("title", "description", "contracting_authority", "cpv", "cpv_codes",
+                                                   "reference", "resource_id")).lower().replace("&", " and ")
+    words = set(re.findall(r"[a-z0-9]+", hay))
+    return any(t in words or (len(t) >= 5 and t in hay) for t in terms)
+
+
 @dataclass
 class SearchJob:
     job_id: str
@@ -194,7 +222,7 @@ def _fetch_source_first_page(
         def one(term: str):
             n: dict[str, Any] = {}
             sub_notes[term] = n
-            return _fetch_source_first_page_one(source_id, cfg, term, n)
+            return _fetch_one_with_variant(source_id, cfg, term, n)
 
         fanned = fan_out_terms(keyword, one)
         if fanned is not None:
@@ -208,7 +236,31 @@ def _fetch_source_first_page(
             errs = [r[2] for _, r in good if r[2]] + [str(r) for _, r in fanned if isinstance(r, Exception)]
             hints = [r[3] for _, r in good if r[3] is not None]
             return source_id, merge_term_rows([(t, r[1]) for t, r in good]), (errs[0] if errs and not any(r[1] for _, r in good) else None), (sum(hints) if hints else None)
-    return _fetch_source_first_page_one(source_id, cfg, keyword, notes)
+    return _fetch_one_with_variant(source_id, cfg, keyword, notes)
+
+
+def ampersand_variant(term: str) -> str | None:
+    """"Print and Signage" <-> "Print & Signage": portals match titles literally (fix plan R11)."""
+    t = term or ""
+    if "&" in t:
+        return re.sub(r"\s*&\s*", " and ", t).strip()
+    if re.search(r"\band\b", t, re.I):
+        return re.sub(r"\s+and\s+", " & ", t, flags=re.I).strip()
+    return None
+
+
+def _fetch_one_with_variant(source_id: str, cfg: dict[str, str], keyword: str, notes: dict[str, Any] | None = None):
+    """One portal query; if it finds nothing and the keyword has "&" or "and", try the other spelling once."""
+    sid, rows, err, hint = _fetch_source_first_page_one(source_id, cfg, keyword, notes)
+    alt = ampersand_variant(keyword) if not rows else None
+    if alt and alt != keyword:
+        try:
+            sid2, rows2, err2, hint2 = _fetch_source_first_page_one(source_id, cfg, alt, notes)
+            if rows2:
+                return sid2, rows2, err2, hint2
+        except Exception:  # noqa: BLE001 - the first answer stands
+            pass
+    return sid, rows, err, hint
 
 
 def _fetch_source_first_page_one(
@@ -429,6 +481,8 @@ def _update_job_portal(
 ) -> None:
     # Filter out fake / error / synthetic rows before updating job state
     batch = [r for r in batch if not is_invalid_tender_row(r, job.query)]
+    if source_id in LOOSE_MATCH_SOURCES:
+        batch = [r for r in batch if matches_query(r, job.query)]
     for row in batch:
         enrich_deadline_fields(row)
     batch.sort(key=_sort_key)
@@ -824,7 +878,14 @@ def job_snapshot(job: SearchJob) -> tuple[list[dict[str, Any]], dict[str, Any], 
         rows = list(job.rows)
         meta = {k: v for k, v in job.meta.items() if not k.startswith("_")}
         meta["portal_results"] = build_portal_results(job.meta, rows, _sources_for_scope(job.scope))
-        return rows, meta, job.status
+        status = job.status
+    # The same tender on two portals is linked, so a stale "Closed" on one shows the other's later date (A1).
+    from etenders_scraper.sources.notice_links import link_same_tender
+    try:
+        rows = link_same_tender(rows)
+    except Exception:  # noqa: BLE001 - linking is a nicety; never break the search on it
+        pass
+    return rows, meta, status
 
 
 def stop_all_search(job_id: str) -> bool:

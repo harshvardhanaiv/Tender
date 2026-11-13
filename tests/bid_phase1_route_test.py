@@ -35,6 +35,8 @@ class FakeCursor:
             self._one = ("member",)
         elif "from credit_wallet" in s and "select" in s:
             self._one = (500,) if "balance" in s else None
+        elif "select id, name, profile_text, meta_json from company_profiles" in s:
+            self._one = (1, "AIVHUB", "AIVHUB builds AI and data platforms.", json.dumps({"org_name": "AIVHUB LTD"}))
         elif "from company_profiles" in s:
             self._one = (json.dumps({"org_name": "AIVHUB LTD", "contact_name": "Hemant [Surname]",
                                      "email": "mahendra.aivhub.com", "phone": "0118 000000"}),)
@@ -100,6 +102,10 @@ STAGE1 = {
 }
 
 PROMPTS: list[str] = []
+STAGE1_NOW: dict = {}
+DECISION = {"value": {"verdict": "Bid", "summary": "Runs community venues.", "criteria": [
+    {"criterion": "Quality", "weight": 70, "rating": "strong", "evidence": "runs two venues"}],
+    "mandatory": [], "capability_gaps": [], "partner_for": []}}
 FAIL = {"on": False}
 
 
@@ -108,7 +114,9 @@ def fake_chat(system="", user="", max_tokens=4000, temperature=0.3, response_for
     if FAIL["on"] and "Analyse the following tender documents" in user:
         raise RuntimeError("model unavailable")
     if "Analyse the following tender documents" in user:
-        return json.dumps(STAGE1)
+        return json.dumps(STAGE1_NOW.get("value") or STAGE1)
+    if "should bid for this tender" in user:
+        return json.dumps(DECISION["value"])
     if "submission checklist" in user:
         return json.dumps({"checklist_items": [{"id": 1, "item_name": "EOI form", "status_flag": "MANDATORY"}]})
     if "clarification questions this bidder should submit" in user:
@@ -189,6 +197,10 @@ ok(all("European bank" not in x for x in q_prompts), "off-sector Answer Bank ent
 ok(all("mahendra.aivhub.com" not in x and "[Surname]" not in x for x in q_prompts), "invalid identity never reaches a prompt")
 ok(any("Left out 1 Answer Bank entry" in e.get("message", "") for e in events), "user told about the dropped entry")
 ok(CHARGES == [("charge", server.CREDIT_COST_PROPOSAL)], f"charged once ({CHARGES})")
+ok(p["bid_decision"]["verdict"] == "Bid" and p["bid_decision"]["fit_score"] == 100 and p["stage_warnings"] == [],
+   f"bid decision in the payload ({p.get('bid_decision')})")
+ok(any("Advice: Bid (fit 100/100)" in e.get("message", "") for e in events), "user sees the advice while drafting")
+ok(any("clarification questions this bidder should submit" in x for x in PROMPTS), "clarifications asked while the window is open")
 
 # Failure: credits come back.
 CHARGES.clear()
@@ -199,6 +211,30 @@ err = [e for e in events if e.get("status") == "error"]
 ok(err and err[0].get("refunded") is True, "error event says refunded")
 ok(CHARGES == [("charge", server.CREDIT_COST_PROPOSAL), ("refund", server.CREDIT_COST_PROPOSAL)], f"refunded ({CHARGES})")
 FAIL["on"] = False
+
+# M16 / R9 / G6 / R10: a print tender for a data company, with the clarification and EOI windows already closed.
+PROMPTS.clear()
+STAGE1_NOW["value"] = dict(STAGE1, tender_title="Print & Signage DPS Lot 2", notice_type="Invitation to tender",
+                           clarification_deadline={"date": "11/11/2020", "method": "In-Tend"},
+                           key_dates=[{"event": "Expression of interest window", "date": "01/11/2020 - 04/11/2020", "bidder_action": True},
+                                      {"event": "Contract award", "date": "01/01/2021", "bidder_action": False}])
+DECISION["value"] = {"verdict": "Bid", "summary": "Some overlap.", "criteria": [
+    {"criterion": "Print capability", "weight": 60, "rating": "none", "evidence": "none found"},
+    {"criterion": "Account management", "weight": 40, "rating": "partial", "evidence": "BI dashboards"}],
+    "mandatory": [{"requirement": "Own print production plant", "status": "not met", "note": "a BI company"}],
+    "capability_gaps": ["owns no print production equipment"], "partner_for": []}
+events = run(dict(body, tender=dict(body["tender"], resource_id="custom-test-3", title="Print & Signage")))
+p3 = [e for e in events if e.get("status") == "complete"][0]["proposal"]
+ok(p3["bid_decision"]["verdict"] == "No-bid" and p3["bid_decision"]["fit_score"] == 20, f"unmet mandatory + low fit -> No-bid ({p3['bid_decision']})")
+ok([w["kind"] for w in p3["stage_warnings"]] == ["clarification", "eoi"], f"passed stages found ({p3['stage_warnings']})")
+ok(not any("clarification questions this bidder should submit" in x for x in PROMPTS), "no clarification call after the window closed (G6)")
+ok(p3["clarifications"]["questions"] == [] and "has passed" in p3["clarifications"]["strategic_notes"], "and the notes say why")
+q3 = [x for x in PROMPTS if "Write the answer to ONE question" in x]
+ok(q3 and all("owns no print production equipment" in x and "Never offer an unrelated product" in x for x in q3), "capability gaps reach every answer (R9)")
+ok(all("Expression of interest window: 04/11/2020" in x for x in q3), "writers told which stages passed")
+chk = {(i["check"], i["severity"]) for i in p3["qa_report"]["issues"]}
+ok(("bid_decision", "P1") in chk and ("stage_passed", "P1") in chk and ("stage_passed", "P2") in chk, f"export check lists them ({chk})")
+STAGE1_NOW.clear()
 
 # Export: QA banner and dynamic TOC in the .docx.
 import io  # noqa: E402
@@ -219,5 +255,70 @@ r = client.post("/api/download-proposal", headers={"X-CSRF-Token": "t"}, json={"
 xml = zipfile.ZipFile(io.BytesIO(r.data)).read("word/document.xml").decode("utf-8")
 ok("DRAFT - NOT READY TO SUBMIT" not in xml, "clean draft has no banner")
 ok("utilisation ramp" in xml.split("Appendix C")[-1], "Appendix C lists [NEEDS INPUT] items")
+# G5: a stored Gantt must not add a "Technical Methodology" section to a questionnaire bid
+gantt = {"unit": "weeks", "phases": [{"id": 1, "label": "Mobilise", "start": 1, "duration": 2}]}
+r = client.post("/api/download-proposal", headers={"X-CSRF-Token": "t"}, json={"title": "Matthewsgreen", "authority": "Wokingham", "company_name": "AIVHUB LTD",
+                                                 "bid_response": br, "gantt": gantt, "checklist": [], "clarifications": []})
+xml = zipfile.ZipFile(io.BytesIO(r.data)).read("word/document.xml").decode("utf-8")
+ok(r.status_code == 200 and "Technical Methodology" not in xml, "questionnaire bid + Gantt -> no methodology section")
+legacy = {"cover_letter": {"content": "Dear Sir/Madam, please find our response."}, "executive_summary": {"content": "We will deliver."}}
+r = client.post("/api/download-proposal", headers={"X-CSRF-Token": "t"}, json={"title": "Office cleaning", "authority": "X", "company_name": "AIVHUB LTD",
+                                                 "bid_response": legacy, "gantt": gantt, "checklist": [], "clarifications": []})
+xml = zipfile.ZipFile(io.BytesIO(r.data)).read("word/document.xml").decode("utf-8")
+ok("Technical Methodology" in xml, "a non-questionnaire bid keeps its Gantt section")
+# M13: case studies and references go to an appendix when the buyer's format rules ask for appendices
+br_cs = dict(br, itt_question_responses=list(br["itt_question_responses"]) + [
+    {"question_number": "Case studies", "question_text": "Please share case studies of relevant projects.", "response": "No case studies are held.", "status": "ok"},
+    {"question_number": "References", "question_text": "Please share references.", "response": "No references are held.", "status": "ok"}])
+rr = client.post("/api/download-proposal", headers={"X-CSRF-Token": "t"}, json={"title": "EEF", "authority": "EEF", "company_name": "AIVHUB LTD",
+                 "bid_response": br_cs, "checklist": [], "clarifications": [], "format_requirements": {"case_studies_and_appendices": "Case studies as appendices"}})
+xml_cs = zipfile.ZipFile(io.BytesIO(rr.data)).read("word/document.xml").decode("utf-8")
+main_part, _, appx = xml_cs.partition("Appendix D: Case Studies and References</w:t>")
+ok("Appendix D: Case Studies and References" in xml_cs and "No case studies are held." in xml_cs.split("Appendix D: Case Studies and References</w:t>")[-1]
+   and "No case studies are held." not in xml_cs.split("Appendix A: Document Submission Checklist</w:t>")[0], "case studies and references moved to Appendix D")
+rr = client.post("/api/download-proposal", headers={"X-CSRF-Token": "t"}, json={"title": "EEF", "authority": "EEF", "company_name": "AIVHUB LTD",
+                 "bid_response": br_cs, "checklist": [], "clarifications": []})
+xml_plain = zipfile.ZipFile(io.BytesIO(rr.data)).read("word/document.xml").decode("utf-8")
+ok("Appendix D" not in xml_plain and "No case studies are held." in xml_plain, "no appendix request: answers stay in Section 2")
+
+# M16 before credits: the free fit check from the notice, cached
+PROMPTS.clear()
+CHARGES.clear()
+DECISION["value"] = {"verdict": "No-bid", "summary": "No print capability.", "criteria": [{"criterion": "Print", "weight": 100, "rating": "none"}],
+                     "mandatory": [], "capability_gaps": ["owns no print presses"], "partner_for": []}
+bc_body = {"tender": {"source": "find_tender", "resource_id": "BC-1", "title": "Print & Signage DPS", "description": "Litho and digital print of college prospectuses, signage and banners, with storage and distribution to campuses across Cornwall. Suppliers must own print production plant and hold FSC chain of custody."}, "profile_id": 1}
+rr = client.post("/api/bid-check", headers={"X-CSRF-Token": "t"}, json=bc_body)
+ok(rr.status_code == 200 and rr.get_json()["decision"]["verdict"] == "No-bid" and rr.get_json()["decision"]["fit_score"] == 0, f"bid check works ({rr.status_code} {rr.data[:200]})")
+ok(any("Only the public notice is available" in x for x in PROMPTS) and CHARGES == [], "notice-only prompt, no credits charged")
+rr = client.post("/api/bid-check", headers={"X-CSRF-Token": "t"}, json=bc_body)
+ok(rr.get_json().get("cached") is True and sum("should bid for this tender" in x for x in PROMPTS) == 1, "second check served from cache")
+
+thin = client.post("/api/bid-check", headers={"X-CSRF-Token": "t"}, json={"tender": {"source": "zz_none", "resource_id": "T-1", "title": "X",
+                    "description": "UK Contracts Finder public notice #ocds-1."}, "profile_id": 1})
+ok(thin.status_code == 200 and thin.get_json()["decision"] is None and "too little detail" in thin.get_json()["note"], "a stand-in notice is not judged")
+
+# M8: the financial model download
+try:
+    import openpyxl  # noqa: F401
+    rr = client.post("/api/download-financial-model", headers={"X-CSRF-Token": "t"}, json={
+        "title": "Matthewsgreen", "company_name": "AIVHUB LTD", "bid_response": br,
+        "dissection": {"special_conditions": ["Sinking fund: operator contributes GBP 2,500 per annum."]}})
+    wb = openpyxl.load_workbook(io.BytesIO(rr.data))
+    cells = [c for row in wb["Inputs"].iter_rows(values_only=True) for c in row]
+    ok(rr.status_code == 200 and 2500 in cells and any(isinstance(c, str) and "utilisation ramp" in c for c in cells),
+       "model has the buyer's sinking fund and the answer's gaps")
+except ImportError:
+    print("  (openpyxl not installed here: model download check skipped)")
+
+# M13: title and date in the header, "Page X of Y" in the footer, on every page
+z = zipfile.ZipFile(io.BytesIO(r.data))
+hdr, ftr = z.read("word/header1.xml").decode("utf-8"), z.read("word/footer1.xml").decode("utf-8")
+rels, ctypes = z.read("word/_rels/document.xml.rels").decode("utf-8"), z.read("[Content_Types].xml").decode("utf-8")
+ok("Office cleaning | AIVHUB LTD |" in hdr and " PAGE " in ftr and " NUMPAGES " in ftr, "header and Page X of Y footer")
+ok('r:id="rIdHdr1"' in xml and "header1.xml" in rels and "footer+xml" in ctypes, "header/footer wired into the package")
+import xml.dom.minidom as _md  # noqa: E402
+for part in ("word/document.xml", "word/header1.xml", "word/footer1.xml", "word/_rels/document.xml.rels", "[Content_Types].xml"):
+    _md.parseString(z.read(part))
+ok(True, "every package part is well-formed XML")
 
 print(f"bid_phase1_route_test: {PASSED} checks passed")

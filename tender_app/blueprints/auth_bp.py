@@ -150,7 +150,7 @@ def api_me():
     username = session.get("username", "")
     from tender_app.credits import get_balance
     from tender_app.billing import get_billing_status
-    from tender_app.config import LOW_CREDIT_THRESHOLD, ADMIN_EMAILS
+    from tender_app.config import LOW_CREDIT_THRESHOLD, ADMIN_EMAILS, CREDIT_COST_PROPOSAL, CREDIT_COST_AI_DOWNLOAD
 
     conn = _get_db()
     try:
@@ -177,6 +177,8 @@ def api_me():
         "email": session.get("email", username),
         "balance": balance,
         "low_credit": balance <= LOW_CREDIT_THRESHOLD,
+        # What the bid actions cost, so the buttons can say so before credits are spent (fix plan R6).
+        "costs": {"proposal": CREDIT_COST_PROPOSAL, "download": CREDIT_COST_AI_DOWNLOAD},
         "plan": billing.get("plan", "free"),
         "subscription_status": billing.get("status", "trialing"),
         "has_stripe_customer": billing.get("has_stripe_customer", False),

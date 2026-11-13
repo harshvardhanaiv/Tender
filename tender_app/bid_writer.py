@@ -28,7 +28,11 @@ GROUNDING_RULES = """GROUNDING RULES (these override any other instruction):
 6. Statements about the buyer, the site or the contract must come from the tender documents or the published clarification answers. Use the buyer's names and spellings exactly as they appear in the latest documents.
 7. Where the buyer has published a clarification answer, use it in the bid; never ask the buyer that question again.
 8. Past winning bids show structure and tone only. Never copy their figures, partner names, dates or commitments.
-9. Plain UK English, active voice, short paragraphs. No empty superlatives (world-class, cutting-edge, unique, robust, best-in-class)."""
+9. Plain UK English, active voice, short paragraphs. No empty superlatives (world-class, cutting-edge, unique, robust, best-in-class).
+10. Never say the bidder has already done something - raised or submitted clarification questions, visited the site, attended a briefing, registered on the portal, met or spoken to the buyer, submitted a document - unless the COMPANY DATA says so. Write it as a next step ("we will raise this as a clarification question") or as [CONFIRM: <the action, for the bidder to confirm>].
+11. If the bidder lacks something the tender needs (equipment, staff, a licence, sector experience), say so plainly and write [NEEDS INPUT] or [CONFIRM: partner or subcontractor]. Never present an unrelated product or service of the bidder (for example a software or data platform) as meeting that need.
+12. Never state a financial outcome (break-even, surplus, profit, "self-sustaining by Year N", "covers its costs") unless the figures given here show it. Describe how the plan works, give the buyer's own figures, and leave the bidder's numbers as [NEEDS INPUT: ...]; the bidder's financial model decides the outcome.
+13. The buyer reads every word: never write about these rules or about what the bid does not claim ("we do not assert a break-even point", "we will not present our software"). Just leave the claim out."""
 
 ANSWER_STANDARD = """ANSWER STANDARD:
 - The first sentence answers the question directly, in the buyer's words. No preamble ("We are delighted...").
@@ -36,7 +40,10 @@ ANSWER_STANDARD = """ANSWER STANDARD:
 - Be specific to this buyer and site: use facts from the tender documents and clarification answers. If a sentence could be pasted into any other bid unchanged, cut it.
 - Commitments say what, by when, who owns it and how it is measured.
 - State assumptions, risks with mitigations and conditions explicitly. Use simple Markdown tables (| a | b |) where a timetable, price list or plan reads better as a table.
+- If the buyer states a budget, price ceiling or a split by phase or lot (contract_value in the dissection), the costs stay inside it and the answer says so with the buyer's own figures; never quote a total or phase price above a stated envelope.
 - Do not repeat content that belongs to another question; refer to that question instead.
+- Follow the buyer's format_requirements in the dissection: its headings, page and word limits, and where case studies go. If case studies belong in an appendix, give a one-line summary here and write "See Appendix: Case Study <n>" instead of the full case study.
+- If the buyer supplies a response template, answer inside its structure and wording; do not reformat or rename its sections.
 - Finish every sentence. If you are running short of space, end the answer cleanly rather than stopping mid-sentence."""
 
 # ---------------------------------------------------------------------------
@@ -73,10 +80,15 @@ def _as_pct(value: Any) -> float | None:
 
 
 def _parent_of(number: str) -> str:
-    """'5.II' -> '5', 'Q4.I' -> 'Q4', '3a' -> '3', 'Q7' -> 'Q7'."""
+    """'5.II' -> '5', 'Q4.I' -> 'Q4', '3a' -> '3', 'Q7' -> 'Q7'; a titled sub-question names its group before the
+    dash: 'Proposed team - makeup' -> 'Proposed team' (EEF's RFP, where each of 5 sub-questions repeated the
+    group's 40% and so claimed 2,000 words of its own)."""
     n = number.strip()
     m = re.match(r"^([A-Za-z]{0,3}\s*\d+)", n)
-    return m.group(1).replace(" ", "") if m else n
+    if m:
+        return m.group(1).replace(" ", "")
+    t = re.match(r"^(.{3,60}?)\s+[-–—:]\s+\S", n)
+    return t.group(1).strip().lower() if t else n
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +192,9 @@ def ends_cleanly(text: str) -> bool:
     if re.search(r"\b(yours (faithfully|sincerely|truly)|kind regards|best regards|with regards)\b", t[-500:], re.I):
         return True
     last_line = t.splitlines()[-1]
+    # A contact block (name, company, address, phone) ends on a postcode or a phone number, not a full stop.
+    if re.search(r"\b[A-Za-z]{1,2}\d[A-Za-z\d]?\s*\d[A-Za-z]{2}\s*$", last_line) or re.search(r"\+?\d[\d\s()-]{8,}\s*$", last_line):
+        return True
     # A bullet or heading may end without a full stop; a prose paragraph may not.
     return bool(_LIST_LINE.match(last_line) or last_line.lstrip().startswith("#"))
 
@@ -388,6 +403,47 @@ def sanitize_identity(meta: dict) -> tuple[dict, list[str]]:
     return clean, issues
 
 
+_CONTACT_KEY = re.compile(r"^(contact_name|contact|name|email|e_mail|phone|telephone|tel|mobile|job_title|role|position|contact_role)"
+                          r"(?:_(\d+))?$", re.I)
+_CONTACT_FIELD = {"contact_name": "name", "contact": "name", "name": "name", "email": "email", "e_mail": "email",
+                  "phone": "phone", "telephone": "phone", "tel": "phone", "mobile": "phone", "job_title": "role",
+                  "role": "role", "position": "role", "contact_role": "role"}
+
+
+def bid_contact(meta: dict | None) -> tuple[dict, str]:
+    """One signatory for the whole bid (fix plan R4: the letter was signed by one person with another person's
+    email and phone). Profiles hold numbered contact sets (contact_name/email/phone, contact_name_2/...); the first
+    set with a real name is used, with only that set's email and phone; anything missing becomes [NEEDS INPUT].
+    Returns (contact, block for the prompts)."""
+    groups: dict[int, dict] = {}
+    for key, value in (meta or {}).items():
+        m = _CONTACT_KEY.match(str(key))
+        if not m or not isinstance(value, str) or not value.strip():
+            continue
+        groups.setdefault(int(m.group(2) or 1), {})[_CONTACT_FIELD[m.group(1).lower()]] = value.strip()
+    real = lambda v: bool(v) and not v.startswith("[NEEDS INPUT")  # noqa: E731
+    chosen = next((g for _, g in sorted(groups.items()) if real(g.get("name"))), None)
+    if chosen is None:
+        chosen = next((g for _, g in sorted(groups.items()) if real(g.get("email"))), {})
+    name = chosen.get("name") if real(chosen.get("name")) else "[NEEDS INPUT: signatory full name]"
+    who = name if real(chosen.get("name")) else "the signatory"
+    contact = {
+        "name": name,
+        "role": chosen.get("role") if real(chosen.get("role")) else f"[NEEDS INPUT: job title of {who}]",
+        "email": chosen.get("email") if real(chosen.get("email")) else f"[NEEDS INPUT: email address of {who}]",
+        "phone": chosen.get("phone") if real(chosen.get("phone")) else f"[NEEDS INPUT: phone number of {who}]",
+    }
+    block = ("BID CONTACT AND SIGNATORY (use exactly these details wherever the bid gives a contact or signs off; "
+             "never combine them with other people's details):\n"
+             f"Name: {contact['name']}\nJob title: {contact['role']}\nEmail: {contact['email']}\nPhone: {contact['phone']}")
+    return contact, block
+
+
+def without_contacts(meta: dict | None) -> dict:
+    """The profile without its contact sets, so writers see one signatory only (the BID CONTACT block)."""
+    return {k: v for k, v in (meta or {}).items() if not _CONTACT_KEY.match(str(k))}
+
+
 def company_label(company: str, meta: dict | None = None) -> str:
     """Name used in the bid: the profile's legal/organisation name, else the profile name, else a tag."""
     for key in ("org_name", "legal_name", "company_name"):
@@ -427,6 +483,54 @@ def flag_unverified_certifications(text: str, ground_truth_lower: str) -> str:
         return f"[NEEDS INPUT: {m.group(1)} certificate details - no certificate found in company data]"
 
     return _ISO_CLAIM.sub(repl, text)
+
+
+# R8: the bid claims the bidder already did something ("We have raised clarification queries through the
+# In-Tend Correspondence Facility"). One sentence, stopping at its full stop or the end of the line; tags
+# inside it become (...) in the [CONFIRM].
+_S = r"[^.!?\n]*"
+# Tested one sentence at a time: a lazy prefix over a whole long line was quadratic (8 s on a 380k-character bid).
+_ACTION_CORE = re.compile(
+    rf"\b(?:"
+    rf"we(?:'ve| have| had)\s+(?:already\s+|now\s+|also\s+)?(?:raised|submitted|sent|asked|lodged|posted|put|logged|tabled)\b{_S}"
+    rf"\b(?:clarification|clarifications|quer(?:y|ies)|questions?)\b"
+    rf"|(?:this|these|it|the (?:point|issue|question|query|matter)s?)\s+(?:has|have)\s+(?:already\s+)?been\s+(?:raised|submitted|asked|logged)\s+(?:with|through|via|in|as)\b"
+    rf"|we(?:'ve| have)\s+(?:already\s+)?(?:visited|inspected|toured)\s+the\s+(?:site|centre|center|building|premises|venue)"
+    rf"|we(?:'ve| have)\s+(?:already\s+)?attended\s+(?:the|a|your)\s+{_S}\b(?:briefing|site visit|engagement|event|meeting|webinar)"
+    rf"|we(?:'ve| have)\s+(?:already\s+)?(?:met|spoken)\s+(?:with\s+)?(?:the|your)\s+(?:council|buyer|authority|officers?|team|client)"
+    rf")",
+    re.I,
+)
+_SENTENCE = re.compile(r"[^.!?\n]+[.!?]?")
+
+
+def find_invented_action(text: str) -> str:
+    """The first sentence that says the bidder already acted, or ""."""
+    for m in _SENTENCE.finditer(text or ""):
+        if _ACTION_CORE.search(m.group(0)):
+            return m.group(0)
+    return ""
+
+
+def flag_invented_actions(text: str, ground_truth_lower: str = "") -> str:
+    """Turn a sentence that says the bidder already acted into a [CONFIRM] tag the bidder must check, unless the
+    company data says the same thing. The sentence is kept inside the tag so nothing the user wrote is lost."""
+    if not text or not find_invented_action(text):
+        return text
+
+    def repl(m: re.Match) -> str:
+        whole = m.group(0)
+        if not _ACTION_CORE.search(whole):
+            return whole
+        sentence = whole.strip()
+        lead = whole[: len(whole) - len(whole.lstrip())]
+        core = re.sub(r"\s+", " ", sentence.rstrip(".!? ")).lower()
+        if ground_truth_lower and core[:60] in ground_truth_lower:
+            return whole
+        inner = sentence.rstrip(".!? ").replace("[", "(").replace("]", ")").replace('"', "'")[:200]
+        return f"{lead}[CONFIRM: you have done this - otherwise delete: \"{inner}\"]"
+
+    return _SENTENCE.sub(repl, text)
 
 
 # ---------------------------------------------------------------------------
@@ -546,6 +650,9 @@ def _jaccard(a: str, b: str) -> float:
     return len(sa & sb) / len(sa | sb) if sa and sb else 0.0
 
 
+# The generated stand-in name is title case and used as a name ("AIVHUB | Bidding Company", "Bidding Company is
+# pleased..."). Ordinary prose ("separate from the bidding company", "the Bidding Company shall") is not it (R3).
+_GENERATED_NAME = re.compile(r"(?<![Tt]he )(?<![Aa] )(?<![Aa]ny )(?<![Ee]ach )\bBidding Company\b")
 _EMAIL_FIELD = re.compile(r"\be-?mail\s*(?:address)?\s*[:\-]\s*([^\s,;()<>\[\]]+)", re.I)
 
 
@@ -553,7 +660,8 @@ def qa_gate(bid_response: dict, closed: bool = False) -> dict:
     """Checks a draft before export. Returns {"issues": [...], "p0": n, "placeholders": n, "passed": bool}.
 
     P0 (blocks a clean export): a scored question missing, failed or cut off; a section that stops
-    mid-sentence; a generated or invalid identity ("Bidding Company", "[Surname]", an email with no @).
+    mid-sentence; a generated or invalid identity ("Bidding Company", "[Surname]", an email with no @); a claim
+    that the bidder already acted ("we have raised clarification queries") outside a [CONFIRM] tag.
     P1: short answers (< 60% of the budget), over a word limit, duplicated paragraphs, tender closed.
     Deadline consistency needs the single effective deadline from phase 2 (TenderSpec) and is not checked yet.
     """
@@ -592,7 +700,12 @@ def qa_gate(bid_response: dict, closed: bool = False) -> dict:
             add("truncation", "P0", label, "The section stops mid-sentence.")
 
     all_text = "\n\n".join(t for _, t in bid_texts(r)) + "\n" + str(r.get("document_title") or "")
-    if re.search(r"\bbidding company\b", all_text, re.I):
+    for label, text in bid_texts(r):
+        hit = find_invented_action(PLACEHOLDER_RE.sub(" ", text))
+        if hit:
+            add("invented_action", "P0", label, f'Says the bidder already acted: "{hit.strip()[:140]}". '
+                                                "Delete it unless you did this.")
+    if _GENERATED_NAME.search(all_text):
         add("identity", "P0", "Whole bid", '"Bidding Company" is a generated name; set the company name in your profile.')
     if re.search(r"\[\s*surname\s*\]", all_text, re.I):
         add("identity", "P0", "Whole bid", "A contact name is incomplete ([Surname]); complete it in your profile.")
@@ -601,11 +714,17 @@ def qa_gate(bid_response: dict, closed: bool = False) -> dict:
         if "@" not in val and "." in val:
             add("identity", "P0", "Whole bid", f'"{val}" is not a valid email address; correct it in your profile.')
 
-    paras = [(label, p) for label, text in bid_texts(r) for p in _paragraphs(text)]
+    # A summary or covering letter restates the answers by design (EEF: the executive summary repeated paragraphs
+    # from three answers), so only answers are compared with each other. Token sets are built once, not per pair.
+    skip = re.compile(r"summary|letter", re.I)
+    paras = [(label, p, set(re.findall(r"[a-z0-9']+", p.lower())))
+             for label, text in bid_texts(r) if not skip.search(label) for p in _paragraphs(text)]
     dup_pairs = 0
     for a in range(len(paras)):
+        sa = paras[a][2]
         for b in range(a + 1, len(paras)):
-            if _jaccard(paras[a][1], paras[b][1]) >= 0.8:
+            sb = paras[b][2]
+            if sa and sb and len(sa & sb) / len(sa | sb) >= 0.8:
                 dup_pairs += 1
                 if dup_pairs <= 3:
                     add("duplication", "P1", f"{paras[a][0]} / {paras[b][0]}",

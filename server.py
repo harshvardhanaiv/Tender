@@ -91,7 +91,7 @@ from tender_app.blueprints.growth_bp import init_growth_blueprint
 from tender_app.blueprints.email_bp import init_email_blueprint
 from tender_app.blueprints.watchlist_bp import init_watchlist_blueprint
 from tender_app.email_notifier import init_email_scheduler
-from tender_app.security import ensure_csrf_token, validate_csrf
+from tender_app.security import ensure_csrf_token, rate_limit, validate_csrf
 from tender_app.search_terms import split_terms
 from tender_app.text_fix import clean_history_title, fix_row_text
 
@@ -1485,6 +1485,35 @@ HEADER_LABELS = {
 
 # ── Dynamic non-eTenders document crawler ───────────────────────────────────
 def list_non_etenders_documents(source: str, resource_id: str, detail_url: str = "") -> list[dict[str, str]]:
+    if (SOURCES.get(source) or {}).get("type") == "contracts_finder":
+        from etenders_scraper.sources.contracts_finder import cf_notice_id, fetch_cf_notice_documents
+        if not cf_notice_id(detail_url):
+            try:
+                detail_url = (_get_tender_details_dict(source, resource_id) or {}).get("detail_url") or detail_url
+            except Exception:
+                pass
+        found = fetch_cf_notice_documents(cf_notice_id(detail_url, resource_id))
+        # Same shape as the crawler's list: doc_id is the download URL. The buyer's own tender page is listed with
+        # the PDF / Word files it links to (Contracts Finder refuses attachment downloads to servers).
+        out = [{"doc_id": d["url"], "title": d["filename"], "filename": d["filename"], "url": d["url"], "type": "attachment"}
+               for d in found["attachments"]]
+        import urllib.parse
+        from tender_app.deep_scrape import _fetch_page, EXTRACTABLE_EXTS
+        by_name = {o["filename"].lower(): o for o in out}
+        for link in found["links"][:3]:
+            page = _fetch_page(link["url"], link["title"])
+            for href, label in (page.get("links") or [])[:200]:
+                base = urllib.parse.unquote(href.split("?")[0].rsplit("/", 1)[-1])
+                if not base.lower().endswith(EXTRACTABLE_EXTS):
+                    continue
+                same = by_name.get(base.lower())
+                if same and same["type"] == "attachment":
+                    same.update({"doc_id": href, "url": href, "type": "attachment (buyer's copy)"})  # downloadable copy wins
+                elif not same:
+                    entry = {"doc_id": href, "title": (label or base)[:200], "filename": base, "url": href, "type": "buyer_page_document"}
+                    by_name[base.lower()] = entry
+                    out.append(entry)
+        return out
     if not detail_url:
         try:
             details = _get_tender_details_dict(source, resource_id)
@@ -1588,6 +1617,37 @@ def _deep_saved_put(username: str, tender_key: str, kind: str, payload) -> None:
         print("deep_saved write failed:", e)
 
 
+def _cf_public_documents(detail_url: str, resource_id: str, max_docs: int = 8) -> list[dict]:
+    """Read a Contracts Finder notice's documents (fix plan A2: the EEF brief is a public PDF). Attachments are tried
+    on Contracts Finder (often refused to servers); each "Link" (the buyer's own tender page) is read, with the
+    PDF / Word files it links to."""
+    from etenders_scraper.sources.contracts_finder import cf_notice_id, fetch_cf_notice_documents
+    from tender_app.deep_scrape import _doc_text, _fetch, _fetch_document, _fetch_page, EXTRACTABLE_EXTS
+    found = fetch_cf_notice_documents(cf_notice_id(detail_url, resource_id))
+    docs: list[dict] = []
+    for att in found["attachments"][:max_docs]:
+        item = {"title": att["filename"], "filename": att["filename"], "url": att["url"], "status": "not_read", "text": ""}
+        r = _fetch(att["url"], timeout=25)
+        if r is None or r.status_code != 200:
+            item["status"] = f"http_{r.status_code}" if r is not None else "unreachable"
+        else:
+            item["text"] = _doc_text(r.content, att["filename"])
+            item["status"] = "read" if item["text"].strip() else "no_text"
+        docs.append(item)
+    for link in found["links"][:3]:
+        page = _fetch_page(link["url"], link["title"])
+        if page.get("status") == "read" and page.get("text"):
+            docs.append({"title": f"Buyer's tender page: {page.get('page_title') or link['url']}", "filename": "",
+                         "url": link["url"], "status": "read", "text": page["text"][:60000]})
+        for href, label in (page.get("links") or [])[:200]:
+            if len(docs) >= max_docs + 3:
+                break
+            base = href.lower().split("?")[0].rsplit("/", 1)[-1]
+            if base.endswith(EXTRACTABLE_EXTS) and base not in {str(d.get("url") or "").lower().split("?")[0].rsplit("/", 1)[-1] for d in docs}:
+                docs.append(_fetch_document(href, label or base))
+    return docs
+
+
 def _run_deep_scrape(source: str, resource_id: str, refresh: bool = False, progress=None):
     cfg = SOURCES.get(source)
     if not cfg:
@@ -1622,6 +1682,12 @@ def _run_deep_scrape(source: str, resource_id: str, refresh: bool = False, progr
                 })
         except Exception:
             pass
+
+    if cfg.get("type") == "contracts_finder":
+        try:
+            extra_docs.extend(_cf_public_documents(detail_url, resource_id))
+        except Exception as exc:
+            print(f"[deep] Contracts Finder documents failed for {resource_id}: {exc}")
 
     result = deep_scrape_tender(
         source, resource_id, detail_url,
@@ -2342,7 +2408,9 @@ def _get_tender_details_dict(source: str, resource_id: str, bypass_cache: bool =
       return {"error": "unknown source"}
 
     # 1. Check cache first for all source types
-    cached_row = None if bypass_cache else _find_tender_in_cache(source, resource_id)
+    # The stored row is only ever a fallback (each branch tries the portal first), so it is loaded on a refresh too:
+    # without it a failed Contracts Finder lookup returned a stand-in that replaced the real title in the bid.
+    cached_row = _find_tender_in_cache(source, resource_id)
     cached_detail = None
     if cached_row:
       cached_detail = _detail_from_cached_row(cached_row, resource_id)
@@ -2372,6 +2440,7 @@ def _get_tender_details_dict(source: str, resource_id: str, bypass_cache: bool =
                 "resource_id": resource_id,
                 "title": f"Tender #{resource_id}",
                 "description": f"Ireland eTenders public procurement notice #{resource_id}.",
+                "_stub": True,  # a stand-in: the portal did not answer
                 "detail_url": detail_url,
                 "procedure": "Open Procedure",
                 "procurement_type": "Services",
@@ -2389,6 +2458,7 @@ def _get_tender_details_dict(source: str, resource_id: str, bypass_cache: bool =
                 "resource_id": resource_id,
                 "title": f"Find a Tender Notice #{resource_id}",
                 "description": f"UK public procurement notice #{resource_id}.",
+                "_stub": True,  # a stand-in: the portal did not answer
                 "detail_url": f"https://www.find-tender.service.gov.uk/Notice/{resource_id}",
                 "procedure": "Open Procedure",
             }
@@ -2408,6 +2478,7 @@ def _get_tender_details_dict(source: str, resource_id: str, bypass_cache: bool =
                 "resource_id": resource_id,
                 "title": f"Contracts Finder Notice #{resource_id}",
                 "description": f"UK Contracts Finder public notice #{resource_id}.",
+                "_stub": True,  # a stand-in: the portal did not answer
                 "detail_url": f"https://www.contractsfinder.service.gov.uk/notice/{resource_id}",
                 "procedure": "Open Opportunity",
             }
@@ -2428,6 +2499,7 @@ def _get_tender_details_dict(source: str, resource_id: str, bypass_cache: bool =
                 "resource_id": resource_id,
                 "title": f"ProContract Opportunity #{resource_id}",
                 "description": f"UK council procurement notice #{resource_id} via ProContract.",
+                "_stub": True,  # a stand-in: the portal did not answer
                 "detail_url": detail_url,
                 "procedure": "Open Opportunity",
             }
@@ -2463,6 +2535,7 @@ def _get_tender_details_dict(source: str, resource_id: str, bypass_cache: bool =
             "resource_id": resource_id,
             "title": f"{cfg['label']} Opportunity #{resource_id}",
             "description": f"Public procurement notice #{resource_id} via {cfg['label']}.",
+            "_stub": True,  # a stand-in: the portal did not answer
             "detail_url": f"{cfg['site_root']}/app/rfq/rwlentrance_s.asp?PID={resource_id}&B={cfg['branding']}&PS=1",
             "procedure": "Open Opportunity",
         }
@@ -2479,6 +2552,7 @@ def _get_tender_details_dict(source: str, resource_id: str, bypass_cache: bool =
                 "resource_id": resource_id,
                 "title": f"GCA Agreement #{resource_id}",
                 "description": f"UK Government Commercial Agency framework agreement #{resource_id}.",
+                "_stub": True,  # a stand-in: the portal did not answer
                 "detail_url": f"https://www.gca.gov.uk/agreements/{resource_id}",
                 "procedure": "Framework Agreement",
             }
@@ -3360,7 +3434,8 @@ def verify_and_clean_bid_claims(bid_response: dict, ground_truth_str: str, check
                 )
 
     # ── Pattern 1: Specific percentage claims ─────────────────────────────────
-    _pct_re = re.compile(r'\b(\d{1,3})\s*%', re.IGNORECASE)
+    # The whole number, decimals included: "99.9%" is one claim, never "99." + a tag for "9%" (R7).
+    _pct_re = re.compile(r'(?<![\d.])(\d{1,3}(?:\.\d+)?)\s*%', re.IGNORECASE)
 
     # ── Pattern 2: Monetary figures (£/€/$) with unit ─────────────────────────
     _money_re = re.compile(
@@ -3453,6 +3528,14 @@ def verify_and_clean_bid_claims(bid_response: dict, ground_truth_str: str, check
                          any(kw in gt_lower for kw in ["certif", "iso", "accred", "experience", "project", "award"])
                 if not has_ev:
                     res = re.sub(pattern, placeholder, res, flags=re.IGNORECASE)
+
+        # P3a-5: "We have raised clarification queries..." when nothing was raised (fix plan R8). Last, so no
+        # later pass edits the sentence held inside the [CONFIRM] tag.
+        from tender_app.bid_writer import flag_invented_actions
+        res = flag_invented_actions(res, gt_lower)
+        # P3a-6: "break-even by Year 3" with no model behind it (fix plan M8) -> a [CONFIRM] item.
+        from tender_app.financial_model import flag_unsupported_outcomes
+        res = flag_unsupported_outcomes(res)
 
         return res
 
@@ -5236,6 +5319,70 @@ def create_app() -> Flask:
             print("deep-analysis profile load failed:", e)
         return name, "\n\n".join(parts)
 
+    _BID_CHECK_CACHE: dict = {}
+
+    @app.post("/api/bid-check")
+    @rate_limit(20, 3600)
+    def api_bid_check():
+        """Bid / no-bid advice from the notice and the company profile, before any credits are spent (fix plan M16:
+        "Before drafting, Civenta should score fit and show a short verdict"). One AI call, no credits, cached for
+        6 hours per tender and profile, 20 an hour per user. The full check runs again on the documents during
+        generation."""
+        from tender_app.bid_decision import decision_prompt, assess_bid
+        username = session.get("username") or ""
+        body = request.get_json(silent=True) or {}
+        t = body.get("tender") if isinstance(body.get("tender"), dict) else {}
+        profile_id = body.get("profile_id") or None
+        key = (username, str(t.get("source") or ""), str(t.get("resource_id") or t.get("title") or "")[:200], str(profile_id))
+        hit = _BID_CHECK_CACHE.get(key)
+        if hit and time.time() - hit[0] < 6 * 3600:
+            return jsonify({"ok": True, "decision": hit[1], "basis": "notice", "cached": True})
+        company, bidder_text = _load_bidder_context(username, profile_id)
+        if not bidder_text:
+            return jsonify({"ok": False, "error": "Select a company profile first."}), 400
+        # A stand-in or a one-line notice is not enough to judge fit: say so rather than advise "No-bid" on nothing
+        # (the EEF check said "no usable scope" because a stand-in description had replaced the real one).
+        desc = str(t.get("description") or "")
+        if len(desc.strip()) < 200 or re.search(r"public (?:procurement )?notice #", desc, re.I):
+            try:
+                stored = _get_tender_details_dict(str(t.get("source") or ""), str(t.get("resource_id") or "")) or {}
+                if not stored.get("_stub") and len(str(stored.get("description") or "")) > len(desc):
+                    desc = str(stored.get("description") or "")
+                    t = {**t, **{k: v for k, v in stored.items() if v and k in ("title", "contracting_authority", "cpv_codes")}}
+            except Exception:
+                pass
+        if len(desc.strip()) < 200 or re.search(r"public (?:procurement )?notice #", desc, re.I):
+            return jsonify({"ok": True, "decision": None, "basis": "notice",
+                            "note": "The notice has too little detail to judge fit. The full check runs on the documents while drafting."})
+        t = {**t, "description": desc}
+        notice = {
+            "tender_title": t.get("title"),
+            "contracting_authority": t.get("contracting_authority"),
+            "notice_type": t.get("procedure") or t.get("notice_type"),
+            "contract_value": {"estimated": t.get("estimated_value_eur") or t.get("value")},
+            "scope_of_work": {"summary": str(t.get("description") or "")[:6000]},
+            "cpv": t.get("cpv") or t.get("cpv_codes"),
+        }
+        provider, key_, model = get_ai_credentials()
+        api_key = key_ if (provider != "deepseek" or key_) else DEEPSEEK_API_KEY
+
+        def _call(system, user, max_tokens):
+            return call_chat_api(system=system, user=user, max_tokens=max_tokens, temperature=0.2,
+                                 response_format_json=True, provider=provider, api_key=api_key, model=model)
+
+        prompt = decision_prompt(notice, company=company or "the company", company_data=bidder_text[:9000],
+                                 company_context="", answer_bank="", warnings=[], closed=False)
+        prompt += ("\n\nOnly the public notice is available at this point, not the full tender documents: judge the "
+                   "fit on the work described, and keep criteria to the main areas of work it names.")
+        decision = assess_bid(_call, prompt, [], False)
+        if not decision:
+            return jsonify({"ok": False, "error": "The fit check could not run. You can still generate."}), 502
+        _BID_CHECK_CACHE[key] = (time.time(), decision)
+        if len(_BID_CHECK_CACHE) > 500:
+            for k in sorted(_BID_CHECK_CACHE, key=lambda k: _BID_CHECK_CACHE[k][0])[:100]:
+                _BID_CHECK_CACHE.pop(k, None)
+        return jsonify({"ok": True, "decision": decision, "basis": "notice", "cached": False})
+
     @app.post("/api/tender-deep-ai")
     @require_credits(CREDIT_COST_DEEP_ANALYSIS, "deep_analysis", get_db_connection)
     def api_tender_deep_ai():
@@ -6723,7 +6870,8 @@ use "NOT STATED" string where a field was expected but missing):
   "contract_value": {{
     "estimated": "string — e.g. £250,000",
     "currency": "string",
-    "vat_inclusive": "boolean or null"
+    "vat_inclusive": "boolean or null",
+    "breakdown": "string or null — any stated budget split or envelope by phase, lot or year, exactly as the buyer words it, e.g. 'up to £220,000 for Alpha (30%) and up to £510,000 for Beta (70%)'; the figures may be split across lines in the document"
   }},
   "contract_duration": "string — e.g. 2 years with option to extend by 12 months",
   "submission_deadline": {{
@@ -6737,6 +6885,14 @@ use "NOT STATED" string where a field was expected but missing):
     "date": "string or null",
     "method": "string or null — e.g. portal Q&A, email"
   }},
+  "key_dates": [
+    {{
+      "event": "string — every dated step in the timetable other than the submission deadline, e.g. Expression of interest window, Sample deadline, Site visit, Bidder briefing, Selection questionnaire return, Award, Contract start",
+      "date": "string — DD/MM/YYYY, or a range DD/MM/YYYY - DD/MM/YYYY",
+      "bidder_action": "boolean — true when the bidder had to do something by this date (register, express interest, send samples, attend)",
+      "source": "string — which document"
+    }}
+  ],
   "evaluation_criteria": [
     {{
       "criterion": "string — exact name as written",
@@ -6821,6 +6977,13 @@ use "NOT STATED" string where a field was expected but missing):
     "themes": ["string array — e.g. local employment, carbon reduction"],
     "reporting_required": "boolean"
   }},
+  "format_requirements": {{
+    "structure": "string or null — required section order or headings, e.g. follow sections 1-6 of the RFP",
+    "page_or_word_limits": "string or null — e.g. method statement max 4 A4 pages; 500 words per answer",
+    "header_footer": "string or null — e.g. title, date and 'Page X of Y' on every page",
+    "case_studies_and_appendices": "string or null — e.g. case studies in appendices, max 2 pages each",
+    "other": ["string array — font, file type, executive summary length, templates that must not be reformatted"]
+  }},
   "tupe_applies": "boolean or null — Transfer of Undertakings",
   "special_conditions": ["string array — any unusual or notable conditions"],
   "ambiguities_detected": [
@@ -6902,7 +7065,7 @@ CRITICAL GROUND TRUTH & COMPLIANCE RULES YOU MUST FOLLOW STRICTLY:
 1. FACTUAL GROUND TRUTH RULE: State a specific factual claim (a case study, a certification, a completed/signed document, a technical capability, or programming language/tool expertise) ONLY IF that exact fact is explicitly present in the provided DATA / ANSWER BANK / DOCUMENTS / CHECKLIST.
 2. MISSING FACT PLACEHOLDERS: If a specific fact is NOT present in the data (e.g. no case study found in Answer Bank/Profile for this sector), you MUST write a clearly visible placeholder tag instead: '[Add 1–2 case studies here — none found in Answer Bank]'. NEVER write prose asserting an unverified fact or invented client name, metric, or past project.
 3. CHECKLIST COMPLIANCE ALIGNMENT: For compliance items (Appendix forms, signatures, insurance, policies): you may state 'completed' or 'signed' ONLY IF the Checklist state explicitly confirms it is signed/completed. Otherwise you MUST state 'in progress' / 'being finalised'.
-4. CLARIFICATION ACKNOWLEDGMENT RULE: Where a Critical or High priority clarification finding affects a claim (budget caps, delivery timeline, or scope boundaries), acknowledge the issue honestly rather than asserting contradictory promises. Follow this pattern: "A point we need clarified before pricing: [issue]. We have raised this in our clarification questions and will price to estimated requirements, subject to your response."
+4. CLARIFICATION ACKNOWLEDGMENT RULE: Where a Critical or High priority clarification finding affects a claim (budget caps, delivery timeline, or scope boundaries), acknowledge the issue honestly rather than asserting contradictory promises. Follow this pattern: "A point we need clarified before pricing: [issue]. We will raise this as a clarification question and price to estimated requirements, subject to your response." Never say a clarification question has already been raised.
 5. GREETING RULE: Address the Cover Letter to 'Dear [Authority/Department Name] Procurement Team,' when the authority or department name is known. Fall back to 'Dear Sir/Madam,' ONLY if no authority or department name is present.
 6. Answer EVERY ITT question extracted in the dissection — do not skip any.
 7. Pre-approved Answer Bank entries MUST appear verbatim — do not paraphrase or summarise them.
@@ -7202,7 +7365,7 @@ Return ONLY this JSON structure:
         # Fetch meta_json for the selected profile to inject into Stage 3. Identity fields are validated
         # first: an invalid email or a "[Surname]" name becomes a visible [NEEDS INPUT] tag instead of
         # being copied into the bid as if it were real (fix plan D5).
-        from tender_app.bid_writer import sanitize_identity, company_label
+        from tender_app.bid_writer import sanitize_identity, company_label, bid_contact, without_contacts
         company_structured_data = "No structured company data available."
         profile_meta: dict = {}
         identity_issues: list[str] = []
@@ -7221,12 +7384,14 @@ Return ONLY this JSON structure:
                         parsed_meta = json.loads(meta_json_str)
                         if isinstance(parsed_meta, dict) and parsed_meta:
                             profile_meta, identity_issues = sanitize_identity(parsed_meta)
+                            # One signatory with one email and phone (fix plan R4), not every contact set.
+                            _contact, _contact_block = bid_contact(profile_meta)
                             formatted_parts = []
-                            for k, v in profile_meta.items():
+                            for k, v in without_contacts(profile_meta).items():
                                 if v:
                                     formatted_parts.append(f"{k.replace('_', ' ').title()}: {v}")
-                            if formatted_parts:
-                                company_structured_data = "\n".join(formatted_parts)
+                            formatted_parts.append(_contact_block)
+                            company_structured_data = "\n".join(formatted_parts)
                     except Exception:
                         company_structured_data = "No structured company data available."
                 cursor.close()
@@ -7634,6 +7799,15 @@ Return ONLY this JSON structure:
                     yield json.dumps({"status": "progress", "stage": 1, "message": f"Warning: this tender's deadline ({effective_deadline.strftime('%d/%m/%Y')}) has passed."}) + "\n"
                 published_clar = clarifications_block(stage1_result)
 
+                # Stages already passed: clarification deadline, expression-of-interest window, samples, site
+                # visit (fix plan G6/R10). Writers are told, the user is warned, the export check lists them.
+                from tender_app.bid_decision import (stage_warnings, clarification_window_closed, stage_note,
+                                                     decision_prompt, assess_bid, capability_note, decision_issues)
+                passed_stages = stage_warnings(stage1_result)
+                for _w in passed_stages:
+                    yield json.dumps({"status": "progress", "stage": 1, "message": "Warning: " + _w["detail"]}) + "\n"
+                closed_note = closed_note + stage_note(passed_stages)
+
                 # Stage 2: Document Checklist
                 yield json.dumps({"status": "progress", "stage": 2, "message": "Building submission checklist... (Stage 2/5)"}) + "\n"
                 stage2_result = call_deepseek_stage(
@@ -7645,14 +7819,29 @@ Return ONLY this JSON structure:
                 )
 
                 # Stage 3: Clarification Questions (Run BEFORE proposal generation to feed findings into Stage 4 proposal writers)
-                yield json.dumps({"status": "progress", "stage": 3, "message": "Generating clarification questions & analyzing strategic risks... (Stage 3/5)"}) + "\n"
-                stage4_result = call_deepseek_stage(
-                    system=STAGE_4_SYSTEM,
-                    user=STAGE_4_USER.format(stage1_json=stage1_json_str) + ("\n\n" + closed_note if closed_note else "") + lang_instruction,
-                    api_key=DEEPSEEK_API_KEY,
-                    max_tokens=2000,
-                    _provider=_ai_provider, _key=_ai_key, _model=_ai_model
-                )
+                if tender_closed or clarification_window_closed(passed_stages):
+                    # No questions once the buyer has stopped answering them (fix plan G6): no AI call either.
+                    _cw = next((w for w in passed_stages if w["kind"] == "clarification"), None)
+                    _why = (f"The clarification deadline ({_cw['date']}) has passed" if _cw else
+                            f"The submission deadline ({effective_deadline.strftime('%d/%m/%Y')}) has passed")
+                    yield json.dumps({"status": "progress", "stage": 3, "message": f"{_why}: no clarification questions proposed. (Stage 3/5)"}) + "\n"
+                    stage4_result = {
+                        "clarification_deadline": _cw["date"] if _cw else "",
+                        "submission_method": "",
+                        "total_questions": 0,
+                        "questions": [],
+                        "strategic_notes": (f"{_why}, so no clarification questions are proposed. Use the answers the "
+                                            "buyer has already published, and state any remaining assumptions in the bid."),
+                    }
+                else:
+                    yield json.dumps({"status": "progress", "stage": 3, "message": "Generating clarification questions & analyzing strategic risks... (Stage 3/5)"}) + "\n"
+                    stage4_result = call_deepseek_stage(
+                        system=STAGE_4_SYSTEM,
+                        user=STAGE_4_USER.format(stage1_json=stage1_json_str) + ("\n\n" + closed_note if closed_note else "") + lang_instruction,
+                        api_key=DEEPSEEK_API_KEY,
+                        max_tokens=2000,
+                        _provider=_ai_provider, _key=_ai_key, _model=_ai_model
+                    )
 
                 # Extract Critical / High Clarification Findings
                 critical_clarifications = []
@@ -7737,6 +7926,19 @@ Return ONLY this JSON structure:
                 company_ctx_short = smart_chunk(company_ctx_text, max_chars=8000) if company_ctx_text else "None"
                 answer_bank_short = smart_chunk(answer_bank_ctx, max_chars=6000) if answer_bank_ctx else "None"
                 clar_block = published_clar or "None found in the documents provided."
+
+                # Bid / no-bid advice before any writing (fix plan M16). Its capability gaps go to every writer,
+                # so a missing capability is stated, not filled with an unrelated product (R9).
+                yield json.dumps({"status": "progress", "stage": 4, "message": "Checking whether this tender fits your company..."}) + "\n"
+                bid_decision = assess_bid(_ai_call, decision_prompt(
+                    stage1_result, company=bid_company, company_data=company_structured_data,
+                    company_context=company_ctx_short, answer_bank=answer_bank_short,
+                    warnings=passed_stages, closed=tender_closed), passed_stages, tender_closed)
+                if bid_decision:
+                    _fit = f" (fit {bid_decision['fit_score']}/100)" if bid_decision.get("fit_score") is not None else ""
+                    yield json.dumps({"status": "progress", "stage": 4, "message": f"Advice: {bid_decision['verdict']}{_fit}. The draft is still written; gaps are marked, not filled."}) + "\n"
+                cap_note = capability_note(bid_decision)
+                writer_notes = closed_note + cap_note
                 shared_context = f"""TENDER DISSECTION:
 {dissection_for_writers}
 
@@ -7747,7 +7949,7 @@ COMPANY: {bid_company}
 COMPANY DATA: {company_structured_data}
 CHECKLIST STATUS: {checklist_status_summary}
 OPEN CLARIFICATION POINTS: {critical_clarifications_summary}
-{closed_note}"""
+{writer_notes}"""
 
                 section_writers = []
                 if q_mode:
@@ -7755,7 +7957,7 @@ OPEN CLARIFICATION POINTS: {critical_clarifications_summary}
                         "key": "w1",
                         "name": "Covering letter",
                         "max_tokens": 1500,
-                        "prompt": f"""Write a short covering letter (250-350 words) for this tender response. It introduces the response and refers the reader to the answers, which follow in the buyer's own question order. Begin with '{greeting_target}'. Do not summarise or repeat the answers, and make no claim about the bidder that is not in COMPANY DATA / COMPANY DOCUMENTS / ANSWER BANK.
+                        "prompt": f"""Write a short covering letter (250-350 words) for this tender response. It introduces the response and refers the reader to the answers, which follow in the buyer's own question order. Begin with '{greeting_target}'. Do not summarise or repeat the answers, and make no claim about the bidder that is not in COMPANY DATA / COMPANY DOCUMENTS / ANSWER BANK. Sign it off with the name, job title, email and phone from BID CONTACT AND SIGNATORY, exactly as given, and no other person's details.
 
 {shared_context}
 COMPANY DOCUMENTS: {company_ctx_short}
@@ -7872,7 +8074,7 @@ Return ONLY valid JSON with no markdown fences:
                         tender_dissection=dissection_for_writers, clarifications_block=published_clar,
                         company_data=company_structured_data, company_context=company_ctx_short,
                         answer_bank=answer_bank_short, winning_bids=winning_bids_block(4000),
-                        other_questions=questions, closed_note=closed_note, lang_instruction=lang_instruction,
+                        other_questions=questions, closed_note=writer_notes, lang_instruction=lang_instruction,
                     )
                     return write_question(_ai_call, q, prompt)
 
@@ -7953,6 +8155,7 @@ Return ONLY valid JSON with no markdown fences:
                 for issue in identity_issues:
                     qa_report["issues"].append({"check": "identity", "severity": "P1", "section": "Company profile",
                                                 "detail": f"Profile field: {issue}. It was left out of the bid; correct it in your profile."})
+                qa_report["issues"].extend(decision_issues(bid_decision, passed_stages))
 
                 # Stage 5: Gantt timeline extraction
                 yield json.dumps({"status": "progress", "stage": 5, "message": "Extracting Gantt project timeline... (Stage 5/5)"}) + "\n"
@@ -7989,15 +8192,18 @@ Return ONLY valid JSON with no markdown fences:
                     f"Even if context is limited, return a realistic delivery timeline inferred from the tender topic. Return JSON only."
                 )
 
-                gantt_result = {}
+                gantt_result = {"unit": unit, "phases": []}
                 try:
-                    gantt_result = call_deepseek_stage(
-                        system=system_gantt,
-                        user=user_gantt,
-                        api_key=DEEPSEEK_API_KEY,
-                        max_tokens=1200,
-                        _provider=_ai_provider, _key=_ai_key, _model=_ai_model
-                    )
+                    # Questionnaire bids answer the buyer's questions only; a timeline inferred from the title
+                    # would add a "Technical Methodology" section the buyer never asked for (fix plan G5).
+                    if not q_mode:
+                        gantt_result = call_deepseek_stage(
+                            system=system_gantt,
+                            user=user_gantt,
+                            api_key=DEEPSEEK_API_KEY,
+                            max_tokens=1200,
+                            _provider=_ai_provider, _key=_ai_key, _model=_ai_model
+                        )
                     if not gantt_result.get("phases"):
                         gantt_result = {"unit": unit, "phases": []}
                 except Exception as gantt_err:
@@ -8016,6 +8222,8 @@ Return ONLY valid JSON with no markdown fences:
                     "qa_report": qa_report,
                     "questionnaire_mode": q_mode,
                     "tender_closed": tender_closed,
+                    "bid_decision": bid_decision,
+                    "stage_warnings": passed_stages,
                     "effective_deadline": effective_deadline.strftime("%d/%m/%Y") if effective_deadline else "",
                     "docs_used": doc_names,
                     "docs_unreadable": docs_failed,
@@ -8335,6 +8543,23 @@ Return ONLY valid JSON with no markdown fences:
             download_name="bid_covering_letter.docx",
         )
 
+    @app.post("/api/download-financial-model")
+    def api_download_financial_model():
+        """The financial answer's model as .xlsx (fix plan M8): the buyer's published figures, every gap the answer
+        left as an input cell, and a 10-year projection whose outcome is computed, not written. No AI call, no
+        credits."""
+        from tender_app.financial_model import build_model_xlsx, financial_answer
+        body = request.get_json(silent=True) or {}
+        bid_response = body.get("bid_response") if isinstance(body.get("bid_response"), dict) else {}
+        dissection = body.get("dissection") if isinstance(body.get("dissection"), dict) else {}
+        number, answer = financial_answer(bid_response)
+        title = str(body.get("title") or "Tender")[:120]
+        company = str(body.get("company_name") or "").strip() or "Your company"
+        data = build_model_xlsx(title + (f" - question {number}" if number else ""), company, dissection, answer)
+        safe = re.sub(r"[^A-Za-z0-9]+", "_", title).strip("_")[:50] or "tender"
+        return send_file(io.BytesIO(data), as_attachment=True, download_name=f"{safe}_financial_model.xlsx",
+                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
     @app.post("/api/download-proposal")
     @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection)
     def api_download_proposal():
@@ -8372,7 +8597,7 @@ Return ONLY valid JSON with no markdown fences:
 
         xml_content = []
         xml_content.append('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')
-        xml_content.append('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">')
+        xml_content.append('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">')
         xml_content.append('  <w:body>')
 
         def add_heading(text, size=28, color="1E3A8A", space_before=240, space_after=120):
@@ -8562,14 +8787,27 @@ Return ONLY valid JSON with no markdown fences:
 
         # Only the sections this bid actually has, numbered in the order they are written. The buyer's
         # questions come straight after the covering letter: they are what gets scored (fix plan M5).
-        _itt_list = bid_response.get("itt_question_responses") or []
+        _itt_all = bid_response.get("itt_question_responses") or []
+        # When the buyer asks for case studies in appendices (EEF's RFP), the case-study and reference answers move out
+        # of the numbered sections into an appendix (fix plan M13).
+        _fmt_req = body.get("format_requirements") if isinstance(body.get("format_requirements"), dict) else {}
+        _wants_appendix = bool(re.search(r"appendic", str(_fmt_req.get("case_studies_and_appendices") or ""), re.I))
+        _appendix_re = re.compile(r"case stud|\breferences?\b", re.I)
+        _appendix_qs = [q for q in _itt_all if _wants_appendix and isinstance(q, dict)
+                        and _appendix_re.search(f"{q.get('question_number') or ''} {str(q.get('question_text') or '')[:80]}")]
+        _itt_list = [q for q in _itt_all if q not in _appendix_qs]
 
         def _has(key):
             obj = bid_response.get(key) or {}
             return isinstance(obj, dict) and bool(str(obj.get("content") or "").strip())
 
-        _has_meth = (_has("technical_methodology") or bool(methodology_diagram and methodology_diagram.get("phases"))
-                     or bool(methodology_image_b64) or bool(gantt_chart and gantt_chart.get("phases")))
+        # A questionnaire bid (two or more buyer questions) gets a methodology section only when one was written;
+        # a stored Gantt or diagram alone must not add a section the buyer did not ask for (fix plan G5).
+        _questionnaire_bid = bool(body.get("questionnaire_mode") or bid_response.get("questionnaire_mode")
+                                  or len(_itt_list) >= 2)
+        _has_meth = (_has("technical_methodology") or (not _questionnaire_bid and (
+                     bool(methodology_diagram and methodology_diagram.get("phases"))
+                     or bool(methodology_image_b64) or bool(gantt_chart and gantt_chart.get("phases")))))
         _toc_names = []
         if _has("cover_letter"):
             _toc_names.append("Bid Submission Covering Letter")
@@ -8593,7 +8831,7 @@ Return ONLY valid JSON with no markdown fences:
             "Appendix A: Document Submission Checklist",
             "Appendix B: Clarification Questions",
             "Appendix C: Placeholder Summary (Human To-Do List)"
-        ]
+        ] + (["Appendix D: Case Studies and References"] if _appendix_qs else [])
 
         for item in toc_items:
             xml_content.append('    <w:p>')
@@ -8636,10 +8874,8 @@ Return ONLY valid JSON with no markdown fences:
             add_page_break()
 
         # Section 10: Specific Questionnaire Responses
-        itt_responses = bid_response.get("itt_question_responses") or []
-        if itt_responses:
-            add_heading(_sec_title("Responses to the Buyer's Questions"), size=32)
-            for idx, q_item in enumerate(itt_responses):
+        def _add_question_blocks(items):
+            for idx, q_item in enumerate(items):
                 q_num = q_item.get("question_number") or str(idx + 1)
                 q_text = q_item.get("question_text") or "Tender Question"
                 response_text = q_item.get("response") or ""
@@ -8667,6 +8903,11 @@ Return ONLY valid JSON with no markdown fences:
                 xml_content.append('    </w:p>')
 
                 add_paragraphs(response_text)
+
+        itt_responses = _itt_list
+        if itt_responses:
+            add_heading(_sec_title("Responses to the Buyer's Questions"), size=32)
+            _add_question_blocks(itt_responses)
             add_page_break()
 
         # Section 2: Executive Summary
@@ -8690,6 +8931,8 @@ Return ONLY valid JSON with no markdown fences:
         has_meth_img = bool(methodology_image_b64)
         has_gantt = bool(gantt_chart and gantt_chart.get("phases"))
 
+        if _questionnaire_bid and not has_meth_content:
+            has_meth_diagram = has_meth_img = has_gantt = False
         if has_meth_content or has_meth_diagram or has_meth_img or has_gantt:
             add_heading(_sec_title("Technical Methodology & Approach"), size=32)
             if has_meth_content:
@@ -9376,11 +9619,38 @@ Return ONLY valid JSON with no markdown fences:
             xml_content.append('      </w:r>')
             xml_content.append('    </w:p>')
 
+        # Appendix D: the case-study and reference answers, when the buyer wants case studies in appendices (M13)
+        if _appendix_qs:
+            add_page_break()
+            add_heading("Appendix D: Case Studies and References", size=32)
+            _add_question_blocks(_appendix_qs)
+
+        # Every page carries the tender title and date, and "Page X of Y" (fix plan M13: the EEF RFP requires both).
+        xml_content.append('    <w:sectPr>')
+        xml_content.append('      <w:headerReference w:type="default" r:id="rIdHdr1"/>')
+        xml_content.append('      <w:footerReference w:type="default" r:id="rIdFtr1"/>')
+        xml_content.append('      <w:pgSz w:w="11906" w:h="16838"/>')
+        xml_content.append('      <w:pgMar w:top="1440" w:right="1260" w:bottom="1440" w:left="1260" w:header="567" w:footer="567" w:gutter="0"/>')
+        xml_content.append('    </w:sectPr>')
         # Close XML
         xml_content.append('  </w:body>')
         xml_content.append('</w:document>')
 
         doc_xml = "\n".join(xml_content)
+        _hf_ns = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+                  'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"')
+        _hf_run = '<w:rPr><w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI"/><w:sz w:val="16"/><w:color w:val="64748B"/></w:rPr>'
+        _hdr_bits = [str(title or "").strip(), str(company_name or "").strip(), datetime.now().strftime("%d %B %Y")]
+        _hdr_text = xml_escape(" | ".join(b for b in _hdr_bits if b))
+        header_xml = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                      f'<w:hdr {_hf_ns}><w:p><w:pPr><w:jc w:val="right"/></w:pPr>'
+                      f'<w:r>{_hf_run}<w:t xml:space="preserve">{_hdr_text}</w:t></w:r></w:p></w:hdr>')
+        footer_xml = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                      f'<w:ftr {_hf_ns}><w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
+                      f'<w:r>{_hf_run}<w:t xml:space="preserve">Page </w:t></w:r>'
+                      f'<w:fldSimple w:instr=" PAGE "><w:r>{_hf_run}<w:t>1</w:t></w:r></w:fldSimple>'
+                      f'<w:r>{_hf_run}<w:t xml:space="preserve"> of </w:t></w:r>'
+                      f'<w:fldSimple w:instr=" NUMPAGES "><w:r>{_hf_run}<w:t>1</w:t></w:r></w:fldSimple></w:p></w:ftr>')
 
         out = io.BytesIO()
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
@@ -9389,7 +9659,16 @@ Return ONLY valid JSON with no markdown fences:
                 '  <Default Extension="xml" ContentType="application/xml"/>',
                 '  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
             ]
-            doc_rels_entries = []
+            content_types_entries += [
+                '  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>',
+                '  <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>',
+            ]
+            z.writestr("word/header1.xml", header_xml)
+            z.writestr("word/footer1.xml", footer_xml)
+            doc_rels_entries = [
+                '  <Relationship Id="rIdHdr1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>',
+                '  <Relationship Id="rIdFtr1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>',
+            ]
 
             if methodology_image_b64:
                 try:

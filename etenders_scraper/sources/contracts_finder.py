@@ -594,7 +594,7 @@ def search_contracts_finder(
     full scan could not finish (rate limit, errors), the rows found are still returned and the
     reason is appended to `notes` -- callers should show it, because the rows are then only the
     newest part of the feed."""
-    from tender_app.search_terms import split_terms
+    from tender_app.search_terms import split_terms, term_matches
 
     session = _new_session()
     # "a, b" is a OR b: the feed is downloaded once and every term is checked against it
@@ -609,7 +609,7 @@ def search_contracts_finder(
         for search_blob, row in entries:
             if row["ocid"] in seen:
                 continue
-            hits = [t for t in terms if t in search_blob]
+            hits = [t for t in terms if term_matches(t, search_blob)]
             if terms and not hits:
                 continue
             seen.add(row["ocid"])
@@ -744,3 +744,51 @@ def fetch_contracts_finder_details(resource_id: str) -> dict[str, Any] | None:
         return detail
     except Exception:
         return None
+
+
+_NOTICE_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+
+
+def cf_notice_id(*candidates: str) -> str:
+    """The Contracts Finder notice id (a bare UUID) from a notice URL such as .../Notice/<uuid>, if any."""
+    for c in candidates:
+        m = re.search(r"/notice/(?:attachment/)?([0-9a-f-]{36})", str(c or ""), re.I)
+        if m:
+            return m.group(1)
+        if c and _NOTICE_UUID.fullmatch(str(c).strip()):
+            return str(c).strip()
+    return ""
+
+
+def fetch_cf_notice_documents(notice_id: str) -> dict[str, list[dict[str, str]]]:
+    """Attachments and links of a notice from the public v2 API (the notice web page answers 403 to servers).
+
+    Returns {"attachments": [{title, filename, url}], "links": [{title, url}]}; empty lists on any failure."""
+    out: dict[str, list[dict[str, str]]] = {"attachments": [], "links": []}
+    if not notice_id:
+        return out
+    try:
+        resp = requests.get(
+            f"https://www.contractsfinder.service.gov.uk/api/rest/2/get_published_notice/json/{notice_id}",
+            headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0 (TenderFlow notice reader)"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return out
+        data = resp.json()
+    except Exception:
+        return out
+    for item in data.get("additionalDetails") or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("dataType") or "")
+        if kind == "Attachment" and item.get("id"):
+            out["attachments"].append({
+                "title": (item.get("description") or item.get("filename") or "Attachment").strip()[:200],
+                "filename": str(item.get("filename") or "document"),
+                "url": f"https://www.contractsfinder.service.gov.uk/Notice/Attachment/{item['id']}",
+            })
+        elif kind == "Link" and str(item.get("link") or "").startswith("http"):
+            out["links"].append({"title": (item.get("description") or "Buyer's tender page").strip()[:200] or "Buyer's tender page",
+                                 "url": str(item["link"]).strip()})
+    return out

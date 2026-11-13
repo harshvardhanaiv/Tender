@@ -232,6 +232,36 @@ ok("£2,500" in out and "40%" in out, "the buyer's own figures kept")
 ok("London borough" not in out and "European bank" not in out, "invented client types replaced")
 ok("ISO 27001 certified" not in out, "policy-only certification claim replaced")
 
+# R7: a decimal percentage is replaced whole, never split into "99." + a tag for "9%"
+up = server.verify_and_clean_bid_claims({"executive_summary": {"content": "We will meet 99.9% uptime and 12.5 % growth."},
+                                         "itt_question_responses": []}, "org", [], tender_facts="")["executive_summary"]["content"]
+ok("99.[" not in up and "'99.9%'" in up and "'12.5%'" in up, f"decimal percentage replaced whole: {up}")
+kept = server.verify_and_clean_bid_claims({"executive_summary": {"content": "We will meet 99.9% uptime."}, "itt_question_responses": []},
+                                          "org. sla uptime 99.9%", [], tender_facts="")["executive_summary"]["content"]
+ok(kept == "We will meet 99.9% uptime.", f"a decimal percentage in the company data is kept: {kept}")
+
+# R8: invented actions become [CONFIRM] items; the QA gate fails any left as prose
+act = server.verify_and_clean_bid_claims({"cover_letter": {"content": "Thank you. We have raised clarification queries through the In-Tend "
+                                                                      "Correspondence Facility. We will deliver on time."},
+                                          "itt_question_responses": [{"question_number": "1", "response": "Scope is unclear. We have raised this in our clarification questions."}]},
+                                         "org", [], tender_facts="")
+ok(act["cover_letter"]["content"].startswith("Thank you. [CONFIRM: you have done this") and act["cover_letter"]["content"].endswith("We will deliver on time."),
+   f"invented action in the letter -> [CONFIRM]: {act['cover_letter']['content']}")
+ok("[CONFIRM: you have done this" in act["itt_question_responses"][0]["response"], "and in an answer")
+ok(not any(i["check"] == "invented_action" for i in bw.qa_gate(act)["issues"]), "once tagged, the gate passes it")
+for s in ("We will raise this as a clarification question.", "Our team has raised standards across 12 venues.",
+          "This issue has been raised by residents for years."):
+    ok(bw.flag_invented_actions(s) == s, f"not an invented action: {s}")
+raw = {"cover_letter": {"content": "We have visited the site and met the Council's officers."}, "itt_question_responses": []}
+ok(any(i["check"] == "invented_action" and i["severity"] == "P0" for i in bw.qa_gate(raw)["issues"]), "untagged invented action is P0")
+ok("Never say the bidder has already done something" in bw.GROUNDING_RULES, "grounding rule 10 present")
+
+# R3: only the generated name counts, not ordinary prose
+for prose in ("The trading arm is separate from the bidding company.", "The Bidding Company shall hold insurance."):
+    ok(not any(i["check"] == "identity" for i in bw.qa_gate({"cover_letter": {"content": prose}})["issues"]), f"not a generated name: {prose}")
+ok(any(i["check"] == "identity" for i in bw.qa_gate({"cover_letter": {"content": "Bidding Company is pleased to respond."}})["issues"]),
+   "the generated name is still caught")
+
 # 12. Alert dates: a "last updated" date or today's date is not a submission deadline
 from tender_app.deep_scrape import _deadlines  # noqa: E402
 
@@ -277,5 +307,136 @@ try:
         ok(ft.fetch_find_tender_details("093543-2026")["contract_awarded_in_lots"] == want, f"lots {len(lots)} -> {want}")
 finally:
     ft._make_session = orig
+
+# 13b. R4: one signatory with that person's own email and phone
+m10, _ = bw.sanitize_identity({"org_name": "AIVHUB LTD", "contact_name": "", "email": "hemant@aivhub.com", "phone": "",
+                               "contact_name_2": "Mahendra Solankee", "email_2": "mahendra.aivhub.com", "phone_2": "+44 7976735746"})
+c, block = bw.bid_contact(m10)
+ok(c["name"] == "Mahendra Solankee" and c["phone"] == "+44 7976735746" and "hemant" not in block, f"one contact set, never mixed ({c})")
+ok(c["email"].startswith("[NEEDS INPUT: email address of Mahendra"), "his invalid email becomes a tag, not Hemant's")
+ok("email" not in bw.without_contacts(m10) and "phone_2" not in bw.without_contacts(m10) and "org_name" in bw.without_contacts(m10),
+   "other contact fields left out of the company data")
+c, _ = bw.bid_contact({"email": "hemant@aivhub.com"})
+ok(c["name"].startswith("[NEEDS INPUT") and c["email"] == "hemant@aivhub.com", "no name anywhere: email kept, name asked for")
+
+# 13c. EEF: titled sub-questions repeat their group's weighting and share it (24 answers came to 31k words)
+eef = {"itt_questions": (
+    [{"number": "Executive summary", "question_text": "Begin with a one-page summary.", "page_limit": 1}]
+    + [{"number": f"Proposed team - part {i}", "question_text": "q", "weighting": "40%"} for i in range(5)]
+    + [{"number": f"Costs - part {i}", "question_text": "q", "weighting": "20%"} for i in range(5)]
+    + [{"number": f"Approach - part {i}", "question_text": "q", "weighting": "40%"} for i in range(6)]
+    + [{"number": f"Collaboration - part {i}", "question_text": "q", "weighting": "20%"} for i in range(4)]
+    + [{"number": "Risks and challenges", "question_text": "q"}])}
+eq = bw.extract_questions(eef)
+team = [q["budget_words"] for q in eq if q["number"].startswith("Proposed team")]
+appr = [q["budget_words"] for q in eq if q["number"].startswith("Approach")]
+ok(team == [480] * 5 and appr == [400] * 6, f"group weighting shared: team {team}, approach {appr}")
+ok(sum(q["budget_words"] for q in eq) < 9000, f"whole bid stays near the 6,000-word budget (weights add to 120%) ({sum(q['budget_words'] for q in eq)})")
+mg = bw.extract_questions({"itt_questions": [{"number": "Q1", "question_text": "a", "weighting": "10%"}, {"number": "Q2", "question_text": "b", "weighting": "10%"},
+                                              {"number": "Q3.I", "question_text": "c", "weighting": "10%"}, {"number": "Q3.II", "question_text": "d", "weighting": "10%"}]})
+ok([q["budget_words"] for q in mg] == [600, 600, 300, 300], "numbered questions behave as before")
+
+# 13d. EEF: an executive summary restates the answers; answers repeating each other are still caught
+same = ("The centre will open seven days a week for residents and groups of all ages with fair prices and a clear booking process for all. " * 3).strip()
+sq = bw.qa_gate({"itt_question_responses": [{"question_number": "Executive summary", "response": same, "status": "ok"},
+                                             {"question_number": "Team", "response": same, "status": "ok"}]})
+ok(not any(i["check"] == "duplication" for i in sq["issues"]), "executive summary repeating an answer is not flagged")
+ok(any(i["check"] == "duplication" for i in bw.qa_gate({"itt_question_responses": [{"question_number": "Team", "response": same, "status": "ok"},
+                                                                                       {"question_number": "Costs", "response": same, "status": "ok"}]})["issues"]),
+   "two answers repeating each other still are")
+ok("budget, price ceiling" in bw.ANSWER_STANDARD, "answers stay inside a stated budget envelope")
+
+# 13e. Thetford: a contact block ending on an address is a clean ending, a mid-sentence stop still is not
+ok(bw.ends_cleanly("Fee: [NEEDS INPUT: fee]\n\nMahendra Solankee\nAIVHUB LTD\n5 Canterbury Road, Reading, RG2 7TB"), "ends on a postcode")
+ok(bw.ends_cleanly("Contact us on\n+44 7976 735746"), "ends on a phone number")
+ok(not bw.ends_cleanly("We will deliver the plan in 2027 and the"), "still catches a dangling word")
+
+# 14. Bid / no-bid and passed stages (M16, R9, G6, R10)
+import datetime as dt  # noqa: E402
+from tender_app import bid_decision as bd  # noqa: E402
+
+ok(bd.last_date("EOI on In-Tend 01/11/26 - 04/11/26") == dt.date(2026, 11, 4), "a date range gives its end date")
+ok(bd.last_date("by 30th October 2026 at noon") == dt.date(2026, 10, 30), "written-out date")
+ok(bd.last_date("not stated") is None, "no date")
+s1 = {"clarification_deadline": {"date": "11/11/2026"},
+      "key_dates": [{"event": "Expressions of interest", "date": "01/11/2026 - 04/11/2026", "bidder_action": True},
+                    {"event": "Sample deadline", "date": "30/10/2026"},
+                    {"event": "Tender submission deadline", "date": "01/11/2026"},
+                    {"event": "Contract award", "date": "01/10/2026", "bidder_action": False},
+                    {"event": "Site visit", "date": "01/12/2026"}]}
+w = bd.stage_warnings(s1, today=dt.date(2026, 11, 13))
+ok([x["kind"] for x in w] == ["clarification", "eoi", "sample"], f"passed bidder stages only ({w})")
+ok(bd.clarification_window_closed(w) and "04/11/2026" in w[1]["detail"], "EOI warning names its closing day")
+ok(bd.stage_warnings(s1, today=dt.date(2026, 10, 1)) == [], "nothing passed yet")
+ok("Sample deadline: 30/10/2026" in bd.stage_note(w), "writers get the passed stages")
+# Live run 7 (Matthewsgreen): none of these is a passed bidder stage
+mg = {"notice_type": "UK2: Preliminary market engagement notice (Expression of Interest)", "clarification_deadline": {"date": None},
+      "key_dates": [{"event": "Original Expression of Interest deadline (superseded)", "date": "01/11/2026", "bidder_action": True},
+                    {"event": "Clarification log issued", "date": "06/11/2026", "bidder_action": False},
+                    {"event": "Notice published", "date": "02/10/2026"},
+                    {"event": "Expression of interest deadline", "date": "08/11/2026", "bidder_action": True}]}
+ok(bd.stage_warnings(mg, today=dt.date(2026, 11, 13)) == [], "superseded, buyer-side and EOI-notice dates are not flagged")
+
+raw = {"verdict": "Bid", "summary": "x", "criteria": [{"criterion": "Print", "weight": "60%", "rating": "none"},
+                                                     {"criterion": "Service", "weight": 40, "rating": "Strong"}],
+       "mandatory": [{"requirement": "Print plant", "status": "not met"}], "capability_gaps": ["no presses"],
+       "partner_for": ["print production"]}
+d = bd.normalise_decision(raw, w, False)
+ok(d["fit_score"] == 40 and d["verdict"] == "Bid with partner" and d["adjusted_because"], f"unmet mandatory + partner -> Bid with partner ({d})")
+ok(bd.normalise_decision(dict(raw, partner_for=[]), w, False)["verdict"] == "No-bid", "no partner route -> No-bid")
+ok(bd.normalise_decision({"verdict": "maybe", "criteria": [{"criterion": "A", "rating": "strong"}]}, [], False)["verdict"] == "Bid",
+   "unknown verdict falls back to the fit score")
+ok(bd.normalise_decision("not a dict", [], False) is None, "bad reply -> no decision")
+ok(bd.assess_bid(lambda s, u, m: (_ for _ in ()).throw(RuntimeError("down")), "P", [], False) is None, "a failed call never blocks drafting")
+note = bd.capability_note(d)
+ok("no presses" in note and "Never offer an unrelated product" in note and "print production" in note, "gaps become writer instructions")
+ok(bd.capability_note(None) == "", "no decision -> no note")
+iss = bd.decision_issues(dict(d, verdict="No-bid"), w)
+ok([(i["check"], i["severity"]) for i in iss] == [("bid_decision", "P1"), ("stage_passed", "P2"), ("stage_passed", "P1"), ("stage_passed", "P1")],
+   f"export check items ({iss})")
+ok("unrelated product or service" in bw.GROUNDING_RULES and "11." in bw.GROUNDING_RULES, "grounding rule 11 (R9)")
+
+# 15. M8: outcome claims need the model; the model carries the buyer's figures and the answer's gaps
+from tender_app import financial_model as fm  # noqa: E402
+
+ok(fm.flag_unsupported_outcomes("The plan reaches a small surplus by Year 3.").startswith("[CONFIRM: keep only if your financial model shows it"),
+   "surplus by Year 3 -> [CONFIRM]")
+ok(fm.flag_unsupported_outcomes("We will review costs every year.") == "We will review costs every year.", "no outcome claim, untouched")
+ok(fm.flag_unsupported_outcomes("[CONFIRM: break-even by Year 3]") == "[CONFIRM: break-even by Year 3]", "already a tag, untouched")
+fin_s1 = {"special_conditions": ["Sinking fund: operator contributes GBP 2,500 per annum.",
+                                 "Shared costs: operator pays 16% of shared drains, plant, gas and water costs."],
+          "published_clarifications": [{"question": "Is the sinking fund fixed?", "answer": "Yes, GBP 2,500 per annum."}]}
+bi = fm.buyer_inputs(fin_s1)
+ok([b["kind"] for b in bi] == ["fixed", "share"] and bi[0]["value"] == 2500 and abs(bi[1]["pct"] - 0.16) < 1e-9 and "Sinking fund" in bi[0]["label"],
+   f"buyer figures found once, named from the terms ({bi})")
+gi = fm.gap_inputs("Hire [NEEDS INPUT: Year 1 hall hire income] and [NEEDS INPUT: utilisation rate %] and [CONFIRM: x] [NEEDS INPUT: Year 1 hall hire income]")
+ok([(g["kind"], g["is_pct"]) for g in gi] == [("income", False), ("cost", True)], f"gaps become inputs ({gi})")
+ok(fm.financial_answer({"itt_question_responses": [{"question_number": "1", "question_text": "Experience", "response": "a"},
+                                                   {"question_number": "4.I", "question_text": "Financial sustainability business plan", "weighting": "40%", "response": "b"}]}) == ("4.I", "b"),
+   "the weighted financial question is picked")
+try:
+    import openpyxl  # noqa: F401
+    import io as _io
+    from openpyxl import load_workbook
+    wb = load_workbook(_io.BytesIO(fm.build_model_xlsx("T", "C", fin_s1, "x [NEEDS INPUT: Year 1 hall hire income]")))
+    vals = [c for row in wb["Model"].iter_rows(values_only=True) for c in row if isinstance(c, str)]
+    ok(wb.sheetnames == ["Inputs", "Model"] and any("MATCH(TRUE" in v for v in vals), "workbook with a computed break-even year")
+except ImportError:
+    print("  (openpyxl not installed here: workbook check runs in the app container)")
+
+# 16. Search (H5 / R11 / A1)
+from tender_app.search_terms import term_matches  # noqa: E402
+ok(term_matches("eef digital public service", "develop the alpha and beta of the eef&#039;s digital public service"), "H5: EEF found by its own title words")
+ok(term_matches("print and signage", "cornwall college group print &amp; signage"), "R11: and matches &")
+ok(not term_matches("eef", "roast beef supply") and term_matches("software", "booking software"), "words match from their start only")
+from etenders_scraper.sources import progressive_search as ps  # noqa: E402
+ok(ps.ampersand_variant("Print and Signage") == "Print & Signage" and ps.ampersand_variant("Highland roads") is None, "R11: & / and retry spelling")
+ok(ps.matches_query({"title": "Print & Signage DPS"}, "print and signage") and not ps.matches_query({"title": "Road gritting"}, "Matthewsgreen"), "H5: loose portal rows need a query word")
+from etenders_scraper.sources.notice_links import link_same_tender  # noqa: E402
+lk = link_same_tender([{"source": "find_tender", "source_label": "Find a Tender", "title": "Mathewsgreen Community Centre", "contracting_authority": "Wokingham Borough Council", "submission_deadline": "01/11/2026"},
+                       {"source": "procontract", "source_label": "ProContract", "title": "Matthewsgreen Community Centre - Expression of Interest", "contracting_authority": "Wokingham Borough Council", "submission_deadline": "08/11/2026", "resource_id": "DN831703"},
+                       {"source": "pcs", "title": "Road gritting", "contracting_authority": "Highland Council", "submission_deadline": "01/12/2026"}])
+ok(lk[0]["newer_deadline_elsewhere"] == {"date": "08/11/2026", "source_label": "ProContract"} and "newer_deadline_elsewhere" not in lk[1] and "linked_notices" not in lk[2],
+   "A1: the two portals' rows are linked, the later deadline shown on the stale one")
 
 print(f"bid_phase1_test: {PASSED} checks passed")

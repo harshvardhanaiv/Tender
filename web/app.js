@@ -283,6 +283,7 @@ const state = {
   pipelineView: false,  // true = dashboard/pipeline panel is open
   username: "",
   creditBalance: null,
+  creditCosts: { proposal: 10, download: 3 },
   plan: "free",
   lowCredit: false,
   lang: "en", // loaded from user-scoped storage after identity resolves
@@ -725,6 +726,7 @@ async function loadCurrentUser() {
 
     state.creditBalance = data.balance ?? state.creditBalance;
     state.plan = data.plan || state.plan || "free";
+    if (data.costs && typeof data.costs === "object") state.creditCosts = data.costs;
     if (state.creditBalance != null) {
       lsSet("tf_credit_balance", state.creditBalance);
     }
@@ -5321,6 +5323,14 @@ function isAwardNotice(row) {
 function isClosedTender(row) {
   if (!row) return false;
 
+  // The same tender on another portal has a later, still open deadline (an extension Find a Tender never got):
+  // the row is not closed (fix plan A1).
+  const newer = row.newer_deadline_elsewhere;
+  if (newer && newer.date) {
+    const m = String(newer.date).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (m && new Date(+m[3], +m[2] - 1, +m[1], 23, 59) >= new Date()) return false;
+  }
+
   // Explicit past urgency tag
   const urgency = String(row.deadline_urgency || "").toLowerCase();
   if (urgency === "past" || urgency === "closed" || urgency === "expired") return true;
@@ -8209,6 +8219,39 @@ $("dashboardModal")?.addEventListener("click", (e) => {
   if (e.target === $("dashboardModal")) closeDashboard();
 });
 
+// Bid / no-bid advice from the bid pipeline (fix plan M16) plus the procurement stages already passed (G6/R10).
+function bidDecisionCardHtml(d, stages) {
+  const passed = Array.isArray(stages) ? stages : [];
+  if (!d && !passed.length) return "";
+  const verdict = d ? String(d.verdict || "") : "";
+  const tone = verdict === "No-bid" ? ["#fecaca", "#fef2f2", "#991b1b", "⛔"]
+    : verdict === "Bid with partner" ? ["#fde68a", "#fffbeb", "#92400e", "🤝"]
+    : verdict === "Bid" ? ["#bbf7d0", "#f0fdf4", "#166534", "✅"] : ["#e5e7eb", "#f9fafb", "#374151", "📅"];
+  const fit = d && d.fit_score != null ? ` · fit ${Number(d.fit_score)}/100 on the evidence` : "";
+  const list = (title, items) => items.length
+    ? `<div style="margin-top:8px"><strong style="font-size:12px">${esc(title)}</strong><ul class="placeholder-warning-list" style="margin-top:4px">${items.map(i => `<li>${esc(i)}</li>`).join("")}</ul></div>` : "";
+  const mand = d && Array.isArray(d.mandatory) ? d.mandatory.filter(m => m.status !== "met").map(m => `${m.requirement}: ${m.status}${m.note ? " (" + m.note + ")" : ""}`) : [];
+  const crit = d && Array.isArray(d.criteria) ? d.criteria.map(c => `${c.criterion}${c.weight ? " (" + c.weight + "%)" : ""}: ${c.rating}${c.evidence ? " - " + c.evidence : ""}`) : [];
+  const gaps = d && Array.isArray(d.capability_gaps) ? d.capability_gaps : [];
+  // The verdict, why, the top gaps and passed stages stay in view; the full assessment folds away.
+  const more = [
+    list("More gaps", gaps.slice(3)),
+    list("Work a partner would cover", d && Array.isArray(d.partner_for) ? d.partner_for : []),
+    list("Mandatory requirements not evidenced", mand),
+    list("How each criterion was rated", crit),
+  ].join("");
+  return `
+    <div class="placeholder-warning-card" style="border-color:${tone[0]};background:${tone[1]}">
+      <h4 class="placeholder-warning-title" style="color:${tone[2]}">${tone[3]} ${verdict ? `Advice: ${esc(verdict)}${esc(fit)}` : "Stages already passed"}</h4>
+      ${d && d.summary ? `<p style="margin:4px 0 0;font-size:13px">${esc(d.summary)}</p>` : ""}
+      ${d && Array.isArray(d.adjusted_because) && d.adjusted_because.length ? `<p style="margin:4px 0 0;font-size:12px;opacity:.8">Changed to this verdict because: ${esc(d.adjusted_because.join("; "))}.</p>` : ""}
+      ${list("What your company data doesn't show", gaps.slice(0, 3))}
+      ${list("Stages already passed", passed.map(s => s.detail))}
+      ${more ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;font-weight:600">Full assessment</summary>${more}</details>` : ""}
+      ${verdict && verdict !== "Bid" ? `<p style="margin:8px 0 0;font-size:12px">The draft below was still written: gaps are marked [NEEDS INPUT] or [CONFIRM], never filled in.</p>` : ""}
+    </div>`;
+}
+
 // The top of the Tender details panel: what the notice is called, who is buying, when it ends and how well it fits (Re-test 8 UI refresh).
 function detailsHeroHtml(row) {
   const title = String((row && row.title) || "").trim();
@@ -8219,18 +8262,31 @@ function detailsHeroHtml(row) {
   if (isAwardNotice(row)) timing = "Awarded";
   else if (isClosedTender(row)) timing = "Closed";
   else {
-    const dl = (row && row.submission_deadline) || "";
+    const dl = (row && row.newer_deadline_elsewhere && row.newer_deadline_elsewhere.date) || (row && row.submission_deadline) || "";
     timing = dl && !/:\s*$/.test(String(dl)) ? "Ends " + noticeDate(dl) : "No deadline";
   }
+  // The quick score only counts keyword overlap with the profile, so it is labelled as such: "Strong fit · 96" on a
+  // print tender for a data company read as capability advice (fix plan M16). The AI fit check keeps the "fit" words.
   let fit = "Not scored";
   if (fitActive()) {
+    const deep = (state.fitCache[rowKey(row)] || {}).deep;
     const q = getQuickFit(row);
-    if (q) fit = (q.band === "strong" ? "Strong fit" : q.band === "possible" ? "Possible fit" : "Weak fit") + " · " + q.score;
+    if (deep) fit = (deep.band === "strong" ? "Strong fit" : deep.band === "possible" ? "Possible fit" : "Weak fit") + " · " + deep.score;
+    else if (q) fit = "Keyword match · " + q.score;
   }
+  // A1: the same tender on another portal, and a later deadline there.
+  const linked = Array.isArray(row && row.linked_notices) ? row.linked_notices : [];
+  const newer = row && row.newer_deadline_elsewhere;
+  const linkedHtml = linked.length ? `<div class="td-hero__auth" style="font-size:12px">${newer
+      ? `⚠️ Deadline on ${esc(newer.source_label)}: ${esc(newer.date)} (later than this notice). `
+      : ""}Also listed on ${linked.map(l => l.url
+        ? `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.source_label || l.source)}</a>`
+        : esc(l.source_label || l.source)).join(", ")}.</div>` : "";
   return `<div class="td-hero">
     ${chip ? `<span class="td-hero__chip">${esc(chip)}</span>` : ""}
     <h3 class="td-hero__title">${esc(title)}</h3>
     ${auth && auth !== "Not available" ? `<div class="td-hero__auth">${esc(displayName(auth))}</div>` : ""}
+    ${linkedHtml}
     <div class="td-hero__cards">
       <div class="td-hero__card"><small>TIMING</small><b>${esc(timing)}</b></div>
       <div class="td-hero__card"><small>FIT</small><b>${esc(fit)}</b></div>
@@ -10058,7 +10114,7 @@ async function openSummaryModal(row, isRefresh = false) {
           const detailsRes = await fetch(refreshUrl);
           if (detailsRes.ok) {
             const freshData = await detailsRes.json();
-            activeRow = { ...row, ...freshData };
+            activeRow = mergeFreshTenderDetails(row, freshData);
             _analyseRow = activeRow;
           }
         }
@@ -12684,7 +12740,7 @@ async function runBidAssistant(isRefresh = false) {
         const detailsRes = await fetch(refreshUrl);
         if (detailsRes.ok) {
           const freshData = await detailsRes.json();
-          _bidRow = { ..._bidRow, ...freshData };
+          _bidRow = mergeFreshTenderDetails(_bidRow, freshData);
         }
       }
     } catch (e) {
@@ -12718,23 +12774,31 @@ async function runBidAssistant(isRefresh = false) {
     const uploads = state.bidUploadedFiles || [];
     const packKey = "tf_bid_pack_ok_" + String(rowKey(_bidRow)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 120);
     const confirmedRecently = (Date.now() - Number(lsGet(packKey, 0) || 0)) < 24 * 3600 * 1000;
-    const warnings = [];
-    if (!uploads.length && !pastedText && _bidRow.source !== "custom") {
-      warnings.push("No buyer documents are attached. Portals such as ProContract, Delta, In-Tend and Atamis keep the questionnaire, updates and clarification answers behind your supplier login, so this bid would be built from the public notice only. Download the full document pack from your portal account and add it under \"Additional supporting documents\".");
+    const wbTitles = [];
+    if (getSelectedWinningBidIds().length) {
+      document.querySelectorAll(".bid-winning-bid-checkbox:checked").forEach(cb => {
+        const t = document.querySelector(`label[for="${cb.id}"] .bid-user-doc-filename`)?.textContent?.trim();
+        if (t) wbTitles.push(t);
+      });
     }
-    if (isClosedTender(_bidRow)) {
-      warnings.push(`The stored deadline (${_bidRow.submission_deadline || "unknown"}) has passed. If the buyer extended it, upload the update so the bid uses the new date.`);
-    }
-    const hasClarFile = uploads.some(f => /clarif|q\s*&\s*a|q and a|questions? and answers|message|update|addend/i.test(f.filename || ""));
-    if (!hasClarFile && !confirmedRecently) {
-      warnings.push("Clarification answers: buyers publish clarification answers, updates and deadline changes inside your portal account, where we cannot see them. If there are any, export them (or print to PDF) and add them too.");
-    }
-    if (warnings.length) {
-      const msg = "Before we write your bid:\n\n" + warnings.map(w => "• " + w).join("\n\n") + "\n\nGenerate now? This uses credits.";
+    // A2: public documents on the notice count as buyer documents (the EEF brief is a public PDF).
+    // M16: a fit check from the notice before credits are spent, alongside the public document lookup.
+    const notCustom = _bidRow.source !== "custom";
+    const [publicDocs, fitCheck] = await Promise.all([
+      (!uploads.length && !pastedText && notCustom) ? fetchPublicTenderDocs(_bidRow) : Promise.resolve([]),
+      notCustom ? fetchBidCheck(_bidRow, $("bidCompanyProfileSelect")?.value || "") : Promise.resolve(null),
+    ]);
+    const pre = bidPreflight(_bidRow, uploads, pastedText, wbTitles, confirmedRecently,
+                             { proposal: creditCostText("proposal"), download: creditCostText("download") },
+                             isClosedTender(_bidRow), publicDocs, fitCheck);
+    if (pre.show) {
       const go = window.showConfirm
-        ? await window.showConfirm(msg, "Before we write your bid", { okText: "Generate", cancelText: "Add documents first", danger: false })
-        : window.confirm(msg);
-      if (!go) return;
+        ? await window.showConfirm(pre.message, "Before we write your bid", { okText: "Generate", cancelText: "Add documents first", danger: false })
+        : window.confirm(pre.message);
+      if (!go) {
+        openBidUploadStep();
+        return;
+      }
       lsSet(packKey, Date.now());
     }
   }
@@ -13523,7 +13587,7 @@ function renderProposal(p, row) {
   const phList = r.all_placeholders || [];
   if (phList.length) {
     placeholdersFormHtml += `
-      <div style="flex: 1; min-width: 260px; position: sticky; top: 10px; background: #f8fafc; border: 1px solid var(--border); padding: 15px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.02);">
+      <div style="flex: 1; min-width: min(260px, 100%); position: sticky; top: 10px; background: #f8fafc; border: 1px solid var(--border); padding: 15px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.02);">
         <h4 style="margin: 0 0 10px; font-size: 13px; color: var(--primary); border-bottom: 1px solid var(--border); padding-bottom: 6px;">✍️ Resolve Bid Placeholders</h4>
         <p style="font-size: 10px; color: #64748b; margin-bottom: 12px; line-height: 1.4;">Type details below to insert them into the draft letter and responses in real-time:</p>
         <div style="max-height: 480px; overflow-y: auto; padding-right: 5px;">
@@ -13576,6 +13640,9 @@ function renderProposal(p, row) {
       </div>`;
   }
 
+  // Bid / no-bid advice made before drafting (fix plan M16): the verdict, why, and what the company can't evidence.
+  const decisionCardHtml = bidDecisionCardHtml(p.bid_decision, p.stage_warnings);
+
   const hasClarificationsRun = Boolean(p.clarifications && (p.clarifications.questions?.length || p.clarifications.strategic_notes));
   const stage4WarningBannerHtml = hasClarificationsRun ? "" : `
     <div style="background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 8px; font-weight: 600; font-size: 12px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
@@ -13588,9 +13655,10 @@ function renderProposal(p, row) {
     <div id="tab-response" class="bid-tab-content hidden">
       <div style="display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
         <!-- Left Column: Draft Outputs -->
-        <div style="flex: 2; min-width: 480px;">
+        <div style="flex: 2; min-width: min(480px, 100%);">
           <div class="ai-draft-banner">⚠️ AI DRAFT — review before submitting</div>
           ${stage4WarningBannerHtml}
+          ${decisionCardHtml}
           ${qaCardHtml}
           ${placeholdersWarningCardHtml}
           <div class="analysis-section" style="margin-bottom: 0;">
@@ -13600,7 +13668,10 @@ function renderProposal(p, row) {
                 <h3 style="margin: 0; font-size: 14px; color: #fff; font-weight: 700;">📄 Complete Proposal Draft</h3>
                 <span style="font-size: 10px; opacity: 0.9;">Includes cover letter, TOC, checklists, methodology, answers & declarations</span>
               </div>
-              <button id="btnDownloadFullProposal" class="btn btn--small" style="background: #fff; color: #1e3a8a; border: none; padding: 6px 12px; font-size: 11px; border-radius: 6px; font-weight: 700; cursor: pointer; transition: all 0.2s;">📥 Download Full Bid (.docx)</button>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+                ${hasFinancialQuestion(r) ? `<button id="btnDownloadFinancialModel" class="btn btn--small" title="The buyer's figures and every gap in the financial answer, with a 10-year projection that works out the outcome. No credits." style="background: #fff; color: #166534; border: none; padding: 6px 12px; font-size: 11px; border-radius: 6px; font-weight: 700; cursor: pointer;">📊 Financial model (.xlsx) · free</button>` : ""}
+                <button id="btnDownloadFullProposal" class="btn btn--small" style="background: #fff; color: #1e3a8a; border: none; padding: 6px 12px; font-size: 11px; border-radius: 6px; font-weight: 700; cursor: pointer; transition: all 0.2s;">📥 Download Full Bid (.docx)</button>
+              </div>
             </div>
 
             ${r.cover_letter ? `
@@ -13762,6 +13833,223 @@ function renderProposal(p, row) {
   return html;
 }
 
+// The portal a tender's documents live on, from its source or links (fix plan M15: give the user the steps).
+const _PORTAL_STEPS = [
+  [/procontract|proactis/i, "ProContract", "Sign in at procontract.due-north.com, open the opportunity{ref}, download every file on the Documents tab, then open Messages / Clarifications and save each message (or the Q&A log) as PDF."],
+  [/in-?tend/i, "In-Tend", "Sign in to the buyer's In-Tend site, open the tender{ref}, download the Tender Documents, then export the Correspondence / Clarifications."],
+  [/delta|delta-esourcing/i, "Delta eSourcing", "Sign in at delta-esourcing.com, open the response{ref}, download the documents, then save the Messages and Clarifications."],
+  [/atamis/i, "Atamis", "Sign in to the buyer's Atamis portal, open the event{ref}, download the documents and export the Q&A."],
+  [/bravo|jaggaer|bravosolution/i, "Jaggaer / Bravo", "Sign in to the buyer's Jaggaer portal, open the opportunity{ref}, download the attachments and export the Messages."],
+];
+
+function bidPortalSteps(row) {
+  const hay = [row && row.source, row && row.source_label, row && row.url, row && row.link, row && row.notice_url,
+               row && row.documents_url, row && row.description].filter(Boolean).join(" ");
+  const hit = _PORTAL_STEPS.find(([re]) => re.test(hay));
+  if (!hit) return null;
+  // The portal's own reference: a DN number written anywhere, or the row's id only when the row is from that
+  // portal (a Find a Tender id is not a ProContract reference).
+  const dn = hay.match(/\bDN\d{5,7}\b/i);
+  const own = hit[0].test(String((row && (row.source || "")) + " " + String((row && row.source_label) || "")));
+  const ref = dn ? dn[0].toUpperCase() : (own ? String((row && (row.portal_reference || row.reference || row.resource_id)) || "").trim() : "");
+  const refTxt = ref ? ` (reference ${ref})` : "";
+  return { portal: hit[1], steps: hit[2].replace("{ref}", refTxt) };
+}
+
+// What a full buyer pack usually holds, ticked against the uploaded file names.
+const _EXPECTED_DOCS = [
+  ["Invitation / instructions (ITT, EOI or RFQ document)", /\bitt\b|invitation|instruction|\beoi\b|expression|\brfq\b|\brfp\b|tender doc|doc(?:ument)?\s*(?:no\.?\s*)?1\b/i],
+  ["Questionnaire or response template", /question|template|response|\bsq\b|method statement|doc(?:ument)?\s*(?:no\.?\s*)?4\b/i],
+  ["Specification / scope", /spec|scope|requirement|brief|heads of terms/i],
+  ["Pricing schedule or commercial terms", /pric|cost|commercial|financ|rate card|heads of terms/i],
+  ["Updates, addenda and clarification answers", /clarif|q\s*&\s*a|q and a|update|addend|message|amend|corrig/i],
+];
+
+// The "Before we write your bid" box (fix plan M15): expected documents, portal steps, deadline, past bids, cost.
+function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, costs, closed, publicDocs, fitCheck) {
+  // A public document is shown by its file name and ticked against its title and file name together.
+  const pub = (publicDocs || []).map(d => String(d.filename || d.title || "").trim()).filter(Boolean);
+  const pubMatch = (publicDocs || []).map(d => `${d.title || ""} ${d.filename || ""}`.trim()).filter(Boolean);
+  // "EEF_product_team_rfp_-_oct.pdf": underscores and dashes separate words in file names.
+  const names = (uploads || []).map(f => String(f.filename || "")).concat(pubMatch).map(n => n.replace(/[_\-.]+/g, " "));
+  const custom = row && row.source === "custom";
+  const warnings = [];
+  const info = [];
+  if (fitCheck && fitCheck.verdict) {
+    const fit = fitCheck.fit_score != null ? ` (fit ${fitCheck.fit_score}/100)` : "";
+    const gaps = (fitCheck.capability_gaps || []).slice(0, 3);
+    // Two sentences of the reasoning are enough here; the full advice is on the draft's card.
+    const brief = (String(fitCheck.summary || "").match(/[^.!?]+[.!?]+/g) || [String(fitCheck.summary || "")]).slice(0, 2).join("").trim();
+    const line = `Fit check from the notice, before any credits: ${fitCheck.verdict}${fit}. ${brief}`
+      + (gaps.length ? ` Not shown in your profile: ${gaps.join("; ")}.` : "")
+      + " The full check runs again on the documents while drafting.";
+    (fitCheck.verdict === "Bid" ? info : warnings).unshift(line);
+  }
+  if (pub.length && !(uploads || []).length) {
+    info.push(`We found ${pub.length} public document${pub.length === 1 ? "" : "s"} on the notice and will read ${pub.length === 1 ? "it" : "them"}: ${pub.slice(0, 6).join(", ")}${pub.length > 6 ? ", ..." : ""}. Anything behind a portal login (questionnaire, updates, clarification answers) still needs uploading.`);
+  } else if (!names.length && !pastedText && !custom) {
+    warnings.push("No buyer documents are attached, so this bid would be built from the public notice only. Portals keep the questionnaire, updates and clarification answers behind your supplier login.");
+  }
+  if (!custom) {
+    const lines = _EXPECTED_DOCS.map(([label, re]) => `${names.some(n => re.test(n)) ? "✓" : "☐"} ${label}`);
+    const missing = lines.filter(l => l.startsWith("☐")).length;
+    if (missing) info.push("Buyer documents we expect:\n   " + lines.join("\n   "));
+    const portal = bidPortalSteps(row);
+    if (portal && missing) info.push(`How to get them from ${portal.portal}: ${portal.steps}`);
+  }
+  const dl = String((row && row.submission_deadline) || "").trim();
+  const hasDate = dl && dl !== "—" && !/^(unknown|not stated|n\/a)$/i.test(dl);
+  if (closed) {
+    // R1: no "The stored deadline (unknown) has passed" when the notice gives no date.
+    warnings.push(hasDate
+      ? `The stored deadline (${noticeDate(dl)}) has passed. If the buyer extended it, upload the update so the bid uses the new date.`
+      : "This tender is marked as closed and the notice gives no deadline. If it is still open, upload the buyer's latest documents so the bid uses the right date.");
+  } else if (hasDate && !custom) {
+    info.push(`Deadline we will use: ${noticeDate(dl)} (from the notice). A later date in the documents you upload replaces it - check it matches your portal.`);
+  }
+  const hasClarFile = names.some(n => _EXPECTED_DOCS[4][1].test(n));
+  if (!hasClarFile && !confirmedRecently && !custom) {
+    warnings.push("Clarification answers: buyers publish clarification answers, updates and deadline changes inside your portal account, where we cannot see them. If there are any, export them (or print to PDF) and add them too.");
+  }
+  // R5: previous winning bids shape the draft and stay ticked between sessions, so say which are in use.
+  if (wbTitles && wbTitles.length) {
+    info.push(`Previous winning bids used as style examples: ${wbTitles.join(", ")}. Untick them under "Previous winning bids" to leave them out.`);
+  }
+  const show = warnings.length > 0 || ((wbTitles || []).length > 0) || (!confirmedRecently && info.length > 0)
+    || Boolean(fitCheck && fitCheck.verdict && !confirmedRecently);
+  const cost = costs && costs.proposal ? costs.proposal : "credits";
+  const dlCost = costs && costs.download ? `; each download afterwards uses ${costs.download}` : "";
+  const message = "Before we write your bid:\n\n" + [...warnings, ...info].map(w => "• " + w).join("\n\n")
+    + `\n\nGenerate now? This uses ${cost}${dlCost}.`;
+  return { show, warnings, info, message };
+}
+
+// Fresh portal details refresh the row, but never with a stand-in or an empty value: when Contracts Finder did not
+// answer, the server's stand-in ("Contracts Finder Notice #ocds-...", "UK Contracts Finder public notice #...") replaced
+// the real title and description, and the bid was written for the placeholder.
+function mergeFreshTenderDetails(row, fresh) {
+  if (!fresh || typeof fresh !== "object" || fresh._stub || fresh.error) return row;
+  const out = { ...row };
+  for (const [k, v] of Object.entries(fresh)) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === "string" && (!v.trim() || /^(not available|n\/a|—|-)$/i.test(v.trim()))) continue;
+    if (Array.isArray(v) && !v.length) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+// Public documents listed on the notice (fix plan A2). Waits at most 8 s; on any failure the box falls back to
+// asking for documents.
+async function fetchPublicTenderDocs(row) {
+  const source = row && row.source, rid = row && row.resource_id;
+  if (!source || !rid) return [];
+  const ctl = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), 8000) : null;
+  try {
+    const link = row.detail_url || row.url || row.link || "";
+    const qs = link ? `?detail_url=${encodeURIComponent(link)}` : "";
+    const res = await fetch(`/api/tender-docs/${encodeURIComponent(source)}/${encodeURIComponent(rid)}${qs}`, ctl ? { signal: ctl.signal } : {});
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data && data.docs) ? data.docs : [];
+  } catch (e) {
+    return [];
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// Bid / no-bid from the notice and profile before credits are spent (fix plan M16). Free, cached for a day per
+// tender and profile; any failure or a 25 s wait just leaves it out of the box.
+async function fetchBidCheck(row, profileId) {
+  if (!row || !profileId) return null;
+  const key = "tf_bid_check_" + String(rowKey(row)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 100) + "_" + profileId;
+  const saved = lsGet(key, null);
+  if (saved && saved.at && Date.now() - saved.at < 24 * 3600 * 1000 && saved.decision) return saved.decision;
+  const ctl = typeof AbortController === "function" ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), 25000) : null;
+  try {
+    const res = await fetch("/api/bid-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tender: row, profile_id: profileId }),
+      ...(ctl ? { signal: ctl.signal } : {}),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && data.decision) lsSet(key, { at: Date.now(), decision: data.decision });
+    return (data && data.decision) || null;
+  } catch (e) {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// "Add documents first" opens the upload step instead of just closing the box (fix plan M15).
+function openBidUploadStep() {
+  const card = document.getElementById("bidStepCard4");
+  if (!card) return;
+  if (card.classList.contains("is-collapsed") && typeof window.toggleBidStep === "function") window.toggleBidStep(4);
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// M8: the financial answer comes with a spreadsheet model; outcomes come from its formulas, not from the draft.
+const _FIN_Q_RE = /financ|business plan|budget|income|cost|cash ?flow|viab|sustainab|pric|revenue|profit/i;
+function hasFinancialQuestion(r) {
+  return ((r && r.itt_question_responses) || []).some(q => _FIN_Q_RE.test(String((q && q.question_text) || "")));
+}
+
+async function downloadFinancialModel() {
+  const btn = $("btnDownloadFinancialModel");
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "Building model..."; }
+  try {
+    const res = await fetch("/api/download-financial-model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: (_bidRow && _bidRow.title) || "Tender",
+        company_name: (_lastProposal && (_lastProposal.bid_company || _lastProposal.company)) || "",
+        bid_response: (_lastProposal && _lastProposal.bid_response) || {},
+        dissection: (_lastProposal && _lastProposal.dissection) || {},
+      }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = String((_bidRow && _bidRow.title) || "tender").replace(/[^A-Za-z0-9]+/g, "_").slice(0, 50) + "_financial_model.xlsx";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) {
+    await showAlert("The financial model could not be built: " + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
+}
+
+// Every bid download is charged (fix plan R6: 521 -> 518 with no warning), so each button says what it costs.
+function creditCostText(kind) {
+  const n = Number(((state.creditCosts || {})[kind]));
+  return Number.isFinite(n) && n > 0 ? `${n} credit${n === 1 ? "" : "s"}` : "";
+}
+
+function labelChargedDownloads() {
+  const cost = creditCostText("download");
+  if (!cost) return;
+  ["btnDownloadCoveringLetter", "btnDownloadFullProposal", "btnDownloadFullProposalHeader", "btnDownloadFullProposalS1",
+   "btnDownloadFullProposalS2", "btnDownloadFullProposalS4", "btnDownloadDissection", "btnDownloadChecklist",
+   "btnDownloadClarifications"].forEach(id => {
+    const b = $(id);
+    if (!b || b.dataset.costLabelled) return;
+    b.dataset.costLabelled = "1";
+    b.textContent = `${b.textContent.trim()} · ${cost}`;
+    b.title = `Each download uses ${cost}.`;
+  });
+}
+
 function wireBidResultButtons() {
   $("btnCopyCoveringLetter")?.addEventListener("click", copyCoveringLetterToClipboard);
   $("btnDownloadCoveringLetter")?.addEventListener("click", downloadCoveringLetterDoc);
@@ -13773,6 +14061,8 @@ function wireBidResultButtons() {
   $("btnDownloadDissection")?.addEventListener("click", downloadDissectionDoc);
   $("btnDownloadChecklist")?.addEventListener("click", downloadChecklistDoc);
   $("btnDownloadClarifications")?.addEventListener("click", downloadClarificationsDoc);
+  $("btnDownloadFinancialModel")?.addEventListener("click", downloadFinancialModel);
+  labelChargedDownloads();
 
   // ── Wire ✨ Enrich Section buttons ─────────────────────────────────────
   document.querySelectorAll(".btn-enrich-section").forEach(btn => {
@@ -14495,7 +14785,8 @@ async function downloadFullProposalDoc(btnElem = null) {
           methodology_image_b64: methodologyImageB64,
           gantt: _lastProposal?.gantt || { unit: _ganttUnit, phases: _ganttPhases },
           gantt_image_b64: ganttImageB64,
-          tender_closed: Boolean(_lastProposal?.tender_closed)
+          tender_closed: Boolean(_lastProposal?.tender_closed),
+          format_requirements: _lastProposal?.dissection?.format_requirements || null
         })
       });
       if (!res.ok) {
@@ -17634,7 +17925,7 @@ async function reRunAnalysis(row, company, files) {
       const detailsRes = await fetch(refreshUrl);
       if (detailsRes.ok) {
         const freshData = await detailsRes.json();
-        activeRow = { ...row, ...freshData };
+        activeRow = mergeFreshTenderDetails(row, freshData);
         _analyseRow = activeRow;
       }
     }
@@ -24535,12 +24826,10 @@ async function loadBidWinningBids(checkIds = null) {
     }
     container.classList.remove("hidden");
 
-    // Drop ids of deleted bids and respect the cap; with no saved selection, pre-select the newest 3
+    // Drop ids of deleted bids and respect the cap. Nothing is pre-selected: a past bid shapes the draft, so the
+    // user ticks it on purpose (fix plan R5), and the pre-generation box lists the ticked ones.
     const existingIds = new Set(items.map(it => String(it.id)));
-    let selectedIds = orderedIds.filter(id => existingIds.has(id)).slice(0, BID_WINNING_BIDS_MAX);
-    if (!hasSavedState && selectedIds.length === 0) {
-      selectedIds = items.slice(0, 3).map(it => String(it.id));
-    }
+    const selectedIds = orderedIds.filter(id => existingIds.has(id)).slice(0, BID_WINNING_BIDS_MAX);
     const checkedIds = new Set(selectedIds);
 
     items.forEach((it, idx) => {
