@@ -5026,6 +5026,17 @@ def create_app() -> Flask:
                 also = first.setdefault("also_on", [])
                 if src not in also:
                     also.append(src)
+                # The other portal's copy may carry a later deadline (Matthewsgreen: Find a Tender said 1 Nov, ProContract
+                # 8 Nov after an extension): remember it, so the row is not shown as closed on the stale date (A1).
+                from etenders_scraper.sources.notice_links import parse_deadline
+                other, own = parse_deadline(r.get("submission_deadline")), parse_deadline(first.get("submission_deadline"))
+                linked = first.setdefault("linked_notices", [])
+                if not any(l.get("source") == src for l in linked):
+                    linked.append({"source": src, "source_label": r.get("source_label") or src, "title": r.get("title"),
+                                   "submission_deadline": r.get("submission_deadline"), "url": r.get("detail_url") or r.get("url")})
+                if other and (own is None or other > own) and (
+                        not first.get("newer_deadline_elsewhere") or other > parse_deadline(first["newer_deadline_elsewhere"]["date"])):
+                    first["newer_deadline_elsewhere"] = {"date": other.strftime("%d/%m/%Y"), "source_label": r.get("source_label") or src}
             # keep whichever copy carries the deadline / value if the kept one lacks them
             for fld in ("submission_deadline", "value", "estimated_value", "description"):
                 if not first.get(fld) and r.get(fld):

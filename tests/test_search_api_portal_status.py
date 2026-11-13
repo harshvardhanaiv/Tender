@@ -150,6 +150,19 @@ def test_the_response_says_what_every_portal_did():
     assert len(data["rows"]) == 4
 
 
+def test_the_same_tender_on_two_portals_keeps_the_later_deadline():
+    # Matthewsgreen: Find a Tender said 1 Nov, ProContract 8 Nov after an extension (fix plan A1)
+    _stored.clear()
+    same = dict(title="Matthewsgreen Community Centre", contracting_authority="Wokingham Borough Council")
+    Portals().everyone({"find_tender": [row("find_tender", 1, submission_deadline="01/11/2026 23:59:00", **same)],
+                        "procontract": [row("procontract", 1, submission_deadline="08/11/2026 23:00:00", **same)]})
+    data = run(client(), "matthewsgreen")
+    kept = [r for r in data["rows"] if r["source"] == "find_tender"]
+    assert len(data["rows"]) == 1 and kept[0]["also_on"] == ["procontract"]
+    assert kept[0]["newer_deadline_elsewhere"] == {"date": "08/11/2026", "source_label": SOURCES["procontract"]["label"]}
+    assert [l["source"] for l in kept[0]["linked_notices"]] == ["procontract"]
+
+
 def test_rows_saved_by_earlier_searches_are_told_apart_from_what_the_portal_returned():
     # the QA case: a portal that returned nothing to THIS search still has rows on screen, from earlier searches
     _stored[:] = [row("gca_agreements", 90, title="Construction works saved earlier A"), row("gca_agreements", 91, title="Construction works saved earlier B")]
