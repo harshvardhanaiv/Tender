@@ -225,7 +225,9 @@ full = server.verify_and_clean_bid_claims(br, "org name: aivhub ltd. isms policy
 ok("[PLACEHOLDER: insert verified figure — '£20,000' not found in company data] and" in full, "tag keeps the following space")
 end = server.verify_and_clean_bid_claims({"cover_letter": {"content": "Over ten years it totals £25,000."}, "itt_question_responses": []},
                                          "org", [], tender_facts="sinking fund £2,500")["cover_letter"]["content"]
-ok(end.endswith("company data]."), f"the sentence keeps its full stop (live run 2): {end}")
+end2 = server.verify_and_clean_bid_claims({"cover_letter": {"content": "Over the term it totals £31,000."}, "itt_question_responses": []},
+                                          "org", [], tender_facts="sinking fund £2,500")["cover_letter"]["content"]
+ok(end == "Over ten years it totals £25,000." and end2.endswith("company data]."), f"derived 10 x £2,500 kept; an unrelated figure replaced and keeps its full stop: {end} / {end2}")
 out = bw.PLACEHOLDER_RE.sub("", full)  # what is left as asserted prose
 ok("£20,000" not in out and "60%" not in out, "invented money and percentage replaced")
 ok("£2,500" in out and "40%" in out, "the buyer's own figures kept")
@@ -350,6 +352,11 @@ ok("budget, price ceiling" in bw.ANSWER_STANDARD, "answers stay inside a stated 
 ok(bw.ends_cleanly("Fee: [NEEDS INPUT: fee]\n\nMahendra Solankee\nAIVHUB LTD\n5 Canterbury Road, Reading, RG2 7TB"), "ends on a postcode")
 ok(bw.ends_cleanly("Contact us on\n+44 7976 735746"), "ends on a phone number")
 ok(not bw.ends_cleanly("We will deliver the plan in 2027 and the"), "still catches a dangling word")
+
+# 13f. figures derived from a published one are kept; unrelated ones are still replaced
+dv = server.verify_and_clean_bid_claims({"cover_letter": {"content": "We set aside £208.33 a month and £25,000 over the term, but £9,999 is new."}, "itt_question_responses": []},
+                                        "org", [], tender_facts="sinking fund £2,500 per annum")["cover_letter"]["content"]
+ok("£208.33 a month" in dv and "£25,000 over" in dv and "£9,999" not in bw.PLACEHOLDER_RE.sub("", dv), f"derived amounts kept, unrelated replaced: {dv}")
 
 # 14. Bid / no-bid and passed stages (M16, R9, G6, R10)
 import datetime as dt  # noqa: E402

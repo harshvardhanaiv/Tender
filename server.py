@@ -3474,13 +3474,34 @@ def verify_and_clean_bid_claims(bid_response: dict, ground_truth_str: str, check
             return bool(re.search(rf"(?<![\d.]){re.escape(pct_str)}\s*(?:%|per\s*cent|percent)", numbers_source))
         return pct_str in gt_lower or f"{pct_str}%" in gt_lower
 
+    _src_amounts = None
+
+    def _is_derived_amount(val: float, src: str) -> bool:
+        """val is a published £ amount divided by 12, 52 or 365 (monthly / weekly / daily), or multiplied by a common term of 2, 3, 5, 10 or 15 years."""
+        nonlocal _src_amounts
+        if _src_amounts is None:
+            _src_amounts = {float(m.group(1)) for m in re.finditer(r"[£€$]\s*(\d+(?:\.\d+)?)(?![\d.]*\s*(?:k|m|bn)\b)", src)
+                            if float(m.group(1)) >= 100}
+        for a in _src_amounts:
+            if any(abs(val - a / d) <= 0.011 for d in (12, 52, 365, 4)) or any(abs(val - a * k) <= 0.011 for k in (2, 3, 5, 10, 15)):
+                return True
+        return False
+
     def _money_in_source(match_str: str) -> bool:
         # Strip symbols and normalise for lookup
         digits = re.sub(r'[£€\$,\s]', '', match_str).lower()
         if strict_numbers:
             core = re.sub(r'[^\d.]', '', digits)
             unit = re.sub(r'[\d.]', '', digits)
-            return bool(core) and (digits in numbers_source or bool(re.search(rf"[£€$]\s*{re.escape(core)}(?!\d)\s*{re.escape(unit)}", numbers_source)))
+            if bool(core) and (digits in numbers_source or bool(re.search(rf"[£€$]\s*{re.escape(core)}(?!\d)\s*{re.escape(unit)}", numbers_source))):
+                return True
+            # A figure worked out from a published one is not invented: £2,500 a year -> £208.33 a month, £25,000 over 10 years.
+            if core and not unit:
+                try:
+                    return _is_derived_amount(float(core), numbers_source)
+                except ValueError:
+                    return False
+            return False
         return digits in gt_lower or match_str.lower().replace(',', '') in gt_lower
 
     def clean_text_field(text: str) -> str:
