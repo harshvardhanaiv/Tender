@@ -343,4 +343,21 @@ try:
 except ImportError:
     print("  (PyMuPDF not installed here: PDF export check skipped)")
 
+# Release 4 (round 2): content-based document roles (N7) and the technical + commercial pack (N3)
+import base64 as _b64
+brief_txt = ("Instructions to bidders. Quality questions: please describe your approach (word limit 500). "
+             "Specification: the scope of services. Fee proposal with day rates.")
+cr = client.post("/api/classify-bid-docs", headers={"X-CSRF-Token": "t"},
+                 json={"files": [{"filename": "brief.txt", "content": _b64.b64encode(brief_txt.encode()).decode()}]})
+ok(cr.status_code == 200 and cr.get_json()["files"][0]["roles"] == [0, 1, 2, 3], "classify-bid-docs: one brief covers four boxes")
+pk = client.post("/api/download-submission-pack", headers={"X-CSRF-Token": "t"}, json={
+    "title": "IT equipment", "authority": "Chemonics Group UK Limited", "company_name": "AIVHUB LTD",
+    "price_schedules": [{"sheet": "ToR", "header": ["Item", "Description", "Qty", "Unit price", "Total"], "rows": [["1", "Laptop", "20", "", ""]]}],
+    "dissection_rulings": {"published_clarifications": [{"question": "VAT?", "answer": "Prices must exclude VAT."}]},
+    "bid_response": {"cover_letter": {"content": "Dear Olha. Our price is 5,000 GBP."}, "pricing_notes": {"content": "Total 9,999 GBP"},
+                     "itt_question_responses": [{"question_number": "1", "response": "We deliver in 20 days."}]}})
+zp = zipfile.ZipFile(io.BytesIO(pk.data))
+ok(pk.status_code == 200 and sorted(zp.namelist()) == ["README.txt", "commercial_offer.xlsx", "technical_offer.docx"], "submission pack has both files")
+ok(b"9,999" not in zp.read("technical_offer.docx") and b"5,000" not in zp.read("technical_offer.docx"), "technical offer carries no prices")
+
 print(f"bid_phase1_route_test: {PASSED} checks passed")

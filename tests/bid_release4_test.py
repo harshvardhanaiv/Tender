@@ -170,4 +170,61 @@ if pymupdf:
 else:
     print("  (PyMuPDF not installed here: PDF checks skipped; they run in the app container)")
 
+# ---- N3: technical and commercial offers as separate files --------------------------------------------------------
+from tender_app import submission_pack as sp
+
+scheds = sp.price_schedules_from_text(txt)
+ok(len(scheds) == 1 and scheds[0]["sheet"] == "ToR" and len(scheds[0]["rows"]) == 2, "price schedule read back from the workbook text")
+ok(scheds[0]["header"][:3] == ["Item", "Description", "Qty"], "price schedule header kept")
+wb2 = make_xlsx({
+    "ToR": [["ITT No. 2026-PAR-105 Procurement of IT-equipment"], ["Volume 3 - Terms of Reference"],
+            ["No.", "Item", "Quantity", "Unit price", "Total"], ["1", "Laptop", 20, "", ""], ["2", "Monitor", 30, "", ""]],
+    "Sheet1": [["Questions", "Answers"], ["Unit price including VAT?", "Exclude VAT. The total price is net."]],
+})
+t2 = xlsx_to_text(wb2)
+ok("[Sheet: Sheet1 | clarifications]" in t2, "plural Questions/Answers header is a clarifications sheet even when answers mention price")
+s2 = sp.price_schedules_from_text(t2)
+ok(len(s2) == 1 and s2[0]["header"][:3] == ["No.", "Item", "Quantity"] and len(s2[0]["rows"]) == 2, "header row found below the title rows")
+ok("£1,200" not in sp.strip_prices("Unit cost is £1,200 per laptop, or GBP 950, about 800 GBP, 1.5m EUR."), "prices are stripped")
+ok(sp.strip_prices("We deliver in 20 days to 45 sites.") == "We deliver in 20 days to 45 sites.", "non-price numbers are kept")
+try:
+    import openpyxl
+except Exception:
+    openpyxl = None
+if openpyxl:
+    xb = sp.build_commercial_xlsx("IT equipment", "AIVHUB LTD", scheds, "VAT: Prices must exclude VAT.")
+    wbk = openpyxl.load_workbook(io.BytesIO(xb))
+    cells = [c for ws in wbk for row in ws.iter_rows(values_only=True) for c in row if c is not None]
+    ok("Laptop 15 inch" in cells and any(isinstance(c, str) and c.startswith("=SUM(") for c in cells), "commercial xlsx: items and a SUM total")
+    ok(any(isinstance(c, str) and c.startswith("=IF(ISNUMBER(") for c in cells), "commercial xlsx: line totals are formulas")
+    ok(any(isinstance(c, str) and "exclude VAT" in c for c in cells), "commercial xlsx carries the VAT ruling")
+else:
+    print("  (openpyxl not installed here: commercial xlsx checks skipped)")
+try:
+    import docx as _docx
+except Exception:
+    _docx = None
+if _docx:
+    db = sp.build_technical_docx("IT equipment", "AIVHUB LTD", "Chemonics", [("Q1", "Our price is £5,000 in total. We deliver in 20 days.")])
+    body = "\n".join(p.text for p in _docx.Document(io.BytesIO(db)).paragraphs)
+    ok("£5,000" not in body and "see commercial offer" in body and "20 days" in body, "technical docx has no prices")
+else:
+    print("  (python-docx not installed here: technical docx check skipped)")
+zb = sp.build_pack_zip({"a.txt": "x"})
+ok(zipfile.ZipFile(io.BytesIO(zb)).namelist() == ["a.txt"], "pack zip")
+
+# ---- R1: financial files by content ----------------------------------------------------------------------------------
+fin_text = "Profit and loss account\nTurnover 1,250,000 1,100,000 980,000\nGross profit 400,000 350,000 300,000\nCash flow 120,000 90,000 80,000\nBalance sheet 500,000 450,000 400,000 350,000"
+ok(sp.looks_financial("accounts_2025.xlsx", ""), "financial by name")
+ok(sp.looks_financial("Sheet1.xlsx", fin_text), "financial by content when the name says nothing")
+ok(not sp.looks_financial("Volume 3 ToR.xlsx", txt), "the buyer's price schedule is not the bidder's finances")
+
+# ---- N7: which expected documents a file covers, by content --------------------------------------------------------------
+brief = ("Instructions to bidders: submission deadline 27 November. Quality questions: please describe your approach (word limit 500). "
+         "Specification: the scope of services is a heritage trail. Fee requirements: provide a fee proposal with day rates.")
+roles = sp.classify_doc_roles("brief.docx", brief)
+ok(roles == [0, 1, 2, 3], "one brief covers instructions, questions, specification and pricing: %s" % roles)
+ok(4 in sp.classify_doc_roles("x.xlsx", txt) and 3 in sp.classify_doc_roles("x.xlsx", txt), "workbook sheets cover pricing and Q&A")
+ok(sp.classify_doc_roles("notes.txt", "Hello world") == [], "an unrelated file covers nothing")
+
 print(f"bid_release4_test: {n} checks passed")

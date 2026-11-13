@@ -8264,6 +8264,10 @@ function detailsHeroHtml(row) {
   else {
     const dl = (row && row.newer_deadline_elsewhere && row.newer_deadline_elsewhere.date) || (row && row.submission_deadline) || "";
     timing = dl && !/:\s*$/.test(String(dl)) ? "Ends " + noticeDate(dl) : "No deadline";
+    // N5: with a clock time, say whether the zone is known (from a draft's buyer documents) or not stated by the notice.
+    const zone = recalledDeadlineZone(row);
+    if (zone) timing = "Ends " + zone;
+    else if (/\d{1,2}:\d{2}/.test(String(dl))) timing += " (time zone not stated in the notice)";
   }
   // The quick score only counts keyword overlap with the profile, so it is labelled as such: "Strong fit · 96" on a
   // print tender for a data company read as capability advice (fix plan M16). The AI fit check keeps the "fit" words.
@@ -12327,6 +12331,7 @@ function openBidModal(row) {
     .then(data => {
       if (data && data.ok && data.proposal && _bidRow && rowKey(_bidRow) === rkey) {
         _lastProposal = data.proposal;
+        rememberDeadlineZone(_bidRow, _lastProposal);
         if (data.proposal.methodology) _methodologyData = data.proposal.methodology;
         if (data.proposal.gantt) {
           _ganttPhases = data.proposal.gantt.phases || [];
@@ -12653,6 +12658,7 @@ window.stopTask = stopTask;
 
 function showProposalResultInModal(task) {
   _lastProposal = task.proposal;
+  rememberDeadlineZone(_bidRow, _lastProposal);
   state.resolvedPlaceholders = {};
   if (task.proposal?.bid_response?.all_placeholders) {
     task.proposal.bid_response.all_placeholders.forEach(ph => {
@@ -12797,9 +12803,10 @@ async function runBidAssistant(isRefresh = false) {
     } finally {
       _busyBtns.forEach((b, i) => { b.disabled = false; b.textContent = _busyText[i]; });
     }
+    const roles = await classifyBidUploads(uploads);
     const pre = bidPreflight(_bidRow, uploads, pastedText, wbTitles, confirmedRecently,
                              { proposal: creditCostText("proposal"), download: creditCostText("download") },
-                             isClosedTender(_bidRow), publicDocs, fitCheck);
+                             isClosedTender(_bidRow), publicDocs, fitCheck, roles);
     if (pre.show) {
       const go = window.showConfirm
         ? await window.showConfirm(pre.message, "Before we write your bid", { okText: "Generate", cancelText: "Add documents first", danger: false })
@@ -13144,6 +13151,7 @@ function viewTask(taskId) {
     _activeModalTaskId = task.id;
     _bidRow = task.row;
     _lastProposal = task.proposal;
+    rememberDeadlineZone(_bidRow, _lastProposal);
 
     $("bidModal").classList.remove("hidden");
 
@@ -13375,6 +13383,7 @@ function renderProposal(p, row) {
         <button type="button" class="pill bid-tab-btn" data-tab="tab-response" style="padding: 6px 12px; font-weight: 600; border-radius: 6px;">📝 Stage 3: Bid Draft</button>
         <button type="button" class="pill bid-tab-btn" data-tab="tab-clarifications" style="padding: 6px 12px; font-weight: 600; border-radius: 6px;">❓ Stage 4: Clarifications</button>
       </div>
+      ${(p.dissection && p.dissection.separate_technical_commercial) ? `<button id="btnDownloadSubmissionPack" class="btn btn--small" title="Technical offer with no prices, and the buyer's price schedule as a separate Excel file" style="background-color: #fff; color: #1e3a8a; border: 1px solid #1e3a8a; padding: 7px 14px; font-size: 12px; border-radius: 6px; font-weight: 700; cursor: pointer; white-space: nowrap; flex: 0 0 auto;">Technical + commercial (zip)</button>` : ""}
       <button id="btnDownloadProposalPdf" class="btn btn--small" title="PDF with a page count for each section" style="background-color: #fff; color: #1e3a8a; border: 1px solid #1e3a8a; padding: 7px 14px; font-size: 12px; border-radius: 6px; font-weight: 700; cursor: pointer; white-space: nowrap; flex: 0 0 auto;">Download PDF</button>
       <button id="btnDownloadFullProposalHeader" class="btn btn--small" style="background-color: #1e3a8a; color: #fff; border: none; padding: 7px 14px; font-size: 12px; border-radius: 6px; font-weight: 700; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 6px rgba(37,99,235,0.25); display: flex; align-items: center; gap: 6px; white-space: nowrap; flex: 0 0 auto; min-width: max-content;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -13886,7 +13895,9 @@ const _EXPECTED_DOCS = [
 ];
 
 // The "Before we write your bid" box (fix plan M15): expected documents, portal steps, deadline, past bids, cost.
-function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, costs, closed, publicDocs, fitCheck) {
+function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, costs, closed, publicDocs, fitCheck, roles) {
+  // N7: boxes a file covers by its CONTENT (from /api/classify-bid-docs); file names alone still tick them too.
+  const byContent = new Set(roles || []);
   // A public document is shown by its file name and ticked against its title and file name together.
   const pub = (publicDocs || []).map(d => String(d.filename || d.title || "").trim()).filter(Boolean);
   const pubMatch = (publicDocs || []).map(d => `${d.title || ""} ${d.filename || ""}`.trim()).filter(Boolean);
@@ -13911,7 +13922,7 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
     warnings.push("No buyer documents are attached, so this bid would be built from the public notice only. Portals keep the questionnaire, updates and clarification answers behind your supplier login.");
   }
   if (!custom) {
-    const lines = _EXPECTED_DOCS.map(([label, re]) => `${names.some(n => re.test(n)) ? "✓" : "☐"} ${label}`);
+    const lines = _EXPECTED_DOCS.map(([label, re], i) => `${(byContent.has(i) || names.some(n => re.test(n))) ? "✓" : "☐"} ${label}`);
     const missing = lines.filter(l => l.startsWith("☐")).length;
     if (missing) info.push("Buyer documents we expect:\n   " + lines.join("\n   "));
     const portal = bidPortalSteps(row);
@@ -13927,7 +13938,7 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
   } else if (hasDate && !custom) {
     info.push(`Deadline we will use: ${noticeDate(dl)} (from the notice, which gives no time zone). A later date in the documents you upload replaces it. The draft shows the deadline with the buyer's time zone and the UK time - check it matches your portal.`);
   }
-  const hasClarFile = names.some(n => _EXPECTED_DOCS[4][1].test(n));
+  const hasClarFile = byContent.has(4) || names.some(n => _EXPECTED_DOCS[4][1].test(n));
   if (!hasClarFile && !confirmedRecently && !custom) {
     warnings.push("Clarification answers: buyers publish clarification answers, updates and deadline changes inside your portal account, where we cannot see them. If there are any, export them (or print to PDF) and add them too.");
   }
@@ -14007,6 +14018,79 @@ async function fetchBidCheck(row, profileId) {
   }
 }
 
+// N7: which expected documents the uploaded files cover, judged by their content. Any failure just means "by name only".
+async function classifyBidUploads(uploads) {
+  const files = (uploads || []).filter(f => f && f.content).slice(0, 12);
+  if (!files.length) return [];
+  try {
+    const res = await fetch("/api/classify-bid-docs", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files: files.map(f => ({ filename: f.filename, content: f.content })) }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return [].concat(...((data && data.files) || []).map(f => f.roles || []));
+  } catch (e) {
+    return [];
+  }
+}
+
+// N5: the notice carries no time zone, but the buyer's documents do. After a draft is made, the deadline with its zone
+// (and UK time) is remembered per tender and shown in the details panel.
+function rememberDeadlineZone(row, proposal) {
+  try {
+    if (row && proposal && proposal.deadline_display) lsSet("tf_deadline_zone_" + String(rowKey(row)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 100), proposal.deadline_display);
+  } catch (e) { /* optional */ }
+}
+function recalledDeadlineZone(row) {
+  try { return lsGet("tf_deadline_zone_" + String(rowKey(row)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 100), "") || ""; } catch (e) { return ""; }
+}
+
+// N3: technical offer (no prices) and commercial offer (the buyer's price schedule) as separate files in one zip.
+async function downloadSubmissionPack() {
+  if (!_bidRow || !_lastProposal?.bid_response) return;
+  const btn = $("btnDownloadSubmissionPack");
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "Building pack..."; }
+  try {
+    const r = _lastProposal.bid_response;
+    const title = _bidRow.title || "Tender";
+    const res = await fetch("/api/download-submission-pack", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title, authority: _lastProposal.buyer_name || _bidRow.contracting_authority || "",
+        company_name: _lastProposal.bid_company || _lastProposal.company || _bidRow.company || "",
+        price_schedules: _lastProposal.price_schedules || [],
+        dissection_rulings: {
+          clarification_rulings: _lastProposal.dissection?.clarification_rulings || [],
+          published_clarifications: _lastProposal.dissection?.published_clarifications || []
+        },
+        bid_response: {
+          cover_letter: { content: applyPlaceholders(r.cover_letter?.content || "") },
+          itt_question_responses: (r.itt_question_responses || []).map(q => ({ question_number: q.question_number || "", response: applyPlaceholders(q.response || "") })),
+          ...Object.fromEntries(["executive_summary", "understanding_of_requirements", "technical_methodology", "relevant_experience",
+            "team_and_personnel", "quality_and_compliance", "social_value", "declarations"].map(k => [k, { content: applyPlaceholders(r[k]?.content || "") }]))
+        }
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error((err && err.error) || `HTTP ${res.status}`);
+    }
+    refreshCredits();
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_submission_pack.zip`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (err) {
+    showToastError("Failed to download the submission pack: " + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
+}
+
 // "Add documents first" opens the upload step instead of just closing the box (fix plan M15).
 function openBidUploadStep() {
   const card = document.getElementById("bidStepCard4");
@@ -14059,7 +14143,7 @@ function creditCostText(kind) {
 function labelChargedDownloads() {
   const cost = creditCostText("download");
   if (!cost) return;
-  ["btnDownloadCoveringLetter", "btnDownloadFullProposal", "btnDownloadFullProposalHeader", "btnDownloadProposalPdf", "btnDownloadFullProposalS1",
+  ["btnDownloadCoveringLetter", "btnDownloadFullProposal", "btnDownloadFullProposalHeader", "btnDownloadProposalPdf", "btnDownloadSubmissionPack", "btnDownloadFullProposalS1",
    "btnDownloadFullProposalS2", "btnDownloadFullProposalS4", "btnDownloadDissection", "btnDownloadChecklist",
    "btnDownloadClarifications"].forEach(id => {
     const b = $(id);
@@ -14076,6 +14160,7 @@ function wireBidResultButtons() {
   $("btnDownloadFullProposal")?.addEventListener("click", downloadFullProposalDoc);
   $("btnDownloadFullProposalHeader")?.addEventListener("click", downloadFullProposalDoc);
   $("btnDownloadProposalPdf")?.addEventListener("click", downloadFullProposalPdf);
+  $("btnDownloadSubmissionPack")?.addEventListener("click", downloadSubmissionPack);
   $("btnDownloadFullProposalS1")?.addEventListener("click", downloadFullProposalDoc);
   $("btnDownloadFullProposalS2")?.addEventListener("click", downloadFullProposalDoc);
   $("btnDownloadFullProposalS4")?.addEventListener("click", downloadFullProposalDoc);
@@ -14473,7 +14558,7 @@ async function submitEnrichSection() {
     if (!res.ok || data.error) throw new Error(data.error || `Server error ${res.status}`);
 
     // Update in-memory proposal
-    if (data.proposal) _lastProposal = data.proposal;
+    if (data.proposal) { _lastProposal = data.proposal; rememberDeadlineZone(_bidRow, _lastProposal); }
 
     // Live-patch every draft-box with this section key
     const enrichedText = data.enriched_content || "";

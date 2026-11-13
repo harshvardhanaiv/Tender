@@ -7774,9 +7774,17 @@ Return ONLY this JSON structure:
 
                 # R1: the bidder's own financial model / P&L, uploaded with the tender documents, is the bidder's data:
                 # the writers may take figures from it (it is not buyer text).
+                from tender_app.submission_pack import looks_financial as _looks_financial, price_schedules_from_text as _ps_from_text
+                # N3: the buyer's price-schedule sheets, taken before any summarisation, for the commercial offer.
+                _price_schedules = []
+                for _d in documents:
+                    _price_schedules.extend(_ps_from_text(str(_d.get("content") or "")))
+                _price_schedules = _price_schedules[:6]
                 for _d in list(documents):
-                    if re.search(r"financ|p&l|p and l|profit|accounts|cash ?flow|forecast|projection|budget model", str(_d.get("name") or ""), re.I) \
-                            and "(uploaded by the user)" in str(_d.get("name") or ""):
+                    # By content as well as name: turnover / profit / cash-flow terms with figures (the buyer's own
+                    # price schedule and Q&A are not the bidder's finances).
+                    if "(uploaded by the user)" in str(_d.get("name") or "") and _looks_financial(str(_d.get("name") or ""), str(_d.get("content") or "")) \
+                            and "| price_schedule]" not in str(_d.get("content") or "")[:3000]:
                         company_documents.append({"name": _d["name"].replace(" (uploaded by the user)", ""), "content": _d["content"]})
 
                 # Smart chunking - Pre-summarisation pass if combined size > 400,000 chars (~100k tokens)
@@ -8022,12 +8030,12 @@ OPEN CLARIFICATION POINTS: {critical_clarifications_summary}
 
                 # R1: a heavily weighted financial question needs the bidder's own model or P&L; ask for it.
                 _fin_re = re.compile(r"financ|business plan|budget|income|cash ?flow|viab|sustainab|revenue|profit|p ?& ?l", re.I)
-                _have_fin_file = any(re.search(r"\.(xlsx|xlsm|csv)\b|p&l|profit|financ|accounts", str(d.get("name") or ""), re.I)
-                                     for d in list(documents) + list(company_documents))
+                _have_fin_file = any(_looks_financial(str(d.get("name") or ""), str(d.get("content") or ""))
+                                     for d in list(company_documents))
                 _needs_financials = bool(q_mode and not _have_fin_file and any(
                     (q.get("weight_pct") or 0) >= 25 and _fin_re.search(q.get("text") or "") for q in questions))
                 if _needs_financials:
-                    yield json.dumps({"status": "progress", "stage": 4, "message": "A heavily weighted question is financial: upload your financial model or P&L (xlsx/csv, with 'financial' or 'P&L' in the file name) and re-run to replace the [NEEDS INPUT] gaps with real figures."}) + "\n"
+                    yield json.dumps({"status": "progress", "stage": 4, "message": "A heavily weighted question is financial: upload your financial model or P&L (xlsx/csv/pdf) and re-run to replace the [NEEDS INPUT] gaps with real figures."}) + "\n"
 
                 section_writers = []
                 if q_mode:
@@ -8321,6 +8329,7 @@ Return ONLY valid JSON with no markdown fences:
                     "buyer_name": authority_name,
                     "writer_note": _writer_note(bid_decision, passed_stages, stage1_result, tender_closed),
                     "needs_financial_upload": _needs_financials,
+                    "price_schedules": _price_schedules,
                     "docs_used": doc_names,
                     "docs_unreadable": docs_failed,
                     "docs_cut": docs_cut,
@@ -8709,6 +8718,67 @@ Return ONLY valid JSON with no markdown fences:
         resp.headers["X-Page-Counts"] = json.dumps(counts)[:7000]
         resp.headers["Access-Control-Expose-Headers"] = "X-Page-Counts"
         return resp
+
+    @app.post("/api/classify-bid-docs")
+    def api_classify_bid_docs():
+        """Which of the five expected buyer documents each uploaded file covers, from its content (QA scorecard N7).
+        Free: no AI call, nothing stored. Body: {files: [{filename, content(base64)}]}."""
+        import base64
+        from tender_app.submission_pack import classify_doc_roles
+        if not session.get("username"):
+            return jsonify({"error": "Not authenticated"}), 401
+        out = []
+        for f in (request.get_json(silent=True) or {}).get("files", [])[:12]:
+            try:
+                text = _extract_bytes(base64.b64decode(f.get("content") or ""), str(f.get("filename") or "file"), max_chars=40000)
+            except Exception:  # noqa: BLE001
+                text = ""
+            out.append({"filename": f.get("filename"), "roles": classify_doc_roles(str(f.get("filename") or ""), text)})
+        return jsonify({"files": out})
+
+    @app.post("/api/download-submission-pack")
+    @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection)
+    def api_download_submission_pack():
+        """Separate technical and commercial offers as one zip (QA scorecard N3): a technical .docx with no prices and
+        a commercial .xlsx built from the buyer's own price schedule (unit prices left for the bidder)."""
+        from tender_app.submission_pack import build_technical_docx, build_commercial_xlsx, build_pack_zip
+        from tender_app.bid_writer import SECTION_LABELS
+        from tender_app.bid_release4 import rulings_list as _rl
+        body = request.get_json(silent=True) or {}
+        bid = body.get("bid_response") or {}
+        title = str(body.get("title") or "Tender")
+        company = str(body.get("company_name") or "").strip() or "[NEEDS INPUT: legal company name]"
+        authority = str(body.get("authority") or "")
+        sections = []
+        cl = bid.get("cover_letter")
+        if isinstance(cl, dict) and cl.get("content"):
+            sections.append(("Covering letter", str(cl["content"])))
+        for i, q in enumerate(bid.get("itt_question_responses") or []):
+            if isinstance(q, dict):
+                sections.append((f"Question {q.get('question_number') or i + 1}", str(q.get("response") or "")))
+        for key, label in SECTION_LABELS[1:]:
+            if key == "pricing_notes":
+                continue  # commercial offer only
+            obj = bid.get(key)
+            if isinstance(obj, dict) and str(obj.get("content") or "").strip():
+                sections.append((label, str(obj["content"])))
+        vat_note = ""
+        for r in _rl(body.get("dissection_rulings") or {}):
+            if re.search(r"\bVAT\b", f"{r['topic']} {r['ruling']}"):
+                vat_note = "VAT: " + r["ruling"][:240]
+                break
+        try:
+            tech = build_technical_docx(title, company, authority, sections)
+            comm = build_commercial_xlsx(title, company, body.get("price_schedules") or [], vat_note)
+        except Exception as ex:  # noqa: BLE001
+            print("[submission pack] failed:", ex)
+            return jsonify({"error": "Could not build the submission pack. Download the full .docx instead."}), 500
+        readme = ("Technical offer (technical_offer.docx): no prices.\n"
+                  "Commercial offer (commercial_offer.xlsx): the buyer's price schedule; enter unit prices in the yellow cells.\n"
+                  "Submit them as separate files if the buyer requires separate technical and commercial offers.\n")
+        data = build_pack_zip({"technical_offer.docx": tech, "commercial_offer.xlsx": comm, "README.txt": readme})
+        safe = re.sub(r"[^A-Za-z0-9]+", "_", title).strip("_")[:50] or "tender"
+        return send_file(io.BytesIO(data), as_attachment=True, download_name=f"{safe}_submission_pack.zip", mimetype="application/zip")
 
     @app.post("/api/download-proposal")
     @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection)

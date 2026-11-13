@@ -19,8 +19,8 @@ _M = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
 _PRICE_HDR = re.compile(r"\b(unit\s*price|price|rate|total|amount|cost)\b", re.I)
 _QTY_HDR = re.compile(r"\b(qty|quantity|units?|no\.?)\b", re.I)
-_QA_Q = re.compile(r"\b(question|query|clarification)\b", re.I)
-_QA_A = re.compile(r"\b(answer|response|reply)\b", re.I)
+_QA_Q = re.compile(r"\b(questions?|quer(?:y|ies)|clarifications?)\b", re.I)
+_QA_A = re.compile(r"\b(answers?|responses?|repl(?:y|ies))\b", re.I)
 
 
 def _col_index(ref: str) -> int:
@@ -40,9 +40,11 @@ def _shared_strings(z: zipfile.ZipFile) -> list[str]:
 
 
 def classify_sheet(rows: list[list[str]]) -> str:
-    head = " ".join(" ".join(r) for r in rows[:8])
-    if _QA_Q.search(head) and _QA_A.search(head):
+    # A Question/Answer header decides first (its answers may mention prices); look at the first rows only.
+    top = " ".join(" ".join(r) for r in rows[:3])
+    if _QA_Q.search(top) and _QA_A.search(top):
         return "clarifications"
+    head = " ".join(" ".join(r) for r in rows[:8])
     if _PRICE_HDR.search(head) and _QTY_HDR.search(head):
         return "price_schedule"
     if re.search(r"\b(specification|requirement|item|description)\b", head, re.I):
