@@ -281,10 +281,32 @@ def _figures(text: str) -> set[str]:
     return {re.sub(r"[\s,]", "", m.group(0)).lower() for m in _FIGURE_RE.finditer(PLACEHOLDER_RE.sub(" ", text or ""))}
 
 
-def condense_prompt(q: dict, answer: str, words: int) -> str:
+def trim_to_words(text: str, cap: int) -> str:
+    """Last resort for a buyer's HARD word limit: drop whole trailing blocks, then trailing sentences, until the
+    answer fits. Each [NEEDS INPUT]/[CONFIRM] tag counts as one word, as the buyer will count it. Release 5 left
+    Cornwall College D1.1 at 645 words and D1.2 at 600 against a 500-word limit."""
+    text = (text or "").strip()
+    if answer_words(text) <= cap:
+        return text
+    nl = chr(10)
+    blocks = re.split(nl + r"\s*" + nl, text)
+    while len(blocks) > 1 and answer_words((nl + nl).join(blocks)) > cap:
+        blocks.pop()
+    out = (nl + nl).join(blocks).strip()
+    if answer_words(out) > cap:
+        sentences = re.split(r"(?<=[.!?])\s+", out)
+        while len(sentences) > 1 and answer_words(" ".join(sentences)) > cap:
+            sentences.pop()
+        out = " ".join(sentences).strip()
+    if answer_words(out) > cap:  # one enormous sentence: cut at the cap and close it
+        out = " ".join(out.split()[:cap]).rstrip(",;:- ") + "."
+    return out
+
+
+def condense_prompt(q: dict, answer: str, words: int, factor: float = 0.85) -> str:
     limit = _as_int(q.get("word_limit"))
     # Aim well under the cap: asked to trim a small overrun, models hand back nearly the same text.
-    target = int((limit or int(q.get("budget_words") or 500)) * 0.85)
+    target = int((limit or int(q.get("budget_words") or 500)) * factor)
     pct = max(40, min(95, round(100 * target / max(1, words))))
     return f"""This tender answer is {words} words; the limit for it is {target} words. Cut it to about {pct}% of its
 current length by deleting whole sentences, bullets and table rows - rewording alone will not get it short enough.
@@ -352,16 +374,26 @@ def write_question(call: Callable[[str, str, int], str], q: dict, prompt: str,
     condensed_from = None
     if status == "ok" and answer_words(response) > word_cap(q):
         before = answer_words(response)
-        try:
-            value, truncated = parse_llm_json_checked(
-                call(system, condense_prompt(q, response, before), max_tokens_for(budget)))
-            short = str(value.get("response") or "").strip() if isinstance(value, dict) else ""
-        except Exception:  # noqa: BLE001 - keep the long answer; the QA gate reports the overrun
-            short, truncated = "", True
-        if (short and not truncated and ends_cleanly(short) and answer_words(short) < before
-                and _figures(short) <= _figures(response)):
-            response, condensed_from = short, before
-            placeholders = [p for p in placeholders if p in short]
+        # Up to two condensing calls, the second aiming lower; then, for a buyer's hard limit only, a plain trim.
+        for factor in (0.85, 0.7):
+            if answer_words(response) <= word_cap(q):
+                break
+            current = answer_words(response)
+            try:
+                value, truncated = parse_llm_json_checked(
+                    call(system, condense_prompt(q, response, current, factor), max_tokens_for(budget)))
+                short = str(value.get("response") or "").strip() if isinstance(value, dict) else ""
+            except Exception:  # noqa: BLE001 - keep the long answer; the QA gate reports the overrun
+                short, truncated = "", True
+            if (short and not truncated and ends_cleanly(short) and answer_words(short) < current
+                    and _figures(short) <= _figures(response)):
+                response, condensed_from = short, before
+                placeholders = [p for p in placeholders if p in short]
+        if answer_words(response) > word_cap(q) and _as_int(q.get("word_limit")):
+            trimmed = trim_to_words(response, word_cap(q))
+            if trimmed and ends_cleanly(trimmed):
+                response, condensed_from = trimmed, before
+                placeholders = [p for p in placeholders if p in trimmed]
     words = answer_words(response)
     return {
         "question_number": q["number"],

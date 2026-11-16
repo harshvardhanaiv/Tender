@@ -4876,7 +4876,7 @@ function formatDaysLeft(row) {
     // A framework or agreement that is still active has no closing date by nature: say so instead of "No deadline" (re-test 4)
     const isOpenFramework = /framework|dynamic purchasing|agreement/i.test(`${row.title || ""} ${row.notice_type || ""} ${row.procedure || ""}`)
       && /^(active|open)$/i.test(String(row.status || "").trim());
-    return `<span class="days-badge days-badge--unknown" title="${esc((deadline || "No deadline stated") + pubText)}">${isOpenFramework ? "Open framework, no deadline published" : "No deadline"}</span>`;
+    return `<span class="days-badge days-badge--unknown" title="${esc((deadline || "No deadline stated") + pubText)}">${isOpenFramework ? "Open framework, no deadline published" : (/^(closed|expired|awarded|complete[d]?|cancelled)$/i.test(String(row.status || "").trim()) ? "Closed" : "No deadline")}</span>`;
   }
   if (urgency === "past") {
     return `<span class="days-badge days-badge--past" title="Deadline: ${esc(deadline)}">Closed</span>`;
@@ -4991,6 +4991,8 @@ function formatValue(v, source) {
   if (!withSymbol && /[^\d.,\s]/.test(s)) return s;
   const n = parseFloat((withSymbol ? withSymbol[2] : s).replace(/[,\s]/g, ""));
   if (isNaN(n)) return s;
+  // "£1" is a portal's placeholder for "no value published" (closed Chemonics notices), not a contract value.
+  if (n > 0 && n <= 1) return "Not stated";
   const prefix = withSymbol ? withSymbol[1] : (CURRENCY_BY_SOURCE[source] || "");
   return prefix + n.toLocaleString("en-GB", { maximumFractionDigits: 0 });
 }
@@ -12291,6 +12293,7 @@ renderRows();
 
 let _bidRow = null;
 let _lastProposal = null;
+let _bidFitDecision = null; // the fit check shown in the pre-generation box: the draft reuses it so there is one score
 
 function openBidModal(row) {
   const rkey = rowKey(row);
@@ -12337,10 +12340,7 @@ function openBidModal(row) {
   const companyFileList = $("bidCompanyFileList");
   if (companyFileList) companyFileList.innerHTML = "";
 
-  const profileSelect = $("bidCompanyProfileSelect");
-  if (profileSelect && state.activeProfileId) {
-    profileSelect.value = String(state.activeProfileId);
-  }
+  setBidProfile(state.activeProfileId);
   loadCompanyProfiles();
   
   // Ensure all steps start collapsed (no persisted expand state)
@@ -12437,11 +12437,9 @@ function openCustomBidModal() {
   const companyFileList = $("bidCompanyFileList");
   if (companyFileList) companyFileList.innerHTML = "";
 
-  const profileSelect = $("bidCompanyProfileSelect");
-  if (profileSelect && state.activeProfileId) {
-    profileSelect.value = String(state.activeProfileId);
-  }
-  
+  // Release 5: a new custom tender opens with the account's default company, not the one the last bid used.
+  setBidProfile(state.defaultProfileId || state.activeProfileId);
+
   // Ensure all steps start collapsed (no persisted expand state)
   collapseAllBidSteps();
   
@@ -12756,7 +12754,25 @@ function showModalError(errorMsg) {
   }
 }
 
+// The first click used to show nothing for ~20 s (fresh tender details, document checks), and a second click then
+// said a generation was already running. Show the busy state at once and ignore a second click while starting.
+let _bidStarting = false;
 async function runBidAssistant(isRefresh = false) {
+  if (_bidStarting) return;
+  _bidStarting = true;
+  const MARK = "⏳ Starting…";
+  const btns = ["btnRunBidAssistant", "btnReRunBidAssistant"].map(id => $(id)).filter(Boolean);
+  const orig = btns.map(b => b.textContent);
+  btns.forEach(b => { b.disabled = true; b.textContent = MARK; });
+  try {
+    return await _runBidAssistantInner(isRefresh);
+  } finally {
+    _bidStarting = false;
+    btns.forEach((b, i) => { if (b.textContent === MARK) { b.disabled = false; b.textContent = orig[i]; } });
+  }
+}
+
+async function _runBidAssistantInner(isRefresh = false) {
   const pastedText = $("bidTenderText")?.value?.trim() || "";
   const files = [...(state.bidUploadedFiles || [])];
   if (pastedText) {
@@ -12807,6 +12823,15 @@ async function runBidAssistant(isRefresh = false) {
 
   // Before any credits are spent (fix plan M15, first version): we cannot see documents behind a portal
   // login, so ask for the buyer's pack and clarification answers, and say when the deadline has passed.
+  _bidFitDecision = null;
+  {
+    // Attached files must count: the step opened unticked on custom tenders and the documents were ignored (release 5).
+    const _c4 = $("bidStepCheck4");
+    if (_c4 && (state.bidUploadedFiles || []).length && !_c4.checked) {
+      _c4.disabled = false; _c4.checked = true;
+      if (typeof saveBidStepCheckStates === "function") saveBidStepCheckStates();
+    }
+  }
   {
     const uploads = state.bidUploadedFiles || [];
     const packKey = "tf_bid_pack_ok_" + String(rowKey(_bidRow)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 120);
@@ -12840,6 +12865,7 @@ async function runBidAssistant(isRefresh = false) {
       _busyBtns.forEach((b, i) => { b.disabled = false; b.textContent = _busyText[i]; });
     }
     const roles = docFacts.roles;
+    _bidFitDecision = (fitCheck && typeof fitCheck === "object" && fitCheck.fit_score != null) ? fitCheck : null;
     const pre = bidPreflight(_bidRow, uploads, pastedText, wbTitles, confirmedRecently,
                              { proposal: creditCostText("proposal"), download: creditCostText("download") },
                              isClosedTender(_bidRow), publicDocs, fitCheck, roles,
@@ -12900,6 +12926,7 @@ async function runBidAssistant(isRefresh = false) {
     user_document_ids,
     winning_bid_ids,
     profile_id: selectedProfileId,
+    fit_check: _bidFitDecision,
     refresh: isRefresh,
     status: "running",
     stage: 1,
@@ -12974,7 +13001,7 @@ async function executeProposalTask(task) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal,
-      body: JSON.stringify({ tender: task.row, company: task.company, files: task.files, company_files: task.company_files, user_document_ids: task.user_document_ids, winning_bid_ids: task.winning_bid_ids || [], profile_id: task.profile_id, refresh: task.refresh || false }),
+      body: JSON.stringify({ tender: task.row, company: task.company, files: task.files, company_files: task.company_files, user_document_ids: task.user_document_ids, winning_bid_ids: task.winning_bid_ids || [], profile_id: task.profile_id, fit_check: task.fit_check || null, refresh: task.refresh || false }),
     });
 
     if (!res.ok) {
@@ -13990,7 +14017,8 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
   } else if (!fitCheck || !fitCheck.verdict) {
     info.push("This is a tender you uploaded or pasted, so there is no notice to check it against. The fit check runs on the documents while drafting.");
   }
-  const dl = String((row && row.submission_deadline) || "").trim();
+  const _newerDl = row && row.newer_deadline_elsewhere && row.newer_deadline_elsewhere.date;
+  const dl = String(_newerDl || (row && row.submission_deadline) || "").trim();
   const hasDate = dl && dl !== "—" && !/^(unknown|not stated|n\/a)$/i.test(dl);
   if (closed) {
     // R1: no "The stored deadline (unknown) has passed" when the notice gives no date.
@@ -13998,7 +14026,11 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
       ? `The stored deadline (${noticeDate(dl)}) has passed. If the buyer extended it, upload the update so the bid uses the new date.`
       : "This tender is marked as closed and the notice gives no deadline. If it is still open, upload the buyer's latest documents so the bid uses the right date.");
   } else if (hasDate && !custom) {
-    info.push(`Deadline we will use: ${noticeDate(dl)} (from the notice, which gives no time zone). A later date in the documents you upload replaces it. The draft shows the deadline with the buyer's time zone and the UK time - check it matches your portal.`);
+    // The zone is known once a draft (or the tender panel) has read the buyer's documents: say it instead of "no time zone".
+    const _zone = typeof recalledDeadlineZone === "function" ? recalledDeadlineZone(row) : "";
+    info.push(_zone
+      ? `Deadline we will use: ${_zone}${_newerDl ? " (the later date published on the buyer's portal)" : ""}. A later date in the documents you upload replaces it.`
+      : `Deadline we will use: ${noticeDate(dl)} (${_newerDl ? "the later date published on the buyer's portal" : "from the notice"}, which gives no time zone). A later date in the documents you upload replaces it. The draft shows the deadline with the buyer's time zone and the UK time - check it matches your portal.`);
   }
   const hasClarFile = byContent.has(4) || names.some(n => _EXPECTED_DOCS[4][1].test(n));
   if (!hasClarFile && !confirmedRecently && !custom) {
@@ -15380,9 +15412,11 @@ $("bidCompanyProfileSelect")?.addEventListener("change", (e) => {
     // Route through the shared handler so the AI fit score (cached per-tender
     // only, not per-profile) gets cleared and recomputed for the newly
     // selected company instead of silently showing the old profile's score.
-    handleCompanyProfileSelectionChange(val, { makeDefault: false });
+    // Release 5: the company bid as is a choice for THIS bid. It must not change the search bar's company, so the
+    // shared handler (which rewrites state.activeProfileId) is not called here.
     const analyseSelect = $("analyseCompanyProfileSelect");
     if (analyseSelect) analyseSelect.value = String(val);
+    syncAnalyseCompanyNameInput();
   }
   loadBidUserDocsChecklist(null, false);
   loadBidWinningBids();
@@ -17648,7 +17682,9 @@ function populateCompanyProfileDropdown() {
     // win over it — otherwise this dropdown can silently disagree with (and,
     // for bidCompanyProfileSelect below, even overwrite) the company chosen
     // via the main "Target/Filter" dropdown.
-    const currentVal = savedProfile;
+    // The bid picker keeps its own choice across a rebuild; the other pickers follow the active company.
+    const currentVal = (select.id === "bidCompanyProfileSelect" && select.value && select.value !== "__add_new__")
+      ? select.value : savedProfile;
     select.innerHTML = "";
 
     if (!state.companyProfiles || state.companyProfiles.length === 0) {
@@ -17670,10 +17706,8 @@ function populateCompanyProfileDropdown() {
 
     if (state.companyProfiles && state.companyProfiles.some(p => String(p.id) === String(currentVal))) {
       select.value = String(currentVal);
-      if (select.id === "bidCompanyProfileSelect") state.activeProfileId = String(currentVal);
     } else if (defaultId) {
       select.value = String(defaultId);
-      if (select.id === "bidCompanyProfileSelect") state.activeProfileId = String(defaultId);
     } else {
       select.value = "__add_new__";
     }
@@ -27678,6 +27712,17 @@ function bidStepsOffWarnings() {
 
 // Step 3 counts the answers of the profile chosen for THIS bid, not of whichever profile the Answer Bank screen
 // last showed (pilot: "16 answers linked" for a profile that has 1).
+// Set the company a bid is written as and reload everything that hangs off it. Setting .value does not fire a
+// change event, which is how a new bid showed "AIVHUB LTD (Default)" next to another company's Answer Bank.
+function setBidProfile(id) {
+  const sel = $("bidCompanyProfileSelect");
+  if (!sel || !id) return;
+  sel.value = String(id);
+  state.bidAnswerCount = undefined;
+  try { refreshBidAnswerCount(); loadBidUserDocsChecklist(null, false); loadBidWinningBids(); } catch (e) { /* the steps reload on the next change */ }
+  if (typeof updateBidStepSummary === "function") { updateBidStepSummary(1); updateBidStepSummary(2); }
+}
+
 async function refreshBidAnswerCount() {
   const pid = document.getElementById("bidCompanyProfileSelect")?.value || "";
   if (!pid || pid === "__add_new__") { state.bidAnswerCount = undefined; return; }

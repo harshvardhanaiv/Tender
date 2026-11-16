@@ -153,15 +153,18 @@ def query_terms(query: str) -> list[str]:
     return [w for w in re.findall(r"[a-z0-9]+", q) if len(w) >= 3 and w not in _QUERY_STOP]
 
 
-def matches_query(row: dict, query: str) -> bool:
-    """True when the row mentions a meaningful word of the query (or the query has none). "&" counts as "and"."""
+def matches_query(row: dict, query: str, strict: bool = False) -> bool:
+    """True when the row mentions a meaningful word of the query (or the query has none). "&" counts as "and".
+    strict (portals that ignore the query): at least half of the words must appear, so "Thetford Activity
+    Interpretation" no longer keeps every notice that says "activity" (release 5: 60 and 102 results for one real one)."""
     terms = query_terms(query)
     if not terms:
         return True
     hay = " ".join(str(row.get(k) or "") for k in ("title", "description", "contracting_authority", "cpv", "cpv_codes",
                                                    "reference", "resource_id")).lower().replace("&", " and ")
     words = set(re.findall(r"[a-z0-9]+", hay))
-    return any(t in words or (len(t) >= 5 and t in hay) for t in terms)
+    hits = sum(1 for t in terms if t in words or (len(t) >= 5 and t in hay))
+    return hits >= (max(1, -(-len(terms) // 2)) if strict else 1)
 
 
 @dataclass
@@ -504,7 +507,7 @@ def _update_job_portal(
     # Filter out fake / error / synthetic rows before updating job state
     batch = [r for r in batch if not is_invalid_tender_row(r, job.query)]
     if source_id in LOOSE_MATCH_SOURCES:
-        batch = [r for r in batch if matches_query(r, job.query)]
+        batch = [r for r in batch if matches_query(r, job.query, strict=True)]
     for row in batch:
         enrich_deadline_fields(row)
     batch.sort(key=_sort_key)

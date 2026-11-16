@@ -41,7 +41,7 @@ def _shared_strings(z: zipfile.ZipFile) -> list[str]:
 
 def classify_sheet(rows: list[list[str]]) -> str:
     # A Question/Answer header decides first (its answers may mention prices); look at the first rows only.
-    top = " ".join(" ".join(r) for r in rows[:3])
+    top = " ".join(" ".join(r) for r in rows[:6])
     if _QA_Q.search(top) and _QA_A.search(top):
         return "clarifications"
     head = " ".join(" ".join(r) for r in rows[:8])
@@ -93,11 +93,20 @@ def read_workbook(data: bytes) -> list[dict]:
     return out
 
 
-def xlsx_to_text(data: bytes, max_chars: int = 120000) -> str:
+_QA_FILENAME = re.compile(r"questions?\s*(?:&|and|\+)\s*answers?|\bq\s*&\s*a\b|clarification", re.I)
+
+
+def xlsx_to_text(data: bytes, max_chars: int = 120000, filename: str = "") -> str:
     try:
         sheets = read_workbook(data)
     except Exception:
         return ""
+    # A workbook called "Questions & Answers 1.xlsx" is the buyer's clarification log whatever its header row says
+    # (release 5: the Chemonics Q&A answers were not applied).
+    if filename and _QA_FILENAME.search(filename):
+        for s in sheets:
+            if s["kind"] in ("other", "specification"):
+                s["kind"] = "clarifications"
     parts: list[str] = []
     for s in sheets:
         body = "\n".join(" | ".join(r).rstrip(" |") for r in s["rows"])
@@ -111,3 +120,21 @@ def sheet_summary(data: bytes) -> list[dict]:
         return [{"name": s["name"], "kind": s["kind"], "rows": len(s["rows"])} for s in read_workbook(data)]
     except Exception:
         return []
+
+
+_QA_BLOCK = re.compile(r"\[Sheet: ([^\]|]+?) \| clarifications\]\n(.*?)(?=\n\n\[Sheet: |\Z)", re.S)
+
+
+def clarification_sheets_block(documents, limit: int = 9000) -> str:
+    """The buyer's published Q&A rows, verbatim, for the writer notes. Spreadsheet answers override the tender text,
+    so they must reach the writer even when the model's own extraction missed them (release 5)."""
+    parts: list[str] = []
+    for d in documents or []:
+        for m in _QA_BLOCK.finditer(str((d or {}).get("content") or "")):
+            parts.append("[%s]\n%s" % (m.group(1).strip(), m.group(2).strip()))
+    if not parts:
+        return ""
+    body = "\n\n".join(parts)[:limit]
+    return ("\nBUYER'S PUBLISHED QUESTIONS AND ANSWERS (from the buyer's spreadsheet). These answers OVERRIDE the tender text: "
+            "apply every ruling (VAT or price basis, installation, delivery phasing, who supplies what) and never contradict one:\n"
+            + body + "\n")

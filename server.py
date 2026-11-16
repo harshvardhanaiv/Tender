@@ -7442,6 +7442,15 @@ Return ONLY this JSON structure:
         procedure  = tender.get("procedure", "")
         proc_type  = tender.get("procurement_type", "")
         deadline   = tender.get("submission_deadline", "")
+        # A later deadline published on the buyer's own portal (e.g. an extension on ProContract) beats the notice's
+        # date everywhere in the draft; the old date is kept only to tell the writer it is superseded (release 5).
+        superseded_deadline = ""
+        _nd = tender.get("newer_deadline_elsewhere")
+        if isinstance(_nd, dict) and _nd.get("date"):
+            _d_old, _d_new = _parse_deadline_date(str(deadline or "")), _parse_deadline_date(str(_nd.get("date")))
+            if _d_new and (not _d_old or _d_new > _d_old):
+                superseded_deadline = str(deadline or "").strip()
+                deadline = str(_nd.get("date")).strip()
         duration   = tender.get("contract_duration_in_months_or_years_including_any_options_and_renewals", "")
         authority  = tender.get("contracting_authority", "")
         cpv        = tender.get("cpv_codes", "")
@@ -7581,6 +7590,8 @@ Return ONLY this JSON structure:
         # cannot be accessed inside generate().
         _ai_provider, _ai_key, _ai_model = get_ai_credentials()
 
+        _gen_state = {"done": False}
+
         def generate():
             try:
                 # Check cache first
@@ -7629,6 +7640,7 @@ Return ONLY this JSON structure:
                         print("Failed to query proposal cache:", e)
 
                 if cached_proposal:
+                    _gen_state["done"] = True  # a stored draft is delivered at once; nothing to refund
                     yield json.dumps({"status": "progress", "stage": 1, "message": "Fetching and extracting tender documents..."}) + "\n"
                     yield json.dumps({"status": "progress", "stage": 1, "message": "Analysing tender documents... (Stage 1/5)"}) + "\n"
                     yield json.dumps({"status": "progress", "stage": 2, "message": "Building submission checklist... (Stage 2/5)"}) + "\n"
@@ -7916,6 +7928,15 @@ Return ONLY this JSON structure:
                                                    qa_gate, GROUNDING_RULES)
                 _sd = stage1_result.get("submission_deadline") if isinstance(stage1_result.get("submission_deadline"), dict) else {}
                 effective_deadline = _parse_deadline_date(str(_sd.get("date") or "")) or _parse_deadline_date(str(deadline or ""))
+                from tender_app.bid_release5 import fill_buyer_basics as _fill_basics
+                _fill_basics(stage1_result, combined_tender_text[:200000])
+                _portal_dl = _parse_deadline_date(str(deadline or "")) if superseded_deadline else None
+                if _portal_dl and (not effective_deadline or _portal_dl > effective_deadline):
+                    effective_deadline = _portal_dl
+                    if not isinstance(stage1_result.get("submission_deadline"), dict):
+                        stage1_result["submission_deadline"] = {}
+                    stage1_result["submission_deadline"]["date"] = effective_deadline.strftime("%d/%m/%Y")
+                    stage1_json_str = json.dumps(stage1_result, indent=2)
                 tender_closed = bool(effective_deadline and effective_deadline < datetime.now().date())
                 closed_note = (f"NOTE: the submission deadline ({effective_deadline.strftime('%d/%m/%Y')}) has passed. "
                                "Do not propose submitting clarification questions.\n") if tender_closed else ""
@@ -8064,10 +8085,16 @@ Return ONLY this JSON structure:
                 # Bid / no-bid advice before any writing (fix plan M16). Its capability gaps go to every writer,
                 # so a missing capability is stated, not filled with an unrelated product (R9).
                 yield json.dumps({"status": "progress", "stage": 4, "message": "Checking whether this tender fits your company..."}) + "\n"
-                bid_decision = assess_bid(_ai_call, decision_prompt(
-                    stage1_result, company=bid_company, company_data=company_structured_data,
-                    company_context=company_ctx_short, answer_bank=answer_bank_short,
-                    warnings=passed_stages, closed=tender_closed), passed_stages, tender_closed)
+                # One score: the fit check the user saw in the pre-generation box is the one the draft's note carries
+                # (release 5: the box and the note disagreed on 5 of 8 tenders).
+                _shown_fit = body.get("fit_check") if isinstance(body.get("fit_check"), dict) else None
+                if _shown_fit and _shown_fit.get("fit_score") is not None and _shown_fit.get("verdict"):
+                    bid_decision = _shown_fit
+                else:
+                    bid_decision = assess_bid(_ai_call, decision_prompt(
+                        stage1_result, company=bid_company, company_data=company_structured_data,
+                        company_context=company_ctx_short, answer_bank=answer_bank_short,
+                        warnings=passed_stages, closed=tender_closed), passed_stages, tender_closed)
                 if bid_decision:
                     _fit = f" (fit {bid_decision['fit_score']}/100)" if bid_decision.get("fit_score") is not None else ""
                     yield json.dumps({"status": "progress", "stage": 4, "message": f"Advice: {bid_decision['verdict']}{_fit}. The draft is still written; gaps are marked, not filled."}) + "\n"
@@ -8076,9 +8103,21 @@ Return ONLY this JSON structure:
                 from tender_app.bid_release5 import buyer_dates_block as _buyer_dates_block
                 writer_notes = (closed_note + cap_note + _required_block(stage1_result if isinstance(stage1_result, dict) else {})
                                 + _buyer_dates_block(combined_tender_text[:200000]))
+                from tender_app.bid_release5 import submission_rules_block as _sub_rules
+                from etenders_scraper.xlsx_text import clarification_sheets_block as _qa_sheets
+                from tender_app.bid_release5 import pricing_wording_block as _price_words
+                writer_notes += _sub_rules(stage1_result) + _qa_sheets(documents) + _price_words(combined_tender_text[:200000])
+                if superseded_deadline and effective_deadline:
+                    writer_notes += (f"\nEFFECTIVE SUBMISSION DEADLINE: {effective_deadline.strftime('%d/%m/%Y')}. "
+                                     f"The notice's earlier date ({superseded_deadline}) was extended and is superseded: "
+                                     "never use it in the draft, the declarations or the cover letter.\n")
                 from tender_app.submission_pack import financial_model_block as _fin_block
                 _fin_model = _fin_block(list(company_documents))
                 writer_notes += _fin_model
+                if not q_mode:
+                    from tender_app.bid_release5 import contract_type_note as _type_note
+                    _ctype, _ctype_note = _type_note(title, description, combined_tender_text[:6000])
+                    writer_notes += ("\n" + _ctype_note) if _ctype_note else ""
                 shared_context = f"""TENDER DISSECTION:
 {dissection_for_writers}
 
@@ -8320,15 +8359,19 @@ Return ONLY valid JSON with no markdown fences:
                         _co_no = next((str(v).strip() for k, v in (profile_meta or {}).items()
                                        if re.search(r"company.?(?:number|no|reg)|registration.?(?:number|no)|^crn$", str(k), re.I)
                                        and re.fullmatch(r"[A-Za-z0-9]{6,8}", str(v).strip())), "")
-                        if _co_no:
+                        # With no company number on the profile, look the company up by name (an exact match only):
+                        # "over 12 years' experience" for a company incorporated in 2024 went unflagged (release 5).
+                        if _co_no or bid_company:
                             from tender_app.company_profile import companies_house as _companies_house
-                            _ch_info = _companies_house(bid_company, _co_no) or {}
+                            _ch_info = _companies_house(bid_company, _co_no or None) or {}
                     except Exception as _ch_err:  # noqa: BLE001
                         print("[proposal] Companies House lookup failed:", _ch_err)
                 _incorporated = _incorporation_date(_ch_info, company_structured_data)
                 for _lbl, _obj, _k in _r5_texts(stage3_result):
                     _obj[_k] = _reconcile_experience(_flag_passed_dates(_scrub_internal(_obj[_k]), _today), _incorporated, _today)
                 _apply_required(stage3_result, stage1_result if isinstance(stage1_result, dict) else {})
+                from tender_app.bid_release5 import flag_unevidenced_claims as _flag_claims
+                _flag_claims(stage3_result, bid_decision)
                 from tender_app.bid_release5 import drop_near_duplicates as _drop_dups
                 _drop_dups(stage3_result)
                 consistency_issues = _flag_contradictions(stage3_result)
@@ -8447,6 +8490,7 @@ Return ONLY valid JSON with no markdown fences:
                     conn.close()
                 except Exception as db_err:
                     print("Failed to save proposal to history:", db_err)
+                _gen_state["done"] = True
 
                 yield json.dumps({
                     "status": "complete",
@@ -8456,6 +8500,20 @@ Return ONLY valid JSON with no markdown fences:
                     "docs_found": len(doc_names)
                 }) + "\n"
 
+            except GeneratorExit:
+                # The browser dropped the connection ("network error") before the draft was finished: nothing was
+                # delivered, so the credits come back. Without this the retry was charged a second time (release 5).
+                if not _gen_state["done"]:
+                    try:
+                        from tender_app.credits import refund_credits
+                        rconn = get_db_connection()
+                        try:
+                            refund_credits(rconn, username, CREDIT_COST_PROPOSAL, "refund_proposal_disconnect")
+                        finally:
+                            rconn.close()
+                    except Exception as refund_err:
+                        print("Proposal refund after disconnect failed:", refund_err)
+                raise
             except Exception as e:
                 import traceback
                 print("ERROR in bid pipeline:")
@@ -9014,7 +9072,15 @@ Return ONLY valid JSON with no markdown fences:
         def add_paragraphs(text, size=22):
             if not text:
                 return
-            for line in text.split("\n"):
+            from tender_app.docx_markup import parse_blocks, table_xml, HEADING_SIZE
+            for _blk in parse_blocks(text):
+                if _blk[0] == "heading":
+                    add_heading(_blk[2].replace("**", ""), size=HEADING_SIZE.get(_blk[1], 22), space_before=200, space_after=80)
+                    continue
+                if _blk[0] == "table":
+                    xml_content.extend(table_xml(_blk[1]))
+                    continue
+                line = _blk[1]
                 trimmed = line.strip()
                 if not trimmed:
                     xml_content.append('    <w:p><w:pPr><w:spacing w:after="120"/></w:pPr></w:p>')

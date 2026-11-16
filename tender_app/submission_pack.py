@@ -150,12 +150,29 @@ def build_technical_docx(title: str, company: str, authority: str, sections: lis
         if not body.strip():
             continue
         d.add_heading(heading, level=1)
-        for line in body.split("\n"):
-            t = line.strip()
+        from tender_app.docx_markup import parse_blocks
+        for blk in parse_blocks(body):
+            if blk[0] == "heading":
+                d.add_heading(blk[2].replace("**", ""), level=min(3, max(2, blk[1])))
+                continue
+            if blk[0] == "table":
+                rows = blk[1]
+                width = max(len(r) for r in rows)
+                tbl = d.add_table(rows=len(rows), cols=width)
+                tbl.style = "Table Grid"
+                for ri, row in enumerate(rows):
+                    for ci in range(width):
+                        cell = tbl.cell(ri, ci)
+                        cell.text = (row[ci] if ci < len(row) else "").replace("**", "")
+                        if ri == 0:
+                            for run in cell.paragraphs[0].runs:
+                                run.bold = True
+                continue
+            t = blk[1].strip()
             if not t:
                 continue
             if t.startswith(("* ", "- ", "• ")):
-                d.add_paragraph(t[2:], style="List Bullet")
+                d.add_paragraph(t[2:].replace("**", ""), style="List Bullet")
             else:
                 d.add_paragraph(t.replace("**", ""))
     buf = io.BytesIO()

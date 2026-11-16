@@ -216,3 +216,70 @@ _pt = [p.text for p in _rd.paragraphs]
 ok(_pt.index("Answer three.") == _pt.index("Please answer in the space below.") + 1 and "Second line." in _pt and _pt.index("D1.4 Describe your quality control") > _pt.index("Second line."), "a paragraph answer follows its question and stays before the next one: %s" % _pt)
 ok(_rd.paragraphs[0].text == "Section D - Technical", "the buyer's headings are kept")
 print("template checks done")
+
+# release 6: Markdown headings and pipe tables become real Word structure, not literal characters
+from tender_app.docx_markup import parse_blocks as _pb, table_xml as _tx
+_bl = _pb("### 5. Meetings\n| Item | Amount |\n|---|---|\n| Fee | **100** |\n\n---\nPlain line")
+ok(_bl[0] == ("heading", 3, "5. Meetings"), "a ### line is a heading block")
+ok(_bl[1][0] == "table" and _bl[1][1] == [["Item", "Amount"], ["Fee", "**100**"]], "the pipe table loses its |---| row")
+ok(all(b[1].strip() != "---" for b in _bl if b[0] == "line"), "horizontal rules are dropped")
+_xml = "".join(_tx(_bl[1][1]))
+ok("<w:tbl>" in _xml and "|" not in _xml and "**" not in _xml, "the table is a real w:tbl with no pipes or asterisks")
+_tech = sp.build_technical_docx("T", "Acme", "Buyer", [("Method", "### Step one\n| Item | Detail |\n|---|---|\n| Visit | weekly |\nDone.")])
+_td = _Doc(_io.BytesIO(_tech))
+ok(len(_td.tables) == 1 and _td.tables[0].cell(1, 1).text == "weekly", "the technical file also gets a real table")
+ok(not any(p.text.lstrip().startswith(("###", "|")) for p in _td.paragraphs), "no raw Markdown lines remain in the technical file")
+print("markup checks done")
+
+# release 6: banned makers and payment terms found by text rules; the Q&A workbook reaches the writer
+_st = r5.fill_buyer_basics({}, "Tenders offering Huawei or ZTE equipment will be excluded. Payment is NET 30 days from receipt of a correct invoice.")
+ok(_st["excluded_suppliers_or_products"] == ["Huawei", "ZTE"], "banned makers are read from the ban sentence: %s" % _st)
+ok(_st["payment_terms"].lower().startswith("net 30"), "NET 30 is read from the text: %s" % _st.get("payment_terms"))
+_st2 = r5.fill_buyer_basics({"payment_terms": "NET 45", "excluded_suppliers_or_products": ["Hytera"]}, "NET 30 and Huawei are excluded.")
+ok(_st2["payment_terms"] == "NET 45" and _st2["excluded_suppliers_or_products"] == ["Hytera"], "an extracted value is never overwritten")
+ok(r5.fill_buyer_basics({}, "Huawei is a supplier we like.").get("excluded_suppliers_or_products") is None, "a brand with no ban wording is not excluded")
+ok("SEPARATE" in r5.submission_rules_block({"separate_technical_commercial": True, "required_submission_documents": [{"name": "Technical offer"}]}), "submission rules are listed")
+from etenders_scraper.xlsx_text import clarification_sheets_block as _csb, xlsx_to_text as _x2t
+_blk = _csb([{"content": "[Sheet: Q&A | clarifications]\nQuestion | Answer\nIs VAT included? | No, exclude VAT\n\n[Sheet: P | price_schedule]\nitem"}])
+ok("exclude VAT" in _blk and "price_schedule" not in _blk and "OVERRIDE" in _blk, "the Q&A rows reach the writer notes")
+import openpyxl as _ox
+_wq = _ox.Workbook(); _sq = _wq.active; _sq.title = "Sheet1"; _sq.append(["Ref", "Detail", "Reply"]); _sq.append(["1", "VAT clerical error", "Prices exclude VAT"])
+_bq = _io.BytesIO(); _wq.save(_bq)
+ok("| clarifications]" in _x2t(_bq.getvalue(), filename="Questions & Answers 1.xlsx"), "a workbook named Questions & Answers is read as the clarification log")
+print("release 6 basics done")
+
+# release 6: a structure for the kind of contract when there is no ITT
+_k, _nt = r5.contract_type_note("Epsom & St Helier WC refurbishment", "Refurbishment of toilets")
+ok(_k == "works" and "Reactive" in _nt and "Health and safety" in _nt and "provisional sums" in _nt, "works contract gets works sections")
+_k, _nt = r5.contract_type_note("NHS Wales coaching platform RFQ", "Digital coaching platform for NWSSP")
+ok(_k == "digital" and "Welsh language" in _nt and "WCAG" in _nt and "Support" in _nt, "a Welsh digital contract gets Welsh, accessibility and support sections")
+_k, _nt = r5.contract_type_note("Digital platform for England", "software")
+ok(_k == "digital" and "Welsh language" not in _nt, "no Welsh section outside Wales")
+ok(r5.contract_type_note("Strategic review of governance", "advice")[0] == "", "other contracts keep the general outline")
+print("contract type checks done")
+
+# release 6: a buyer's hard word limit is met even when the model's condensing does not get there
+from tender_app.bid_writer import trim_to_words as _trim, write_question as _wq2, answer_words as _aw
+_long = "\n\n".join(" ".join(["word"] * 40) + "." for _ in range(20))
+_tr = _trim(_long, 500)
+ok(_aw(_tr) <= 500 and _tr.endswith("."), "trim_to_words fits the cap and ends on a full stop: %d" % _aw(_tr))
+ok(_aw(_trim("short answer.", 500)) == 2, "a short answer is untouched")
+import json as _json
+_calls = []
+def _fake(system, user, mt):
+    _calls.append(1)
+    return _json.dumps({"response": _long})  # the 'condensed' answer is no shorter
+_qq = {"number": "D1.1", "text": "Describe your process", "word_limit": 500, "budget_words": 500}
+_res = _wq2(_fake, _qq, "prompt")
+ok(_aw(_res["response"]) <= 500, "an answer the model will not shorten is trimmed to the buyer's limit: %d" % _aw(_res["response"]))
+print("word limit checks done")
+
+# release 6: lump-sum wording and unevidenced public-sector claims
+ok("lump sum" in r5.pricing_wording_block("The fee shall be a lump-sum, fixed for the contract."), "lump sum wording is asked for")
+ok(r5.pricing_wording_block("Price per hour") == "", "no wording note without a fixed fee")
+_b = {"executive_summary": {"content": "We deliver public and private sector projects. We are local."}}
+_n = r5.flag_unevidenced_claims(_b, {"summary": "No evidence of public sector work in the profile."})
+ok(_n == 1 and "[CONFIRM: no public-sector" in _b["executive_summary"]["content"], "the claim is marked")
+_b2 = {"executive_summary": {"content": "We deliver public sector projects."}}
+ok(r5.flag_unevidenced_claims(_b2, {"summary": "Strong fit."}) == 0 and "CONFIRM" not in _b2["executive_summary"]["content"], "no mark when the fit check does not object")
+print("claims checks done")

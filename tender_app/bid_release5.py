@@ -319,6 +319,54 @@ def _clean_list(value: Any) -> list:
     return out
 
 
+_BANNED_BRANDS = ("Huawei", "ZTE", "Hytera", "Hikvision", "Dahua", "Kaspersky", "Nuctech", "DJI")
+_BAN_CUE = re.compile(r"\b(?:prohibit\w*|ban(?:ned)?|exclu\w+|must not|shall not|will not be accepted|not (?:be )?(?:permitted|accepted|eligible)"
+                      r"|restrict\w*|disqualif\w+|no equipment|do(?:es)? not accept|not offer\w*)\b", re.I)
+_NET_TERMS = re.compile(r"\bnet\s*\d{1,3}(?:\s*days)?\b[^.\n]{0,80}|\b\d{1,3}\s*(?:calendar\s+|working\s+)?days\s+(?:from|of|after)\s+"
+                        r"(?:the\s+)?(?:receipt|date)\s+of\s+(?:a\s+|an\s+|the\s+)?(?:correct\s+|valid\s+|undisputed\s+)?invoice[^.\n]{0,40}", re.I)
+
+
+def fill_buyer_basics(stage1: dict | None, text: str) -> dict:
+    """Fill what the model's extraction left empty, by plain text rules: excluded manufacturers named in a sentence
+    that bans them, and the payment terms (QA release 5: the banned-manufacturer statement and NET 30 went missing).
+    Never overwrites a value the extraction already has."""
+    s = stage1 if isinstance(stage1, dict) else {}
+    t = str(text or "")
+    if not _clean_list(s.get("excluded_suppliers_or_products")) and t:
+        found = []
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", t):
+            if not _BAN_CUE.search(sentence):
+                continue
+            for b in _BANNED_BRANDS:
+                if re.search(r"\b" + re.escape(b) + r"\b", sentence) and b not in found:
+                    found.append(b)
+        if found:
+            s["excluded_suppliers_or_products"] = found
+    cur = str(s.get("payment_terms") or "").strip()
+    if (not cur or re.search(r"^(?:none|n/?a|null|not stated)$", cur, re.I)) and t:
+        m = _NET_TERMS.search(t)
+        if m:
+            s["payment_terms"] = re.sub(r"\s+", " ", m.group(0)).strip(" ,;:")
+    return s
+
+
+def submission_rules_block(stage1: dict | None) -> str:
+    """The buyer's submission rules as a short list for the writers: the files it wants and how they go in."""
+    s = stage1 or {}
+    lines = []
+    docs = [d for d in (s.get("required_submission_documents") or []) if isinstance(d, dict) and d.get("name")]
+    if docs:
+        lines.append("- Documents to submit: " + "; ".join(
+            f"{d['name']}{' (separate file)' if d.get('separate_file') else ''}" for d in docs[:12]))
+    if s.get("separate_technical_commercial"):
+        lines.append("- Technical and commercial offers go in SEPARATE files; the technical answer carries no prices.")
+    si = s.get("submission_instructions") if isinstance(s.get("submission_instructions"), dict) else {}
+    how = str(si.get("how_to_submit") or "").strip()
+    if how and not re.search(r"not specified", how, re.I):
+        lines.append("- How to submit: " + how[:400])
+    return ("SUBMISSION RULES TO REPEAT IN THE BID (a short 'Submission and compliance' note):\n" + "\n".join(lines) + "\n") if lines else ""
+
+
 def required_statements_block(stage1: dict | None) -> str:
     """For the writers: what the buyer excludes and the payment terms it sets."""
     s = stage1 or {}
@@ -562,3 +610,89 @@ def buyer_dates_block(text: str, today: _dt.date | None = None) -> str:
         gone = " That window has PASSED: say so, do not write as if it is open, and flag that the bidder may need to ask the buyer whether late entry is allowed." if b < today else ""
         lines.append(f"- Expression of interest window: {a.day} {a.strftime('%B')} to {b.day} {b.strftime('%B %Y')}.{gone}")
     return ("\nBUYER DATES TO STATE (read from the buyer's documents):\n" + "\n".join(lines) + "\n") if lines else ""
+
+
+# ---- release 6: a structure per contract type when no ITT was uploaded -------------------------------------------------
+_WORKS_RE = re.compile(r"\b(plumb\w*|drain\w*|repair\w*|maintenance|refurbish\w*|building|construction|electrical|heating|boiler|"
+                       r"roof\w*|cleaning|grounds|decorat\w*|joinery|mechanical|fabric|reactive|ppm|wc\b|toilet\w*)\b", re.I)
+_DIGITAL_RE = re.compile(r"\b(platform|software|digital|saas|app(?:lication)?|portal|website|it\s+system|e-?learning|coaching platform|"
+                         r"data\s+system|cloud|licen[cs]e|managed service)\b", re.I)
+_WELSH_RE = re.compile(r"\b(wales|welsh|cymru|nwssp|sell2wales)\b", re.I)
+
+
+def contract_type_note(title: str, description: str = "", tender_text: str = "") -> tuple:
+    """(kind, note): the sections a contract of this kind normally asks for. Used only when the buyer's ITT was not
+    uploaded, so the draft does not fall back to the same ten house sections for every tender (release 5)."""
+    head = f"{title or ''} {description or ''}"
+    blob = head + " " + str(tender_text or "")[:6000]
+    digital = len(_DIGITAL_RE.findall(head)) >= 1
+    works = len(_WORKS_RE.findall(head)) >= 1
+    if digital and not works:
+        sections = ["Proposed solution and how it meets the requirement", "Implementation, onboarding and migration plan",
+                    "Data protection and information security (UK GDPR; only the certifications evidenced)",
+                    "Accessibility (WCAG 2.2 AA) and usability", "Support, service levels and account management",
+                    "Pricing and licensing model"]
+        if _WELSH_RE.search(blob):
+            sections.insert(3, "Welsh language provision (the Welsh Language Standards apply to Welsh public bodies)")
+        kind = "digital"
+    elif works:
+        sections = ["Method of working and programme", "Reactive and emergency response (response and fix times, out-of-hours cover)",
+                    "Health and safety (risk assessments, method statements, CDM, RIDDOR)",
+                    "Staff, supervision, vetting and DBS/site access", "Quality control, compliance and the qualifications actually held",
+                    "Mobilisation and contract management",
+                    "Pricing basis (rates, provisional sums, VAT treatment, what is excluded)"]
+        kind = "works"
+    else:
+        return ("", "")
+    note = ("STRUCTURE FOR THIS KIND OF CONTRACT (the buyer's ITT is not available, so the draft is provisional): write the "
+            "technical_methodology as these sections, each as a '### ' sub-heading, in this order: "
+            + "; ".join(f"{i + 1}. {s}" for i, s in enumerate(sections))
+            + ". Leave social_value.content EMPTY unless the notice asks for social value, and keep relevant_experience to "
+              "facts the company data evidences (otherwise one [NEEDS INPUT] line). Do not describe the company as 'fully insured', "
+              "'experienced for N years' or 'public sector' unless the company data states it.\n")
+    return (kind, note)
+
+
+# ---- release 6: pricing wording, and Answer Bank claims the fit check says are not evidenced --------------------------
+_FIXED_FEE = re.compile(r"\b(lump[- ]sum|fixed (?:fee|price|sum)|fixed[- ]price)\b", re.I)
+
+
+def pricing_wording_block(text: str) -> str:
+    """When the buyer's documents speak of a lump sum or fixed fee, the price answer must use the buyer's wording
+    (Thetford: the fee structure was right but 'lump sum' never appeared)."""
+    m = _FIXED_FEE.search(str(text or ""))
+    if not m:
+        return ""
+    word = m.group(1).lower().replace("-", " ")
+    return (f"PRICING WORDING: the buyer describes the price as a '{word}'. In the pricing answer state the fee as a "
+            f"{word} in those words, say what it covers and what is excluded.\n")
+
+
+_PUBLIC_CLAIM = re.compile(r"[^.\n]*\b(?:public[- ]sector|public and private sector|local (?:authorit|government)|NHS|council clients?)\b[^.\n]*\.?|"
+                           r"[^.\n]*\bthousands of (?:projects|jobs|contracts)\b[^.\n]*\.?", re.I)
+_NO_PUBLIC = re.compile(r"no (?:evidence|record|history|experience)[^.]{0,60}(?:public|government|council|NHS)|"
+                        r"(?:public|government|council|NHS)[^.]{0,60}(?:not (?:evidenced|shown|stated)|no evidence|none)", re.I)
+
+
+def flag_unevidenced_claims(bid_response: dict, decision: dict | None) -> int:
+    """If the fit check says there is no public-sector history, mark each Answer Bank sentence that claims it with a
+    [CONFIRM] so the bidder checks it before submitting. Returns how many sentences were marked."""
+    d = decision or {}
+    evidence = " ".join([str(d.get("summary") or "")] + [str(g) for g in (d.get("capability_gaps") or [])])
+    if not _NO_PUBLIC.search(evidence):
+        return 0
+    n = 0
+    for _label, obj, key in _each_text(bid_response):
+        text = obj.get(key)
+        if not isinstance(text, str) or "[CONFIRM: no public-sector" in text:
+            continue
+
+        def mark(m):
+            nonlocal n
+            s = m.group(0)
+            if "[CONFIRM" in s:
+                return s
+            n += 1
+            return s.rstrip() + " [CONFIRM: no public-sector work is evidenced in your profile - check this claim]"
+        obj[key] = _PUBLIC_CLAIM.sub(mark, text)
+    return n

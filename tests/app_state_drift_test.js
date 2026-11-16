@@ -319,7 +319,9 @@ test("every picker outside the filter bar asks for makeDefault: false", () => {
     ].sort(),
     "only the autoSelect helper and the two filter-bar pickers may change the account default; got:\n" + keepsDefault.map((c) => `  line ${c.n}: ${c.line}`).join("\n"),
   );
-  assert.equal(callers.length - keepsDefault.length, 5, "bids, analysis, history, answer bank and documents each pass makeDefault: false");
+  // Release 5 (QA new defect 5): the bid picker is for THIS bid and no longer routes through the shared handler, so
+  // choosing a company to bid as cannot change the search bar's company.
+  assert.equal(callers.length - keepsDefault.length, 4, "analysis, history, answer bank and documents each pass makeDefault: false");
 });
 
 test("saving a profile auto-selects it only when it is becoming the default", () => {
