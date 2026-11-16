@@ -2729,7 +2729,7 @@ function reconcilePortalCatalogue() {
     hasSavedPrefs: "selected_portals" in state.userPrefs || "managed_countries" in state.userPrefs,
   });
   if (!out.changed) return;
-  if (JSON.stringify(out.selected) !== JSON.stringify(current) && !/[?&]portals=/.test(location.search)) {
+  if (JSON.stringify(out.selected) !== JSON.stringify(current) && !(typeof location !== "undefined" && /[?&]portals=/.test(location.search))) {
     _selectedPortals = out.selected ? new Set(out.selected) : null;
     savePortalSelection();
   }
@@ -4848,6 +4848,17 @@ function formatDaysLeft(row) {
       }
     }
   }
+  if (days == null || urgency === "unknown") {
+    // Any other date the app can read ("2026-12-03T14:00", "03/12/2026 14:00", or the row's deadline_date): a row
+    // restored from cache has no stored count, and showed "No deadline" next to its real closing date (pilot).
+    const dl2 = parseDate(String(deadline).trim()) || parseDate(String(deadline).split(/[ T,]/)[0]) || parseDate(row.deadline_date);
+    if (dl2) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      days = Math.round((dl2.getTime() - today.getTime()) / 86400000);
+      urgency = days < 0 ? "past" : days <= 10 ? "critical" : days <= 30 ? "soon" : "normal";
+    }
+  }
   if (days != null && urgency !== "unknown") {
     const dl = parseDate(String(deadline).split(" ")[0]);
     if (dl) {
@@ -4970,6 +4981,9 @@ const CURRENCY_BY_SOURCE = {
 // ("TBC", "£1m - £2m") is left exactly as published.
 function formatValue(v, source) {
   let s = String(v).trim();
+  // A value stored as a float prints as "1.13411e+06 GBP" or "2e+09 GBP": write the number out (pilot, 13 Nov)
+  const sci = s.match(/^([£€$]?)\s*(\d+(?:\.\d+)?e[+-]?\d+)\s*(GBP|EUR|USD)?$/i);
+  if (sci && isFinite(Number(sci[2]))) s = (sci[1] || "") + String(Math.round(Number(sci[2]))) + (sci[3] ? " " + sci[3] : "");
   // Public Contracts Scotland quotes "200 000.00 GBP": the code becomes the symbol (re-test 4 T7)
   const withCode = s.match(/^([\d][\d.,\s]*?)\s*(GBP|EUR|USD)$/i);
   if (withCode) s = ({ GBP: "£", EUR: "€", USD: "$" })[withCode[2].toUpperCase()] + withCode[1].trim();
@@ -5342,6 +5356,19 @@ function isClosedTender(row) {
   // Check if deadline date has passed via date parsing
   if (typeof isDeadlinePassed === "function" && isDeadlinePassed(row)) {
     return true;
+  }
+
+  // "25-Sep-26": the day / month-name form the days-left badge already reads. Such rows showed "Closed" in that
+  // column and were still listed under Opportunities (pilot, 13 Nov).
+  const named = String(row.submission_deadline || "").match(/\b(\d{1,2})[-\s]([A-Za-z]{3,9})\.?[-\s,]+(\d{2}|\d{4})\b/);
+  if (named) {
+    const mi = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(named[2].slice(0, 3).toLowerCase());
+    const yy = parseInt(named[3], 10) < 100 ? 2000 + parseInt(named[3], 10) : parseInt(named[3], 10);
+    const end = mi >= 0 ? _calendarDate(yy, mi + 1, parseInt(named[1], 10)) : null;
+    if (end) {
+      end.setHours(23, 59, 59, 0);
+      if (end.getTime() < Date.now()) return true;
+    }
   }
 
   // Comprehensive status string matching for closed/awarded tenders
@@ -11937,7 +11964,7 @@ function populateFitProfileSelect() {
 function autoSelectFitProfile(profileId) {
   if (!profileId) return;
   const idStr = String(profileId);
-  handleCompanyProfileSelectionChange(idStr);
+  handleCompanyProfileSelectionChange(idStr, { setAccountDefault: true });
   const sel = $("fitProfileSelect");
   const rmSel = $("rmCompanyProfileSelect");
   [sel, rmSel].forEach(s => {
@@ -11986,7 +12013,7 @@ function updateFitControlsVisibility() {
 // change the account default, so they pass { makeDefault: false }: the choice then lasts for this page
 // view only. They used to rewrite the default every time, which is how "Civenta (Default)" kept
 // coming back after a session (Round 27).
-function handleCompanyProfileSelectionChange(val, { makeDefault = true } = {}) {
+function handleCompanyProfileSelectionChange(val, { makeDefault = true, setAccountDefault = false } = {}) {
   if (val === "__add_new__") {
     const activeVal = state.activeProfileId || "";
     if ($("fitProfileSelect")) $("fitProfileSelect").value = activeVal;
@@ -12010,19 +12037,21 @@ function handleCompanyProfileSelectionChange(val, { makeDefault = true } = {}) {
   }
 
   if (idStr && makeDefault) {
-    state.defaultProfileId = idStr;
-
-    // 1. Update is_default on local state.companyProfiles
-    (state.companyProfiles || []).forEach(p => {
-      p.is_default = (String(p.id) === idStr);
-    });
-
-    // 2. Persist to server database as default
-    try {
-      fetch(`/api/company-profiles/${idStr}/set-default`, { method: "POST" })
-        .catch(err => console.error("Error setting default profile:", err));
-    } catch (e) {
-      console.error(e);
+    // Pilot (13 Nov): picking a company in the search bar changes the profile tenders are scored against, and
+    // is remembered as the profile in use. It no longer rewrites the account's default: "(Default)" moved to
+    // whatever was picked and had to be switched back by hand. "Set as default" on the Company profiles page
+    // (setDefaultCompanyProfile), or saving a profile as the default (setAccountDefault), changes the default.
+    if (setAccountDefault) {
+      state.defaultProfileId = idStr;
+      (state.companyProfiles || []).forEach(p => {
+        p.is_default = (String(p.id) === idStr);
+      });
+      try {
+        fetch(`/api/company-profiles/${idStr}/set-default`, { method: "POST" })
+          .catch(err => console.error("Error setting default profile:", err));
+      } catch (e) {
+        console.error(e);
+      }
     }
 
     const prof = (state.companyProfiles || []).find(p => String(p.id) === idStr);
@@ -12108,7 +12137,9 @@ function handleCompanyProfileSelectionChange(val, { makeDefault = true } = {}) {
 
     // 9. Show toast confirmation
     if (typeof cpShowToast === "function") {
-      cpShowToast(`"${compName}" set as default company profile — applied everywhere`, "info");
+      cpShowToast(setAccountDefault
+        ? `"${compName}" set as default company profile — applied everywhere`
+        : `Scoring tenders against "${compName}". Your default profile is unchanged.`, "info");
     }
   } else {
     if ($("fitProfileSelect")) $("fitProfileSelect").value = idStr;
@@ -12794,19 +12825,27 @@ async function runBidAssistant(isRefresh = false) {
     const _busyBtns = ["btnRunBidAssistant", "btnReRunBidAssistant"].map(id => $(id)).filter(Boolean);
     const _busyText = _busyBtns.map(b => b.textContent);
     _busyBtns.forEach(b => { b.disabled = true; b.textContent = "⏳ Checking fit…"; });
-    let publicDocs, fitCheck;
+    let publicDocs, fitCheck, docFacts = { roles: [], facts: {} };
     try {
+      docFacts = await classifyBidUploadsFull(uploads);
+      // A custom tender (uploaded or pasted, not from search) has no notice: its fit check reads the text itself,
+      // so this route gets the same check and the same credit confirmation as a tender from search (pilot P1).
+      const customText = notCustom ? "" : [pastedText, docFacts.facts.excerpt || ""].filter(Boolean).join("\n\n");
       [publicDocs, fitCheck] = await Promise.all([
         (!uploads.length && !pastedText && notCustom) ? fetchPublicTenderDocs(_bidRow) : Promise.resolve([]),
-        notCustom ? fetchBidCheck(_bidRow, $("bidCompanyProfileSelect")?.value || "") : Promise.resolve(null),
+        (notCustom || customText.length >= 200)
+          ? fetchBidCheck(_bidRow, $("bidCompanyProfileSelect")?.value || "", customText) : Promise.resolve(null),
       ]);
     } finally {
       _busyBtns.forEach((b, i) => { b.disabled = false; b.textContent = _busyText[i]; });
     }
-    const roles = await classifyBidUploads(uploads);
+    const roles = docFacts.roles;
     const pre = bidPreflight(_bidRow, uploads, pastedText, wbTitles, confirmedRecently,
                              { proposal: creditCostText("proposal"), download: creditCostText("download") },
-                             isClosedTender(_bidRow), publicDocs, fitCheck, roles);
+                             isClosedTender(_bidRow), publicDocs, fitCheck, roles,
+                             { stepsOff: bidStepsOffWarnings(), facts: docFacts.facts,
+                               deep: (state.fitCache && state.fitCache[rowKey(_bidRow)] && state.fitCache[rowKey(_bidRow)].deep) || null,
+                               needsFinancials: Boolean(_lastProposal && _lastProposal.needs_financial_upload) });
     if (pre.show) {
       const go = window.showConfirm
         ? await window.showConfirm(pre.message, "Before we write your bid", { okText: "Generate", cancelText: "Add documents first", danger: false })
@@ -13385,6 +13424,7 @@ function renderProposal(p, row) {
       </div>
       ${(p.dissection && p.dissection.separate_technical_commercial) ? `<button id="btnDownloadSubmissionPack" class="btn btn--small" title="Technical offer with no prices, and the buyer's price schedule as a separate Excel file" style="background-color: #fff; color: #1e3a8a; border: 1px solid #1e3a8a; padding: 7px 14px; font-size: 12px; border-radius: 6px; font-weight: 700; cursor: pointer; white-space: nowrap; flex: 0 0 auto;">Technical + commercial (zip)</button>` : ""}
       <button id="btnDownloadProposalPdf" class="btn btn--small" title="PDF with a page count for each section" style="background-color: #fff; color: #1e3a8a; border: 1px solid #1e3a8a; padding: 7px 14px; font-size: 12px; border-radius: 6px; font-weight: 700; cursor: pointer; white-space: nowrap; flex: 0 0 auto;">Download PDF</button>
+      <button id="btnFinalExport" class="btn btn--small" title="The file for the buyer: no writer's note, no to-do appendices. Only available once every [NEEDS INPUT] and [CONFIRM] item is filled in." style="background-color: #fff; color: #166534; border: 1px solid #166534; padding: 7px 14px; font-size: 12px; border-radius: 6px; font-weight: 700; cursor: pointer; white-space: nowrap; flex: 0 0 auto;">Final export</button>
       <button id="btnDownloadFullProposalHeader" class="btn btn--small" style="background-color: #1e3a8a; color: #fff; border: none; padding: 7px 14px; font-size: 12px; border-radius: 6px; font-weight: 700; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 6px rgba(37,99,235,0.25); display: flex; align-items: center; gap: 6px; white-space: nowrap; flex: 0 0 auto; min-width: max-content;">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         <span>Download Full Proposal (.docx)</span>
@@ -13396,10 +13436,10 @@ function renderProposal(p, row) {
 
   // R1 / R2 / N5: what the bidder must know before submitting (also printed at the top of the downloaded draft).
   if (p.needs_financial_upload) {
-    html += `<div style="margin:0 0 12px;padding:10px 14px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;font-size:12.5px;color:#78350f"><b>A heavily weighted question is financial.</b> Upload your financial model or P&amp;L (.xlsx or .csv, with "financial" or "P&amp;L" in the file name) under step 5 and re-run, so the figures replace the [NEEDS INPUT] gaps.</div>`;
+    html += `<div style="margin:0 0 12px;padding:10px 14px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;font-size:12.5px;color:#78350f"><b>A heavily weighted question is financial.</b> Upload your financial model or P&amp;L (.xlsx or .csv) with the buyer documents and re-run, so the figures replace the [NEEDS INPUT] gaps.</div>`;
   }
   if (p.writer_note) {
-    html += `<div style="margin:0 0 12px;padding:10px 14px;border:1px solid #cbd5e1;background:#f8fafc;border-radius:8px;font-size:12.5px;color:#0f172a;white-space:pre-line"><b>Bid writer's note</b> <span style="color:#64748b">(printed at the top of the download; remove before submission)</span>\n${esc(p.writer_note)}</div>`;
+    html += `<div style="margin:0 0 12px;padding:10px 14px;border:1px solid #cbd5e1;background:#f8fafc;border-radius:8px;font-size:12.5px;color:#0f172a;white-space:pre-line"><b>Bid writer's note</b> <span style="color:#64748b">(printed at the top of the working draft; left out of a Final export)</span>\n${esc(p.writer_note)}</div>`;
   }
 
   // ----------------------------------------------------
@@ -13865,13 +13905,16 @@ const _PORTAL_STEPS = [
   [/procontract|proactis/i, "ProContract", "Sign in at procontract.due-north.com, open the opportunity{ref}, download every file on the Documents tab, then open Messages / Clarifications and save each message (or the Q&A log) as PDF."],
   [/in-?tend/i, "In-Tend", "Sign in to the buyer's In-Tend site, open the tender{ref}, download the Tender Documents, then export the Correspondence / Clarifications."],
   [/delta|delta-esourcing/i, "Delta eSourcing", "Sign in at delta-esourcing.com, open the response{ref}, download the documents, then save the Messages and Clarifications."],
-  [/atamis/i, "Atamis", "Sign in to the buyer's Atamis portal, open the event{ref}, download the documents and export the Q&A."],
+  [/atamis/i, "Atamis", "Register your company on the buyer's Atamis portal (free) and sign in, open the opportunity{ref}, download every document (questions, specification, price schedule, terms), then export the clarification Q&A / messages."],
   [/bravo|jaggaer|bravosolution/i, "Jaggaer / Bravo", "Sign in to the buyer's Jaggaer portal, open the opportunity{ref}, download the attachments and export the Messages."],
 ];
 
-function bidPortalSteps(row) {
+function bidPortalSteps(row, extraText) {
+  // extraText: the portal named in the full notice or in the uploaded documents (a search row's description is
+  // shortened, so "Atamis" was missed and no steps were shown).
   const hay = [row && row.source, row && row.source_label, row && row.url, row && row.link, row && row.notice_url,
-               row && row.documents_url, row && row.description].filter(Boolean).join(" ");
+               row && row.documents_url, row && row.description, row && row.submission_url, row && row.portal,
+               extraText].filter(Boolean).join(" ");
   const hit = _PORTAL_STEPS.find(([re]) => re.test(hay));
   if (!hit) return null;
   // The portal's own reference: a DN number written anywhere, or the row's id only when the row is from that
@@ -13895,14 +13938,20 @@ const _EXPECTED_DOCS = [
 ];
 
 // The "Before we write your bid" box (fix plan M15): expected documents, portal steps, deadline, past bids, cost.
-function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, costs, closed, publicDocs, fitCheck, roles) {
+function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, costs, closed, publicDocs, fitCheck, roles, extra) {
+  const ex = extra || {};
+  const facts = ex.facts || {};
+  // A file with almost no text is a saved notice or a note, not the buyer's specification or price schedule: its
+  // name ticks nothing (pilot: a 2 KB notice text ticked "Specification" and "Pricing schedule").
+  const thin = new Set(facts.thin || []);
   // N7: boxes a file covers by its CONTENT (from /api/classify-bid-docs); file names alone still tick them too.
   const byContent = new Set(roles || []);
   // A public document is shown by its file name and ticked against its title and file name together.
   const pub = (publicDocs || []).map(d => String(d.filename || d.title || "").trim()).filter(Boolean);
   const pubMatch = (publicDocs || []).map(d => `${d.title || ""} ${d.filename || ""}`.trim()).filter(Boolean);
   // "EEF_product_team_rfp_-_oct.pdf": underscores and dashes separate words in file names.
-  const names = (uploads || []).map(f => String(f.filename || "")).concat(pubMatch).map(n => n.replace(/[_\-.]+/g, " "));
+  const names = (uploads || []).filter(f => !thin.has(String(f.filename || ""))).map(f => String(f.filename || ""))
+    .concat(pubMatch).map(n => n.replace(/[_\-.]+/g, " "));
   const custom = row && row.source === "custom";
   const warnings = [];
   const info = [];
@@ -13915,6 +13964,17 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
       + (gaps.length ? ` Not shown in your profile: ${gaps.join("; ")}.` : "")
       + " The full check runs again on the documents while drafting.";
     (fitCheck.verdict === "Bid" ? info : warnings).unshift(line);
+  } else if (ex.deep && Number.isFinite(Number(ex.deep.score))) {
+    // The notice check did not come back, but this tender already has an AI deep score: show that fit line.
+    const sc = Number(ex.deep.score);
+    const why = String(ex.deep.summary || ex.deep.verdict || ex.deep.reason || "").trim();
+    (sc >= 60 ? info : warnings).unshift(`Fit from your AI deep score: ${sc}/100.${why ? " " + why.slice(0, 260) : ""} The full check runs again on the documents while drafting.`);
+  }
+  (ex.stepsOff || []).forEach(w => warnings.push(w));
+  // R1: a heavily weighted financial question needs the bidder's own numbers. Ask before credits are spent.
+  const finWeight = Number(facts.financial_question_weight || 0);
+  if ((finWeight >= 25 || ex.needsFinancials) && !facts.has_financial_file) {
+    warnings.push(`${finWeight >= 25 ? `A question worth about ${finWeight}% of the marks is financial` : "A heavily weighted question is financial"}. Upload your financial model or P&L (.xlsx or .csv) with the buyer documents before you generate: the answer is then built from your figures. Without it, every figure of yours is left as [NEEDS INPUT].`);
   }
   if (pub.length && !(uploads || []).length) {
     info.push(`We found ${pub.length} public document${pub.length === 1 ? "" : "s"} on the notice and will read ${pub.length === 1 ? "it" : "them"}: ${pub.slice(0, 6).join(", ")}${pub.length > 6 ? ", ..." : ""}. Anything behind a portal login (questionnaire, updates, clarification answers) still needs uploading.`);
@@ -13925,8 +13985,10 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
     const lines = _EXPECTED_DOCS.map(([label, re], i) => `${(byContent.has(i) || names.some(n => re.test(n))) ? "✓" : "☐"} ${label}`);
     const missing = lines.filter(l => l.startsWith("☐")).length;
     if (missing) info.push("Buyer documents we expect:\n   " + lines.join("\n   "));
-    const portal = bidPortalSteps(row);
+    const portal = bidPortalSteps(row, [fitCheck && fitCheck.portal_hint, facts.portal].filter(Boolean).join(" "));
     if (portal && missing) info.push(`How to get them from ${portal.portal}: ${portal.steps}`);
+  } else if (!fitCheck || !fitCheck.verdict) {
+    info.push("This is a tender you uploaded or pasted, so there is no notice to check it against. The fit check runs on the documents while drafting.");
   }
   const dl = String((row && row.submission_deadline) || "").trim();
   const hasDate = dl && dl !== "—" && !/^(unknown|not stated|n\/a)$/i.test(dl);
@@ -13946,8 +14008,9 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
   if (wbTitles && wbTitles.length) {
     info.push(`Previous winning bids used as style examples: ${wbTitles.join(", ")}. Untick them under "Previous winning bids" to leave them out.`);
   }
+  // A custom tender always gets the box: it is the only place the credit cost is confirmed on that route.
   const show = warnings.length > 0 || ((wbTitles || []).length > 0) || (!confirmedRecently && info.length > 0)
-    || Boolean(fitCheck && fitCheck.verdict && !confirmedRecently);
+    || Boolean(fitCheck && fitCheck.verdict && !confirmedRecently) || (custom && !confirmedRecently);
   const cost = costs && costs.proposal ? costs.proposal : "credits";
   const dlCost = costs && costs.download ? `; each download afterwards uses ${costs.download}` : "";
   const message = "Before we write your bid:\n\n" + [...warnings, ...info].map(w => "• " + w).join("\n\n")
@@ -13993,9 +14056,11 @@ async function fetchPublicTenderDocs(row) {
 
 // Bid / no-bid from the notice and profile before credits are spent (fix plan M16). Free, cached for a day per
 // tender and profile; any failure or a 25 s wait just leaves it out of the box.
-async function fetchBidCheck(row, profileId) {
+async function fetchBidCheck(row, profileId, text) {
   if (!row || !profileId) return null;
-  const key = "tf_bid_check_" + String(rowKey(row)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 100) + "_" + profileId;
+  const body = String(text || "").slice(0, 12000);
+  const key = "tf_bid_check_" + String(rowKey(row)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 100) + "_" + profileId
+    + (body ? "_t" + body.length : "");
   const saved = lsGet(key, null);
   if (saved && saved.at && Date.now() - saved.at < 24 * 3600 * 1000 && saved.decision) return saved.decision;
   const ctl = typeof AbortController === "function" ? new AbortController() : null;
@@ -14004,7 +14069,7 @@ async function fetchBidCheck(row, profileId) {
     const res = await fetch("/api/bid-check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tender: row, profile_id: profileId }),
+      body: JSON.stringify({ tender: row, profile_id: profileId, ...(body ? { text: body } : {}) }),
       ...(ctl ? { signal: ctl.signal } : {}),
     });
     if (!res.ok) return null;
@@ -14020,18 +14085,34 @@ async function fetchBidCheck(row, profileId) {
 
 // N7: which expected documents the uploaded files cover, judged by their content. Any failure just means "by name only".
 async function classifyBidUploads(uploads) {
+  return (await classifyBidUploadsFull(uploads)).roles;
+}
+
+// The same call, with what else the files show: a heavily weighted financial question, whether a financial file is
+// attached, files too short to be a buyer document, the portal they name and an excerpt for a custom tender's fit check.
+async function classifyBidUploadsFull(uploads) {
   const files = (uploads || []).filter(f => f && f.content).slice(0, 12);
-  if (!files.length) return [];
+  if (!files.length) return { roles: [], facts: {} };
   try {
     const res = await fetch("/api/classify-bid-docs", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ files: files.map(f => ({ filename: f.filename, content: f.content })) }),
     });
-    if (!res.ok) return [];
+    if (!res.ok) return { roles: [], facts: {} };
     const data = await res.json();
-    return [].concat(...((data && data.files) || []).map(f => f.roles || []));
+    const list = (data && data.files) || [];
+    return {
+      roles: [].concat(...list.map(f => f.roles || [])),
+      facts: {
+        financial_question_weight: data.financial_question_weight || 0,
+        has_financial_file: Boolean(data.has_financial_file),
+        thin: list.filter(f => f.thin).map(f => String(f.filename || "")),
+        portal: data.portal || "",
+        excerpt: data.excerpt || "",
+      },
+    };
   } catch (e) {
-    return [];
+    return { roles: [], facts: {} };
   }
 }
 
@@ -14143,7 +14224,7 @@ function creditCostText(kind) {
 function labelChargedDownloads() {
   const cost = creditCostText("download");
   if (!cost) return;
-  ["btnDownloadCoveringLetter", "btnDownloadFullProposal", "btnDownloadFullProposalHeader", "btnDownloadProposalPdf", "btnDownloadSubmissionPack", "btnDownloadFullProposalS1",
+  ["btnDownloadCoveringLetter", "btnDownloadFullProposal", "btnDownloadFullProposalHeader", "btnDownloadProposalPdf", "btnFinalExport", "btnDownloadSubmissionPack", "btnDownloadFullProposalS1",
    "btnDownloadFullProposalS2", "btnDownloadFullProposalS4", "btnDownloadDissection", "btnDownloadChecklist",
    "btnDownloadClarifications"].forEach(id => {
     const b = $(id);
@@ -14160,6 +14241,7 @@ function wireBidResultButtons() {
   $("btnDownloadFullProposal")?.addEventListener("click", downloadFullProposalDoc);
   $("btnDownloadFullProposalHeader")?.addEventListener("click", downloadFullProposalDoc);
   $("btnDownloadProposalPdf")?.addEventListener("click", downloadFullProposalPdf);
+  $("btnFinalExport")?.addEventListener("click", () => downloadFullProposalDoc($("btnFinalExport"), { final: true }));
   $("btnDownloadSubmissionPack")?.addEventListener("click", downloadSubmissionPack);
   $("btnDownloadFullProposalS1")?.addEventListener("click", downloadFullProposalDoc);
   $("btnDownloadFullProposalS2")?.addEventListener("click", downloadFullProposalDoc);
@@ -14709,8 +14791,11 @@ async function downloadCoveringLetterDoc() {
   });
 }
 
-async function downloadFullProposalDoc(btnElem = null) {
+async function downloadFullProposalDoc(btnElem = null, opts = null) {
   if (!_bidRow || !_lastProposal?.bid_response) return;
+  // O1: a final export is the file that goes to the buyer: no writer's note, no working appendices, and the
+  // server refuses it (without charging) while any [NEEDS INPUT] / [CONFIRM] item or failed check remains.
+  const finalExport = Boolean(opts && opts.final);
   const title = _bidRow.title || "Unknown Tender";
   // N4: the buyer named in the buyer's own documents beats the notice's (a parent company, an agent).
   const authority = _lastProposal.buyer_name || _bidRow.contracting_authority || "Unknown Authority";
@@ -14729,7 +14814,7 @@ async function downloadFullProposalDoc(btnElem = null) {
   // Export QA gate (fix plan M10): name what blocks a clean export before downloading. The server marks
   // such a document "DRAFT - NOT READY TO SUBMIT" on its first page.
   const qaP0 = ((_lastProposal.qa_report || {}).issues || []).filter(i => i.severity === "P0");
-  if (qaP0.length) {
+  if (qaP0.length && !finalExport) {
     const qaMsg = `This draft fails ${qaP0.length} export check${qaP0.length === 1 ? "" : "s"}:\n\n`
       + qaP0.slice(0, 8).map(i => `• ${i.section}: ${i.detail}`).join("\n")
       + (qaP0.length > 8 ? `\n• ...and ${qaP0.length - 8} more` : "")
@@ -14762,7 +14847,7 @@ async function downloadFullProposalDoc(btnElem = null) {
     });
   };
 
-  checkAndWarnUnresolvedPlaceholders(fullTextToScan, async () => {
+  const runExport = async () => {
     try {
       const checklistItems = (_lastProposal.checklist?.checklist_items || []).map((item, idx) => ({
         no: item.id || (idx + 1),
@@ -14896,6 +14981,7 @@ async function downloadFullProposalDoc(btnElem = null) {
           tender_closed: Boolean(_lastProposal?.tender_closed),
           format_requirements: _lastProposal?.dissection?.format_requirements || null,
           writer_note: _lastProposal?.writer_note || "",
+          final_export: finalExport,
           dissection_rulings: {
             clarification_rulings: _lastProposal?.dissection?.clarification_rulings || [],
             published_clarifications: _lastProposal?.dissection?.published_clarifications || []
@@ -14904,6 +14990,12 @@ async function downloadFullProposalDoc(btnElem = null) {
       });
       if (!res.ok) {
         const errJson = await res.json().catch(() => null);
+        if (errJson && errJson.code === "FINAL_EXPORT_BLOCKED") {
+          const list = (errJson.blockers || []).slice(0, 10).map(b => `• ${b}`).join("\n");
+          await showAlert("Final export is not available yet. Nothing was charged.\n\nFix these first:\n" + list
+            + "\n\nUse Download Full Proposal for a working draft.");
+          return;
+        }
         throw new Error((errJson && errJson.error) || `Docx creation failed (HTTP ${res.status})`);
       }
       refreshCredits();
@@ -14912,7 +15004,7 @@ async function downloadFullProposalDoc(btnElem = null) {
       const a = document.createElement("a");
       a.href = url;
       const sanitizedTitle = title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-      a.download = `${sanitizedTitle}_full_bid_proposal.docx`;
+      a.download = `${sanitizedTitle}_${finalExport ? "bid_submission" : "full_bid_proposal"}.docx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -14922,7 +15014,9 @@ async function downloadFullProposalDoc(btnElem = null) {
     } finally {
       resetButtons();
     }
-  }, resetButtons);
+  };
+  if (finalExport) await runExport();
+  else checkAndWarnUnresolvedPlaceholders(fullTextToScan, runExport, resetButtons);
 }
 
 // N6: PDF export with the page count of every section; a section over its page limit is named.
@@ -23968,7 +24062,7 @@ function ensureBuyerProfileSwitch(anchor) {
     sel.setAttribute("aria-label", "Company profile for these recommendations");
     sel.style.cssText = "margin-left:8px;font-size:12px;max-width:200px;";
     sel.addEventListener("change", () => {
-      handleCompanyProfileSelectionChange(sel.value);
+      handleCompanyProfileSelectionChange(sel.value, { makeDefault: false });
       setTimeout(() => refreshBuyerIntelligenceView(), 500);   // the profile's postcode is looked up first
     });
     anchor.insertAdjacentElement("afterend", sel);
@@ -27534,7 +27628,9 @@ window.saveBidStepCheckStates = function() {
   const states = {};
   for (let i = 1; i <= 5; i++) {
     const chk = document.getElementById(`bidStepCheck${i}`);
-    if (chk) states[i] = chk.checked;
+    // A step the app switched off itself (nothing attached yet) keeps the user's last choice, so it is ticked
+    // again once there is something to use (QA S2: steps 2 and 3 opened unticked on some tenders).
+    if (chk) states[i] = chk.dataset.autoOff === "1" ? (bidStepSavedPref(i) !== false) : chk.checked;
   }
   lsSet("bid_step_checks", states);
   savePrefsToServer({ tf_bid_step_checks: JSON.stringify(states) }, true);
@@ -27554,7 +27650,50 @@ window.collapseAllBidSteps = function() {
   }
 };
 
+// The user's own saved choice for a step: true, false, or undefined when they never chose.
+function bidStepSavedPref(i) {
+  let saved = state.userPrefs && state.userPrefs.tf_bid_step_checks;
+  if (saved) { try { saved = typeof saved === "string" ? JSON.parse(saved) : saved; } catch (e) { saved = null; } }
+  if (!saved || typeof saved !== "object") saved = lsGet("bid_step_checks", null);
+  if (!saved || typeof saved !== "object") return undefined;
+  const v = saved[i] ?? saved[String(i)];
+  return v === undefined ? undefined : !!v;
+}
+
+// Steps 2 and 3 that are switched off, as one line each for the "Before we write your bid" box.
+function bidStepsOffWarnings() {
+  const out = [];
+  const c2 = document.getElementById("bidStepCheck2"), c3 = document.getElementById("bidStepCheck3");
+  if (c2 && !c2.checked) {
+    out.push(c2.disabled
+      ? "Step 2: no company documents are attached, so the bid is written from your profile and Answer Bank only."
+      : "Step 2 (company documents) is switched off, so the bid will not use your company documents. Tick it to include them.");
+  }
+  if (c3 && !c3.checked) out.push("Step 3 (Answer Bank) is switched off, so the bid will not use your saved answers. Tick it to include them.");
+  return out;
+}
+
+// Step 3 counts the answers of the profile chosen for THIS bid, not of whichever profile the Answer Bank screen
+// last showed (pilot: "16 answers linked" for a profile that has 1).
+async function refreshBidAnswerCount() {
+  const pid = document.getElementById("bidCompanyProfileSelect")?.value || "";
+  if (!pid || pid === "__add_new__") { state.bidAnswerCount = undefined; return; }
+  try {
+    const res = await fetch(`/api/answer-bank?profile_id=${encodeURIComponent(pid)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (String(document.getElementById("bidCompanyProfileSelect")?.value || "") !== String(pid)) return;
+    state.bidAnswerCount = Array.isArray(data.items) ? data.items.length : undefined;
+    state.bidAnswerCountFor = String(pid);
+    if (typeof updateBidStepSummary === "function") updateBidStepSummary(3);
+  } catch (e) { /* the summary keeps the Answer Bank screen's count */ }
+}
+document.addEventListener("change", (e) => {
+  if (e.target && e.target.id === "bidCompanyProfileSelect") refreshBidAnswerCount();
+});
+
 window.loadBidStepCheckStates = function() {
+  refreshBidAnswerCount();
   let saved = state.userPrefs && state.userPrefs.tf_bid_step_checks;
   if (saved) {
     try {
@@ -27569,8 +27708,9 @@ window.loadBidStepCheckStates = function() {
     if (chk) {
       if (saved && (saved[i] !== undefined || saved[String(i)] !== undefined)) {
         chk.checked = !!(saved[i] ?? saved[String(i)]);
-      } else if (!saved || i === 5) {
-        // Default to checked if no saved preference exists (step 5 is newer than most saved states)
+      } else if (!saved || i === 5 || i <= 3) {
+        // Default to checked if no saved preference exists (step 5 is newer than most saved states; steps 1-3
+        // are on unless the user switched them off)
         chk.checked = true;
       }
     }
@@ -27701,10 +27841,16 @@ window.updateBidStepSummary = function(stepNumber, summaryEl) {
         if (fileCount === 0) {
           chk2.checked = false;
           chk2.disabled = true;
+          chk2.dataset.autoOff = "1";
           chk2.title = "No documents selected. Add or select a document to enable this step.";
         } else {
           chk2.disabled = false;
           chk2.title = "";
+          if (chk2.dataset.autoOff === "1") {
+            // switched off only because nothing was attached: back to the user's choice (on unless they said off)
+            delete chk2.dataset.autoOff;
+            chk2.checked = bidStepSavedPref(2) !== false;
+          }
         }
       }
     }
@@ -27720,6 +27866,8 @@ window.updateBidStepSummary = function(stepNumber, summaryEl) {
   } else if (stepNumber === 3) {
     const badge = document.getElementById('abCountBadge');
     let count = badge && badge.textContent ? parseInt(badge.textContent) || 0 : 0;
+    const bidPid = String(document.getElementById('bidCompanyProfileSelect')?.value || "");
+    if (Number.isFinite(state.bidAnswerCount) && state.bidAnswerCountFor === bidPid) count = state.bidAnswerCount;
     if (summaryEl) {
       summaryEl.textContent = `${count} answers linked`;
     }

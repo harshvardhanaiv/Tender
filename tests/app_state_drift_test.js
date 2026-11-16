@@ -262,16 +262,19 @@ test("the picker inside another screen changes the profile for this visit only",
   assert.equal(page.activeProfile(), "2", "the pick stands for the rest of the visit");
 });
 
-test("the filter-bar picker makes the profile the account default", () => {
+// Pilot, 13 Nov 2026: picking a company in the search bar made it "(Default)" everywhere and it had to be switched
+// back by hand. The pick now changes the profile in use and is remembered, but the account default stays.
+test("the filter-bar picker changes the profile in use, not the account default", () => {
   const page = newPage();
   page.setProfiles(PROFILES(), "");
   page.run("populateFitProfileSelect()");
+  const before = page.defaults();
   page.run('handleCompanyProfileSelectionChange("3")');
   assert.equal(page.activeProfile(), "3");
   assert.deepEqual(page.log("prefs"), [{ active_profile: "3" }]);
   assert.deepEqual(page.log("ls"), [["tf_active_profile", "3"]]);
-  assert.deepEqual(page.log("fetches"), [["/api/company-profiles/3/set-default", "POST"]]);
-  assert.deepEqual(page.defaults(), ["3"]);
+  assert.deepEqual(page.log("fetches"), []);
+  assert.deepEqual(page.defaults(), before);
   assert.ok(optionLabels(page).length > 0);
   assert.equal(page.log("toasts").length, 1);
 });
@@ -310,7 +313,7 @@ test("every picker outside the filter bar asks for makeDefault: false", () => {
   assert.deepEqual(
     keepsDefault.map((c) => c.line.replace(/\s+/g, " ")).sort(),
     [
-      'handleCompanyProfileSelectionChange(idStr);',
+      'handleCompanyProfileSelectionChange(idStr, { setAccountDefault: true });',
       '$("fitProfileSelect")?.addEventListener("change", (e) => handleCompanyProfileSelectionChange(e.target.value));',
       '$("rmCompanyProfileSelect")?.addEventListener("change", (e) => handleCompanyProfileSelectionChange(e.target.value));',
     ].sort(),

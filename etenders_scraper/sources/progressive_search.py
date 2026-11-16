@@ -188,6 +188,28 @@ _JOBS_LOCK = threading.Lock()
 # (keyword, portal) -> (rows, warning, saved at, the portal's notes). Only answers worth reusing go in:
 # a portal that failed outright is not remembered, so searching again tries it again.
 _PORTAL_RESULTS_CACHE: dict[tuple[str, str], tuple[list[dict[str, Any]], str | None, float, dict[str, Any]]] = {}
+# The same query gives the same answer for 15 minutes (pilot, 13 Nov: "Hertfordshire Police" returned 7 tenders, then
+# 6 a few minutes later, because Find a Tender rate-limited the second search). "Retry" on a portal still refetches.
+RESULTS_FRESH_SEC = 900
+# When a portal fails or times out, its last good answer to this query (up to 6 hours old) is shown and labelled
+# with its time, rather than dropping tenders the user saw a moment ago.
+RESULTS_STALE_SEC = 6 * 3600
+
+
+def _stale_answer(keyword: str, source_id: str):
+    hit = _PORTAL_RESULTS_CACHE.get(((keyword or "").strip().lower(), source_id))
+    if not hit:
+        return None
+    rows, _err, saved, notes = hit
+    if not rows or time.time() - saved > RESULTS_STALE_SEC:
+        return None
+    return rows, saved, notes
+
+
+def _stale_message(label: str, saved: float, why: str) -> str:
+    why = (why or "the portal did not answer").strip().rstrip(".")
+    return (f"{label} results are from {time.strftime('%H:%M', time.localtime(saved))} ({why[:140]}). "
+            "Retry this portal to refresh them.")
 
 
 def get_job(job_id: str) -> SearchJob | None:
@@ -524,7 +546,7 @@ def _portal_worker(
         # Check cache
         if cache_key in _PORTAL_RESULTS_CACHE:
             batch, err, timestamp, cached_notes = _PORTAL_RESULTS_CACHE[cache_key]
-            if time.time() - timestamp < 300: # 5 minutes TTL
+            if time.time() - timestamp < RESULTS_FRESH_SEC:
                 if cached_notes:
                     with job.lock:
                         job.meta.setdefault("portal_notes", {}).setdefault(source_id, {}).update(cached_notes)
@@ -574,6 +596,11 @@ def _portal_worker(
         _log(job, f"{source_id} first page: {len(preview)} rows in {first_page_sec}s" + (f", error: {err}" if err else ""))
 
         if err and not preview:
+            stale = _stale_answer(keyword, source_id)
+            if stale:
+                _update_job_portal(job, sources, source_id, stale[0], progress="complete",
+                                   err=_stale_message(cfg.get("label", source_id), stale[1], str(err)))
+                return
             with job.lock:
                 _set_state(job, source_id, "error")
                 _finalize_job_meta(job, sources, _rows_by_source(job.rows, sources))
@@ -655,6 +682,14 @@ def _portal_worker(
         _log(job, f"{source_id} complete: {len(full_batch)} rows in {full_sec}s" + (f", warning: {full_err}" if full_err else ""))
     except Exception as exc:  # noqa: BLE001
         _log(job, f"{source_id} FAILED: {exc}")
+        stale = _stale_answer(keyword, source_id)
+        if stale:
+            try:
+                _update_job_portal(job, sources, source_id, stale[0], progress="complete",
+                                   err=_stale_message(cfg.get("label", source_id), stale[1], str(exc)))
+                return
+            except Exception as stale_exc:  # noqa: BLE001 - fall through to the plain error
+                _log(job, f"{source_id} stale fallback failed: {stale_exc}")
         with job.lock:
             job.meta.setdefault("errors", {})[source_id] = str(exc)
             _set_state(job, source_id, "error")  # one the search already gave up on stays "timeout"
@@ -668,6 +703,94 @@ def _portal_worker(
             _complete_if_settled(job, sources)
 
 
+def _one_edit_apart(a: str, b: str) -> bool:
+    """True when two different words differ by one letter added, dropped, changed or swapped ("matthewsgreen" /
+    "mathewsgreen", "plumbing" / "lumbing")."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        diff = [i for i in range(len(a)) if a[i] != b[i]]
+        return len(diff) == 1 or (len(diff) == 2 and diff[1] == diff[0] + 1
+                                  and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]])
+    short, long_ = (a, b) if len(a) < len(b) else (b, a)
+    i = 0
+    while i < len(short) and short[i] == long_[i]:
+        i += 1
+    return short[i:] == long_[i + 1:]
+
+
+def spelling_variants(query: str, rows: list[dict[str, Any]], limit: int = 2) -> list[str]:
+    """The query respelled the way a result's title spells it. A buyer who writes "Mathewsgreen" is found by a
+    search for "Matthewsgreen" on the portal that matched the description, and the other portals, which match titles
+    literally, are then asked for the buyer's spelling (QA S1)."""
+    words = [w for w in re.findall(r"[a-z0-9]+", (query or "").lower()) if len(w) >= 6]
+    out: list[str] = []
+    if not words:
+        return out
+    for row in rows:
+        for tw in set(re.findall(r"[a-z0-9]+", str(row.get("title") or "").lower())):
+            if len(tw) < 5:
+                continue
+            for w in words:
+                if _one_edit_apart(w, tw):
+                    variant = re.sub(r"(?<![A-Za-z0-9])" + re.escape(w) + r"(?![A-Za-z0-9])", tw, query.lower()).strip()
+                    if variant and variant != query.lower() and variant not in out:
+                        out.append(variant)
+                        if len(out) >= limit:
+                            return out
+    return out
+
+
+def _spelling_worker(job: SearchJob, source_id: str, cfg: dict[str, str], variant: str,
+                     sources: dict[str, dict[str, str]]) -> None:
+    """Ask one portal that found nothing for the buyer's spelling of the query, and add what it returns."""
+    rows: list[dict[str, Any]] = []
+    try:
+        _sid, rows, _err, _hint = _fetch_source_first_page_one(source_id, cfg, variant, None)
+    except Exception as exc:  # noqa: BLE001 - the portal's first answer (nothing found) stands
+        _log(job, f"{source_id} spelling retry '{variant}' failed: {exc}")
+        rows = []
+    try:
+        if rows:
+            for row in rows:
+                row.setdefault("matched_spelling", variant)
+            _log(job, f"{source_id} spelling retry '{variant}': {len(rows)} rows")
+            _update_job_portal(job, sources, source_id, rows, progress="complete")
+    finally:
+        with job.lock:
+            _set_state(job, source_id, "complete")
+            job.meta.setdefault("_portal_times", {}).setdefault(source_id, {})["end"] = time.monotonic()
+            _finalize_job_meta(job, sources, _rows_by_source(job.rows, sources))
+            _complete_if_settled(job, sources)
+
+
+def _start_spelling_pass(job: SearchJob, sources: dict[str, dict[str, str]]) -> bool:
+    """Once, when every portal has answered (job.lock held): portals that returned nothing are asked again with the
+    spelling the results use. Returns True when a retry was started, so the job is not marked complete yet."""
+    if job.meta.get("_spelling_pass") or job.cancelled:
+        return False
+    job.meta["_spelling_pass"] = True
+    variants = spelling_variants(job.query, job.rows)
+    if not variants:
+        return False
+    progress = job.meta.get("source_progress", {})
+    by_source = _rows_by_source(job.rows, sources)
+    empty = [sid for sid in sources if progress.get(sid) == "complete" and not by_source.get(sid)
+             and sid not in (job.meta.get("errors") or {}) and sid not in job.cancelled_sources
+             and sid not in LOOSE_MATCH_SOURCES]
+    if not empty:
+        return False
+    job.meta["spelling_variant"] = variants[0]
+    for sid in empty:
+        progress[sid] = "loading"
+        job.meta.setdefault("_portal_times", {})[sid] = {"start": time.monotonic()}
+        threading.Thread(target=_spelling_worker, args=(job, sid, sources[sid], variants[0], sources),
+                         name=f"spelling-{job.job_id}-{sid}", daemon=True).start()
+    _finalize_job_meta(job, sources, by_source)
+    _log(job, f"spelling retry '{variants[0]}' on {', '.join(empty)}")
+    return True
+
+
 def _complete_if_settled(job: SearchJob, sources: dict[str, dict[str, str]]) -> None:
     """Mark the job complete once every portal is settled (job.lock must be held).
 
@@ -677,6 +800,11 @@ def _complete_if_settled(job: SearchJob, sources: dict[str, dict[str, str]]) -> 
     progress = job.meta.get("source_progress", {})
     if job.status != "loading" or not all(progress.get(sid) in SETTLED_STATES for sid in sources):
         return
+    try:
+        if _start_spelling_pass(job, sources):
+            return
+    except Exception as exc:  # noqa: BLE001 - a spelling retry is a nicety; never hold the search up on it
+        _log(job, f"spelling pass failed: {exc}")
     job.status = "complete"
     _finalize_job_meta(job, sources, _rows_by_source(job.rows, sources))
     counts = job.meta.get("source_counts", {})
@@ -693,8 +821,20 @@ def _complete_if_settled(job: SearchJob, sources: dict[str, dict[str, str]]) -> 
 
 def _give_up_on_portal(job: SearchJob, sources: dict[str, dict[str, str]], source_id: str, waited: float, why: str) -> None:
     """Mark one portal "timeout" (job.lock held). Its rows so far stay in the results."""
-    job.meta.setdefault("source_progress", {})[source_id] = "timeout"
     label = sources.get(source_id, {}).get("label", source_id)
+    rows_now = _rows_by_source(job.rows, sources)
+    stale = None if rows_now.get(source_id) else _stale_answer(job.query, source_id)
+    if stale:
+        # Timed out with nothing new: keep the tenders this portal gave for the same query earlier.
+        rows_now[source_id] = [dict(r) for r in stale[0]]
+        job.meta.setdefault("source_progress", {})[source_id] = "complete"
+        job.meta.setdefault("errors", {})[source_id] = _stale_message(label, stale[1], f"{label} {why} just now")
+        job.meta.setdefault("_portal_times", {}).setdefault(source_id, {}).setdefault("end", time.monotonic())
+        _log(job, f"{source_id} TIMEOUT after {int(waited)}s ({why}); showing {len(stale[0])} saved rows")
+        _finalize_job_meta(job, sources, rows_now)
+        _complete_if_settled(job, sources)
+        return
+    job.meta.setdefault("source_progress", {})[source_id] = "timeout"
     job.meta.setdefault("errors", {})[source_id] = f"{label} {why} (waited {int(waited)} s)"
     job.meta.setdefault("_portal_times", {}).setdefault(source_id, {}).setdefault("end", time.monotonic())
     _log(job, f"{source_id} TIMEOUT after {int(waited)}s ({why})")

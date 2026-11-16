@@ -3471,7 +3471,11 @@ def verify_and_clean_bid_claims(bid_response: dict, ground_truth_str: str, check
 
     def _pct_in_source(pct_str: str) -> bool:
         if strict_numbers:
-            return bool(re.search(rf"(?<![\d.]){re.escape(pct_str)}\s*(?:%|per\s*cent|percent)", numbers_source))
+            # The buyer's own weightings ("weighting_percent": 60, "Quality 60%") are the buyer's facts, not a claim
+            # about the bidder: no "[PLACEHOLDER: ... '60%' not found in company data]" for them.
+            from tender_app.bid_release5 import pct_in_buyer_facts
+            return bool(re.search(rf"(?<![\d.]){re.escape(pct_str)}\s*(?:%|per\s*cent|percent)", numbers_source)
+                        or pct_in_buyer_facts(pct_str, facts_lower))
         return pct_str in gt_lower or f"{pct_str}%" in gt_lower
 
     _src_amounts = None
@@ -4491,7 +4495,12 @@ def create_app() -> Flask:
             "corresponding gap, same order as gaps — e.g. team up with a subcontractor, get a "
             "specific certification, partner locally>]}. "
             "Score bands: 80-100 strong fit, 50-79 possible fit, 0-49 weak fit. Be realistic and "
-            "weigh sector/capability match, company size vs contract value, geography, and feasibility."
+            "weigh sector/capability match, company size vs contract value, geography, and feasibility. "
+            "Name a certification, registration or accreditation as a gap or suggestion only when the work in THIS "
+            "tender needs it: Gas Safe registration applies only to gas appliances, boilers and gas pipework, so "
+            "never suggest it for plumbing, drainage, water or sanitary work with no gas in scope; NICEIC only for "
+            "electrical work; F-Gas only for refrigeration and air conditioning. If the notice does not say which "
+            "accreditations are mandatory, say 'check the tender documents for mandatory accreditations' instead of guessing one."
         )
         ab_str = f"ESTABLISHED BID ANSWER AREAS (categories where the company has pre-approved responses): {', '.join(ab_categories)}\n\n" if ab_categories else ""
         user = (
@@ -5365,7 +5374,10 @@ def create_app() -> Flask:
         body = request.get_json(silent=True) or {}
         t = body.get("tender") if isinstance(body.get("tender"), dict) else {}
         profile_id = body.get("profile_id") or None
-        key = (username, str(t.get("source") or ""), str(t.get("resource_id") or t.get("title") or "")[:200], str(profile_id))
+        # A custom tender (uploaded or pasted) has no notice: the client sends an excerpt of its text instead.
+        own_text = str(body.get("text") or "").strip()[:12000]
+        key = (username, str(t.get("source") or ""), str(t.get("resource_id") or t.get("title") or "")[:200], str(profile_id),
+               hashlib.sha1(own_text.encode("utf-8", "ignore")).hexdigest() if own_text else "")
         hit = _BID_CHECK_CACHE.get(key)
         if hit and time.time() - hit[0] < 6 * 3600:
             return jsonify({"ok": True, "decision": hit[1], "basis": "notice", "cached": True})
@@ -5374,7 +5386,11 @@ def create_app() -> Flask:
             return jsonify({"ok": False, "error": "Select a company profile first."}), 400
         # A stand-in or a one-line notice is not enough to judge fit: say so rather than advise "No-bid" on nothing
         # (the EEF check said "no usable scope" because a stand-in description had replaced the real one).
-        desc = str(t.get("description") or "")
+        desc = own_text if len(own_text) >= 200 else str(t.get("description") or "")
+        if own_text and len(own_text) >= 200:
+            t = {**t, "title": None if re.match(r"analy[sz]ing ", str(t.get("title") or ""), re.I) else t.get("title"),
+                 "contracting_authority": None if re.match(r"analy[sz]ing ", str(t.get("contracting_authority") or ""), re.I)
+                 else t.get("contracting_authority")}
         if len(desc.strip()) < 200 or re.search(r"public (?:procurement )?notice #", desc, re.I):
             try:
                 stored = _get_tender_details_dict(str(t.get("source") or ""), str(t.get("resource_id") or "")) or {}
@@ -5409,6 +5425,9 @@ def create_app() -> Flask:
         decision = assess_bid(_call, prompt, [], False)
         if not decision:
             return jsonify({"ok": False, "error": "The fit check could not run. You can still generate."}), 502
+        # Which portal holds the documents, from the full notice (the search row's description is shortened).
+        from tender_app.bid_release5 import portal_hint as _portal_hint
+        decision["portal_hint"] = _portal_hint(f"{desc} {t.get('url') or ''} {t.get('detail_url') or ''}")
         _BID_CHECK_CACHE[key] = (time.time(), decision)
         if len(_BID_CHECK_CACHE) > 500:
             for k in sorted(_BID_CHECK_CACHE, key=lambda k: _BID_CHECK_CACHE[k][0])[:100]:
@@ -6921,8 +6940,8 @@ use "NOT STATED" string where a field was expected but missing):
   }},
   "key_dates": [
     {{
-      "event": "string — every dated step in the timetable other than the submission deadline, e.g. Expression of interest window, Sample deadline, Site visit, Bidder briefing, Selection questionnaire return, Award, Contract start",
-      "date": "string — DD/MM/YYYY, or a range DD/MM/YYYY - DD/MM/YYYY (list every date given, e.g. both site-visit days)",
+      "event": "string — every dated step in the timetable other than the submission deadline, e.g. Expression of interest window, Sample deadline, Site visit, Bidder briefing, Selection questionnaire return, Award, Contract start. Optional steps count too: an optional site visit or viewing day is listed with bidder_action true",
+      "date": "string — DD/MM/YYYY, or a range DD/MM/YYYY - DD/MM/YYYY (list every date given, e.g. both site-visit days: '16/11/2026 and 18/11/2026'). Search the whole document for the dates, including tables and the body of the brief; never leave a site visit or EOI window undated when the document gives the days",
       "bidder_action": "boolean — true when the bidder had to do something by this date (register, express interest, send samples, attend)",
       "contact": "string or null — who to book or send it to, if named, e.g. 'book with Susan Moore'",
       "source": "string — which document"
@@ -6977,6 +6996,8 @@ use "NOT STATED" string where a field was expected but missing):
     }}
   ],
   "separate_technical_commercial": "boolean — true when the buyer says technical and commercial offers must be submitted separately",
+  "excluded_suppliers_or_products": ["string array — every manufacturer, brand, product or country of origin the buyer says must NOT be offered or will cause a tender to be excluded (e.g. Huawei, ZTE, Hytera, Hikvision, Dahua); empty array if none are named"],
+  "payment_terms": "string or null — the buyer's stated payment terms exactly as written, e.g. NET 30 days from receipt of a correct invoice",
   "mandatory_requirements": [
     {{
       "requirement": "string — exact wording",
@@ -8014,7 +8035,8 @@ Return ONLY this JSON structure:
                     _fit = f" (fit {bid_decision['fit_score']}/100)" if bid_decision.get("fit_score") is not None else ""
                     yield json.dumps({"status": "progress", "stage": 4, "message": f"Advice: {bid_decision['verdict']}{_fit}. The draft is still written; gaps are marked, not filled."}) + "\n"
                 cap_note = capability_note(bid_decision)
-                writer_notes = closed_note + cap_note
+                from tender_app.bid_release5 import required_statements_block as _required_block
+                writer_notes = closed_note + cap_note + _required_block(stage1_result if isinstance(stage1_result, dict) else {})
                 shared_context = f"""TENDER DISSECTION:
 {dissection_for_writers}
 
@@ -8240,6 +8262,33 @@ Return ONLY valid JSON with no markdown fences:
                 ground_truth_combined = f"{company_structured_data}\n{answer_bank_ctx}\n{company_ctx_text}"
                 stage3_result = verify_and_clean_bid_claims(stage3_result, ground_truth_combined, checklist_items,
                                                             tender_facts=f"{stage1_json_str}\n{published_clar}\n{combined_tender_text[:200000]}")
+                # Release 5 passes over the finished draft: nothing that says how it was produced (O1), dates already
+                # gone written as live (R3), experience longer than the company has existed, statements the buyer
+                # requires in every bid, and one part of the draft contradicting another.
+                from tender_app.bid_release5 import (
+                    _each_text as _r5_texts, _YEARS as _r5_years, scrub_internal as _scrub_internal,
+                    flag_passed_dates as _flag_passed_dates, flag_passed_dates_in_checklist as _flag_checklist_dates,
+                    incorporation_date as _incorporation_date, reconcile_experience as _reconcile_experience,
+                    apply_required_statements as _apply_required, flag_contradictions as _flag_contradictions,
+                    provisional_structure_note as _provisional_note)
+                _today = datetime.now().date()
+                _ch_info: dict = {}
+                if any(_r5_years.search(str(_o.get(_k) or "")) for _l, _o, _k in _r5_texts(stage3_result)):
+                    try:
+                        _co_no = next((str(v).strip() for k, v in (profile_meta or {}).items()
+                                       if re.search(r"company.?(?:number|no|reg)|registration.?(?:number|no)|^crn$", str(k), re.I)
+                                       and re.fullmatch(r"[A-Za-z0-9]{6,8}", str(v).strip())), "")
+                        if _co_no:
+                            from tender_app.company_profile import companies_house as _companies_house
+                            _ch_info = _companies_house(bid_company, _co_no) or {}
+                    except Exception as _ch_err:  # noqa: BLE001
+                        print("[proposal] Companies House lookup failed:", _ch_err)
+                _incorporated = _incorporation_date(_ch_info, company_structured_data)
+                for _lbl, _obj, _k in _r5_texts(stage3_result):
+                    _obj[_k] = _reconcile_experience(_flag_passed_dates(_scrub_internal(_obj[_k]), _today), _incorporated, _today)
+                _apply_required(stage3_result, stage1_result if isinstance(stage1_result, dict) else {})
+                consistency_issues = _flag_contradictions(stage3_result)
+                _flag_checklist_dates(checklist_items, _today)
                 from tender_app.bid_writer import find_placeholders
                 _seen_tags: set = set()
                 for ph in find_placeholders(stage3_result):
@@ -8256,6 +8305,7 @@ Return ONLY valid JSON with no markdown fences:
                     qa_report["issues"].append({"check": "identity", "severity": "P1", "section": "Company profile",
                                                 "detail": f"Profile field: {issue}. It was left out of the bid; correct it in your profile."})
                 qa_report["issues"].extend(decision_issues(bid_decision, passed_stages))
+                qa_report["issues"].extend(consistency_issues)
 
                 # Stage 5: Gantt timeline extraction
                 yield json.dumps({"status": "progress", "stage": 5, "message": "Extracting Gantt project timeline... (Stage 5/5)"}) + "\n"
@@ -8327,7 +8377,10 @@ Return ONLY valid JSON with no markdown fences:
                     "effective_deadline": effective_deadline.strftime("%d/%m/%Y") if effective_deadline else "",
                     "deadline_display": _deadline_display(stage1_result),
                     "buyer_name": authority_name,
-                    "writer_note": _writer_note(bid_decision, passed_stages, stage1_result, tender_closed),
+                    "writer_note": "\n".join(x for x in (
+                        _provisional_note(q_mode, stage1_result if isinstance(stage1_result, dict) else {}),
+                        _writer_note(bid_decision, passed_stages, stage1_result, tender_closed)) if x),
+                    "provisional_structure": not q_mode,
                     "needs_financial_upload": _needs_financials,
                     "price_schedules": _price_schedules,
                     "docs_used": doc_names,
@@ -8665,8 +8718,22 @@ Return ONLY valid JSON with no markdown fences:
         return send_file(io.BytesIO(data), as_attachment=True, download_name=f"{safe}_financial_model.xlsx",
                          mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+    def _final_export_refused() -> bool:
+        """True when this request asks for a final export that will be refused: then no credits are taken."""
+        try:
+            from tender_app.bid_writer import qa_gate as _g
+            from tender_app.bid_release4 import rulings_list as _rl5
+            from tender_app.bid_release5 import final_export_blockers as _fb
+            b = request.get_json(silent=True) or {}
+            if not b.get("final_export"):
+                return False
+            bid = b.get("bid_response") or {}
+            return bool(_fb(bid, _g(bid, closed=bool(b.get("tender_closed")), rulings=_rl5(b.get("dissection_rulings") or {}))))
+        except Exception:  # noqa: BLE001
+            return False
+
     @app.post("/api/download-proposal-pdf")
-    @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection)
+    @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection, skip_if=_final_export_refused)
     def api_download_proposal_pdf():
         """The bid as a PDF with a page count per section (QA scorecard N6). Same charge as a .docx download."""
         from datetime import datetime
@@ -8681,6 +8748,15 @@ Return ONLY valid JSON with no markdown fences:
         bid = body.get("bid_response") or {}
         rulings = _rl(body.get("dissection_rulings") or {})
         qa = _qa_gate(bid, closed=bool(body.get("tender_closed")), rulings=rulings)
+        final_export = bool(body.get("final_export"))
+        if final_export:
+            from tender_app.bid_release5 import final_export_blockers as _fb5, scrub_internal as _scrub5, _each_text as _et5
+            _blockers = _fb5(bid, qa)
+            if _blockers:
+                return jsonify({"error": "This bid is not ready for a final export.", "code": "FINAL_EXPORT_BLOCKED",
+                                "blockers": _blockers[:25]}), 409
+            for _lbl, _obj, _k in _et5(bid):
+                _obj[_k] = _scrub5(_obj[_k])
         e = _html.escape
         front = (f"<h1>{e(str(bid.get('document_title') or 'Tender bid response'))}</h1>"
                  f"<p>Prepared for: {e(authority)}</p><p>Prepared by: {e(company_name)}</p>"
@@ -8689,7 +8765,7 @@ Return ONLY valid JSON with no markdown fences:
                      f"<p>- {e(i['section'])}: {e(i['detail'])}</p>" for i in qa["issues"] if i["severity"] == "P0")
                     if not qa.get("passed", True) else ""))
         sections: list = []
-        note = str(body.get("writer_note") or "").strip()
+        note = "" if final_export else str(body.get("writer_note") or "").strip()
         if note:
             sections.append({"label": "Bid writer's note (remove before submission)",
                              "html": "<h2>Bid writer's note (remove before submission)</h2>" + text_to_html(note)})
@@ -8727,14 +8803,30 @@ Return ONLY valid JSON with no markdown fences:
         from tender_app.submission_pack import classify_doc_roles
         if not session.get("username"):
             return jsonify({"error": "Not authenticated"}), 401
+        from tender_app.submission_pack import looks_financial
+        from tender_app.bid_release5 import financial_question_weight, portal_hint, is_notice_only
         out = []
+        fin_weight, has_fin, portal, excerpt = 0, False, "", []
         for f in (request.get_json(silent=True) or {}).get("files", [])[:12]:
+            name = str(f.get("filename") or "file")
             try:
-                text = _extract_bytes(base64.b64decode(f.get("content") or ""), str(f.get("filename") or "file"), max_chars=40000)
+                text = _extract_bytes(base64.b64decode(f.get("content") or ""), name, max_chars=40000)
             except Exception:  # noqa: BLE001
                 text = ""
-            out.append({"filename": f.get("filename"), "roles": classify_doc_roles(str(f.get("filename") or ""), text)})
-        return jsonify({"files": out})
+            # R1 / pilot: what the box needs to know before credits are spent. A heavily weighted financial
+            # question, whether the bidder's own financial file is attached, which portal the documents name, and
+            # which files are too short to be a buyer document.
+            is_fin = looks_financial(name, text)
+            has_fin = has_fin or is_fin
+            if not is_fin:
+                fin_weight = max(fin_weight, financial_question_weight(text))
+                portal = portal or portal_hint(text)
+                if len(excerpt) < 4:
+                    excerpt.append(text[:3000])
+            out.append({"filename": f.get("filename"), "roles": classify_doc_roles(name, text),
+                        "thin": is_notice_only(text), "financial": is_fin})
+        return jsonify({"files": out, "financial_question_weight": fin_weight, "has_financial_file": has_fin,
+                        "portal": portal, "excerpt": "\n\n".join(excerpt)[:9000]})
 
     @app.post("/api/download-submission-pack")
     @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection)
@@ -8781,7 +8873,7 @@ Return ONLY valid JSON with no markdown fences:
         return send_file(io.BytesIO(data), as_attachment=True, download_name=f"{safe}_submission_pack.zip", mimetype="application/zip")
 
     @app.post("/api/download-proposal")
-    @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection)
+    @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection, skip_if=_final_export_refused)
     def api_download_proposal():
         import zipfile
         import re
@@ -8798,8 +8890,21 @@ Return ONLY valid JSON with no markdown fences:
         # says so on its first page and lists what to fix, so it cannot pass for a finished bid.
         from tender_app.bid_writer import qa_gate as _qa_gate, PLACEHOLDER_RE as _PH_RE
         from tender_app.bid_release4 import rulings_list as _export_rulings, group_placeholders as _group_ph
-        export_qa = _qa_gate(bid_response, closed=bool(body.get("tender_closed")),
+        from tender_app.bid_release5 import (final_export_blockers as _final_blockers, scrub_internal as _scrub_internal,
+                                             _each_text as _r5_each_text)
+        export_qa =_qa_gate(bid_response, closed=bool(body.get("tender_closed")),
                              rulings=_export_rulings(body.get("dissection_rulings") or {}))
+        # O1: a final export is the file that goes to the buyer. It is refused (and not charged) while anything is
+        # still open, and it carries no writer's note, no draft page and no working appendices.
+        final_export = bool(body.get("final_export"))
+        if final_export:
+            _blockers = _final_blockers(bid_response, export_qa)
+            if _blockers:
+                return jsonify({"error": "This bid is not ready for a final export.", "code": "FINAL_EXPORT_BLOCKED",
+                                "blockers": _blockers[:25]}), 409
+            # Text written before this release may still carry a production marker; the buyer must never see one.
+            for _lbl, _obj, _k in _r5_each_text(bid_response):
+                _obj[_k] = _scrub_internal(_obj[_k])
         checklist = body.get("checklist") or bid_response.get("checklist") or []
         clarifications = body.get("clarifications") or bid_response.get("clarification_questions") or bid_response.get("clarifications") or []
         methodology_diagram = body.get("methodology") or bid_response.get("methodology") or {}
@@ -8904,21 +9009,8 @@ Return ONLY valid JSON with no markdown fences:
         xml_content.append('      </w:r>')
         xml_content.append('    </w:p>')
 
-        # Persistent AI Draft Banner
-        xml_content.append('    <w:p>')
-        xml_content.append('      <w:pPr><w:spacing w:after="180"/><w:jc w:val="center"/></w:pPr>')
-        xml_content.append('      <w:r>')
-        xml_content.append('        <w:rPr>')
-        xml_content.append('          <w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI"/>')
-        xml_content.append('          <w:b/>')
-        xml_content.append('          <w:sz w:val="22"/>')
-        xml_content.append('          <w:color w:val="B45309"/>')
-        xml_content.append('          <w:highlight w:val="yellow"/>')
-        xml_content.append('        </w:rPr>')
-        xml_content.append('        <w:t>⚠️ AI DRAFT — review before submitting</w:t>')
-        xml_content.append('      </w:r>')
-        xml_content.append('    </w:p>')
-
+        # O1: nothing in the downloaded document says how it was produced. The "review before submitting" warning
+        # is shown in the app, never in the document body.
         xml_content.append('    <w:p>')
         xml_content.append('      <w:pPr><w:spacing w:before="120" w:after="480"/><w:jc w:val="center"/></w:pPr>')
         xml_content.append('      <w:r>')
@@ -8985,7 +9077,7 @@ Return ONLY valid JSON with no markdown fences:
 
         # R2/R3/N5/N8: the bid writer's note: fit advice, dates already passed, the buyer's clarification route,
         # the deadline with its time zone and the dated actions. For the bidder, not the buyer.
-        _writer_note_text = str(body.get("writer_note") or "").strip()
+        _writer_note_text = "" if final_export else str(body.get("writer_note") or "").strip()
         if _writer_note_text:
             add_heading("Bid writer's note (remove before submission)", size=32, color="B45309")
             add_paragraphs(_writer_note_text)
@@ -9057,11 +9149,14 @@ Return ONLY valid JSON with no markdown fences:
                        ("declarations", "Declarations to Confirm")):
             if _has(_k):
                 _toc_names.append(_n)
-        toc_items = [f"Section {i}: {n}" for i, n in enumerate(_toc_names, 1)] + [
+        # A final export carries only what the buyer reads: the working appendices (the bidder's checklist, the
+        # questions still to ask and the to-do list) stay in the draft download.
+        _case_appendix = "Appendix A: Case Studies and References" if final_export else "Appendix D: Case Studies and References"
+        toc_items = [f"Section {i}: {n}" for i, n in enumerate(_toc_names, 1)] + ([] if final_export else [
             "Appendix A: Document Submission Checklist",
             "Appendix B: Clarification Questions",
             "Appendix C: Placeholder Summary (Human To-Do List)"
-        ] + (["Appendix D: Case Studies and References"] if _appendix_qs else [])
+        ]) + ([_case_appendix] if _appendix_qs else [])
 
         for item in toc_items:
             xml_content.append('    <w:p>')
@@ -9090,7 +9185,7 @@ Return ONLY valid JSON with no markdown fences:
             _sec_counter[0] += 1
             return f"Section {_sec_counter[0]}: {name}"
 
-        if not export_qa.get("passed", True):
+        if not export_qa.get("passed", True) and not final_export:
             add_heading("DRAFT - NOT READY TO SUBMIT", size=32, color="B91C1C")
             add_paragraphs("This draft failed the export checks below. Fix them before you submit:\n"
                            + "\n".join(f"- {i['section']}: {i['detail']}" for i in export_qa["issues"] if i["severity"] == "P0"))
@@ -9207,7 +9302,7 @@ Return ONLY valid JSON with no markdown fences:
 
             # --- Embedded Methodology Diagram Data ---
             if has_meth_diagram:
-                add_heading("AI-Generated Delivery Methodology Overview", size=24, color="0F766E", space_before=180)
+                add_heading("Delivery Methodology Overview", size=24, color="0F766E", space_before=180)
                 diagram_title = methodology_diagram.get("diagram_title") or "Delivery Framework"
                 style_name = str(methodology_diagram.get("style") or "linear").replace("_", " ").title()
                 xml_content.append('    <w:p>')
@@ -9498,7 +9593,10 @@ Return ONLY valid JSON with no markdown fences:
         # ----------------------------------------------------
         # 4. Appendices (A, B, C)
         # ----------------------------------------------------
-        
+        # A final export drops the three working appendices: everything appended from here to the end of
+        # Appendix C is cut again below.
+        _working_appendix_start = len(xml_content)
+
         # Appendix A: Document Checklist
         add_heading("Appendix A: Document Submission Checklist", size=32)
         xml_content.append('    <w:p>')
@@ -9853,10 +9951,17 @@ Return ONLY valid JSON with no markdown fences:
             xml_content.append('      </w:r>')
             xml_content.append('    </w:p>')
 
+        if final_export:
+            del xml_content[_working_appendix_start:]
+            # no trailing page break (an empty last page) when nothing follows the last section
+            if not _appendix_qs and len(xml_content) >= 5 and 'w:br w:type="page"' in xml_content[-3]:
+                del xml_content[-5:]
+
         # Appendix D: the case-study and reference answers, when the buyer wants case studies in appendices (M13)
         if _appendix_qs:
-            add_page_break()
-            add_heading("Appendix D: Case Studies and References", size=32)
+            if not final_export:
+                add_page_break()
+            add_heading(_case_appendix, size=32)
             _add_question_blocks(_appendix_qs)
 
         # Every page carries the tender title and date, and "Page X of Y" (fix plan M13: the EEF RFP requires both).

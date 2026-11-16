@@ -188,6 +188,11 @@ def classify_doc_roles(name: str, text: str) -> list:
     cover several (a brief with instructions, questions and fee requirements)."""
     head = (text or "")[:40000]
     roles = {i for i, p in enumerate(_ROLE_PATTERNS) if p.search(head)}
+    from tender_app.bid_release5 import is_notice_only
+    if is_notice_only(text):
+        # A saved notice that says the specification and price schedule are on a portal is neither of them
+        # (pilot: a 2 KB notice text ticked both boxes).
+        roles &= {4}
     if "| price_schedule]" in head:
         roles.add(3)
     if "| clarifications]" in head:

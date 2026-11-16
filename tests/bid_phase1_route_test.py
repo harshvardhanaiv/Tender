@@ -360,4 +360,52 @@ zp = zipfile.ZipFile(io.BytesIO(pk.data))
 ok(pk.status_code == 200 and sorted(zp.namelist()) == ["README.txt", "commercial_offer.xlsx", "technical_offer.docx"], "submission pack has both files")
 ok(b"9,999" not in zp.read("technical_offer.docx") and b"5,000" not in zp.read("technical_offer.docx"), "technical offer carries no prices")
 
+# Release 5 (QA scorecard 13 Nov pm): nothing in a download says how it was produced (O1), and a final export
+ok("AI DRAFT" not in xn and "AI-Generated" not in xn and "AI draft" not in xn, "the working draft .docx carries no AI wording")
+CHARGES.clear()
+fb = client.post("/api/download-proposal", headers={"X-CSRF-Token": "t"}, json={**note_body, "final_export": True})
+ok(fb.status_code == 409 and fb.get_json()["code"] == "FINAL_EXPORT_BLOCKED" and "still need your input" in fb.get_json()["blockers"][0],
+   f"a final export with open [CONFIRM] items is refused ({fb.status_code})")
+ok(CHARGES == [], f"a refused final export is not charged ({CHARGES})")
+done_body = {**note_body, "final_export": True,
+             "checklist": [{"no": 1, "name": "Form of tender", "type": "MANDATORY", "status": "To obtain", "notes": "signed"}],
+             "bid_response": {"cover_letter": {"content": "Dear Olha Brusniak,\n\nWe submit our offer.\n\nYours faithfully,\nA Person\nDirector"},
+                              "itt_question_responses": [{"question_number": "1", "question_text": "Q", "status": "ok",
+                                                          "response": "We deliver the equipment in phases. " * 5}]}}
+fe = client.post("/api/download-proposal", headers={"X-CSRF-Token": "t"}, json=done_body)
+xf = zipfile.ZipFile(io.BytesIO(fe.data)).read("word/document.xml").decode("utf-8") if fe.status_code == 200 else ""
+ok(fe.status_code == 200 and CHARGES == [("charge", CHARGES[0][1])] if CHARGES else False, f"a finished bid exports as final and is charged once ({fe.status_code} {CHARGES})")
+ok("Bid writer" not in xf and "16:00 UK time" not in xf, "the final export leaves out the bid writer's note")
+ok("Appendix A" not in xf and "Appendix B" not in xf and "Appendix C" not in xf and "Placeholder" not in xf and "Form of tender" not in xf,
+   "the final export leaves out the working appendices and the to-do list")
+ok("NOT READY TO SUBMIT" not in xf and "AI" not in re.sub(r"<[^>]+>", " ", xf).replace("AIVHUB", ""), "the final export has no draft page and no AI wording")
+ok("We deliver the equipment in phases." in xf and "Dear Olha Brusniak" in xf, "the final export keeps the letter and the answers")
+import xml.dom.minidom as _minidom
+_minidom.parseString(xf.encode("utf-8"))
+ok(True, "the final export's document.xml is well-formed")
+
+# Release 5: what the pre-generation box learns from the files, free and before credits (R1, pilot)
+q_txt = ("Document No 4 Questionnaire. Question 4. Financial sustainability and business plan for the centre, with income and "
+         "costs for the lease term. Weighting 40%. " + "The operator must describe its approach to bookings. " * 90)
+notice_txt = "Plumbing PPM and reactive repairs. The specification and price schedule are available on the Atamis portal after registration."
+cr5 = client.post("/api/classify-bid-docs", headers={"X-CSRF-Token": "t"}, json={"files": [
+    {"filename": "Doc 4.txt", "content": _b64.b64encode(q_txt.encode()).decode()},
+    {"filename": "notice.txt", "content": _b64.b64encode(notice_txt.encode()).decode()}]})
+j5 = cr5.get_json()
+ok(cr5.status_code == 200 and j5["financial_question_weight"] == 40 and j5["has_financial_file"] is False,
+   f"a 40 per cent financial question is reported, with no financial file attached ({j5.get('financial_question_weight')})")
+ok(j5["files"][1]["thin"] is True and j5["files"][1]["roles"] == [] and j5["files"][0]["thin"] is False, "a saved notice ticks no document box")
+ok(j5["portal"] == "Atamis" and "Financial sustainability" in j5["excerpt"], "the portal named in the files and an excerpt come back")
+PROMPTS.clear()
+DECISION["value"] = {"verdict": "Bid with partner", "summary": "Plumbing fits; police estate PPM does not.", "criteria": [{"criterion": "PPM", "weight": 100, "rating": "partial"}],
+                     "mandatory": [], "capability_gaps": ["no PPM contracts"], "partner_for": ["PPM"]}
+custom = client.post("/api/bid-check", headers={"X-CSRF-Token": "t"}, json={
+    "tender": {"source": "custom", "resource_id": "custom-1", "title": "Analyzing Documents...", "description": "Custom uploaded/pasted tender opportunity"},
+    "profile_id": 1, "text": "Drainage maintenance, repairs, inspections and improvement works for the Police and Crime Commissioner for "
+                             "Hertfordshire. Documents are released on the Blue Light Atamis portal after registration. " * 3})
+jc = custom.get_json()
+ok(custom.status_code == 200 and jc["decision"] and jc["decision"]["verdict"] == "Bid with partner",
+   f"a custom (uploaded) tender gets a fit check from its own text ({custom.status_code} {custom.data[:160]})")
+ok(jc["decision"].get("portal_hint") == "Atamis" and any("Drainage maintenance" in x for x in PROMPTS), "the check reads the uploaded text and names the portal")
+
 print(f"bid_phase1_route_test: {PASSED} checks passed")

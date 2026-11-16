@@ -109,7 +109,9 @@ SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "0") == "1"
 # Server-enforced idle timeout: the session cookie itself lasts 7 days (PERMANENT_SESSION_LIFETIME
 # in server.py) so a browser that never fully quits stays "logged in" indefinitely — this is what
 # actually signs an inactive user out, independent of how long the cookie itself is valid for.
-SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_MINUTES", "30")) * 60
+# 8 hours by default (pilot, 13 Nov: a 30-minute limit signed a user out three times in one day while they were
+# reading documents and writing a bid, which makes no requests). It slides: every request restarts the clock.
+SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_MINUTES", "480")) * 60
 RATE_LIMIT_LOGIN = int(os.environ.get("RATE_LIMIT_LOGIN", "10"))
 RATE_LIMIT_SEARCH = int(os.environ.get("RATE_LIMIT_SEARCH", "30"))
 RATE_LIMIT_AI = int(os.environ.get("RATE_LIMIT_AI", "20"))
