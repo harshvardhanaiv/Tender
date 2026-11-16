@@ -111,4 +111,10 @@ ok(res["status"] == "ok" and res["partial"] and "results are from" in (res["mess
    "the portal is reported as answered, with the time of its results: %s" % res)
 ps._PORTAL_RESULTS_CACHE.clear()
 
+# one-typo trade words are corrected even when no result shows the right spelling
+ok(ps.spelling_variants("lumbing", []) == ["plumbing"], "lumbing -> plumbing: %s" % ps.spelling_variants("lumbing", []))
+ok(ps.spelling_variants("lumbing PPM repairs", []) == ["plumbing PPM repairs".lower()], "other words are kept")
+ok(ps.spelling_variants("plumbing", []) == [], "a correct trade word is left alone")
+ok(ps.spelling_variants("Matthewsgreen", []) == [], "a name is not 'corrected' to a trade word")
+
 print(f"search_release5_test: {n} checks passed")

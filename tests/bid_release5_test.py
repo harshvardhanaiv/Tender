@@ -142,3 +142,40 @@ long_spec = ("Specification: the scope of services is planned preventative maint
 ok(2 in sp.classify_doc_roles("spec.docx", long_spec), "a real specification still ticks its box")
 
 print(f"bid_release5_test: {n} checks passed")
+
+# near-duplicate paragraphs are removed, not just reported
+_dup = ("Our team will deliver the planned preventative maintenance programme across every site using qualified engineers who are "
+        "supervised by a named contract manager and report monthly to the client.")
+_bid = {"technical_methodology": {"content": "Intro line here.\n\n" + _dup},
+        "quality_and_compliance": {"content": "Quality opening.\n\n" + _dup.replace("monthly", "each month") + "\n\nA different closing paragraph that is unique to this section and says something else entirely about audits and records kept."},
+        "executive_summary": {"content": _dup}}
+_n = r5.drop_near_duplicates(_bid)
+ok(_n == 1 and _dup[:40] not in _bid["quality_and_compliance"]["content"] and "different closing" in _bid["quality_and_compliance"]["content"], "the later near-duplicate is removed: %s" % _n)
+ok(_dup in _bid["executive_summary"]["content"] and _dup in _bid["technical_methodology"]["content"], "the first copy and the summary are untouched")
+_only = {"technical_methodology": {"content": _dup}, "quality_and_compliance": {"content": _dup}}
+ok(r5.drop_near_duplicates(_only) == 0 and _only["quality_and_compliance"]["content"] == _dup, "a part is never left empty")
+print("near-duplicate checks done")
+
+# site visits and the EOI window are read from the buyer's sentences
+import datetime as _d
+_t = _d.date(2026, 11, 16)
+_bd = r5.buyer_dates("Optional site visits will take place on 16 and 18 November 2026 and must be booked with Susan Moore. Tenders close 27 November 2026.", _t)
+ok(_bd["site_visits"] == [_d.date(2026, 11, 16), _d.date(2026, 11, 18)] and _bd["site_visit_contact"] == "Susan Moore", "Thetford site visits and who books them: %s" % _bd)
+_blk = r5.buyer_dates_block("Expressions of interest must be submitted between 1 to 4 November 2026. Samples by 30 October 2026.", _t)
+ok("1 November to 4 November 2026" in _blk and "PASSED" in _blk, "the Cornwall EOI window is named and marked passed")
+ok(r5.buyer_dates_block("Nothing relevant here.", _t) == "", "no dates, no block")
+
+# the bidder's own financial file becomes figures for the writers
+from tender_app.submission_pack import financial_model_block as _fmb, build_commercial_xlsx as _bcx
+_pl = "[Sheet: P&L | other]\nItem | Q1 | Q2 | Q3 | Q4\nTurnover | 120,000 | 130,000 | 150,000 | 160,000\nStaff costs | 60,000 | 61,000 | 62,000 | 63,000\nRent | 8,000 | 8,000 | 8,000 | 8,000\nNet profit | 20,000 | 25,000 | 40,000 | 45,000\nCash flow | 5000 | 6000 | 7000 | 8000"
+_fb = _fmb([{"name": "PnL.xlsx", "content": _pl}])
+ok("Turnover: 120,000 | 130,000 | 150,000 | 160,000" in _fb and "PnL.xlsx" in _fb and "[NEEDS INPUT" in _fb, "P&L rows reach the writers with their source")
+ok(_fmb([{"name": "notes.docx", "content": "Our approach is good."}]) == "", "a non-financial file adds nothing")
+
+# the commercial workbook carries the buyer's terms
+import io as _io
+from openpyxl import load_workbook as _lw
+_wb = _lw(_io.BytesIO(_bcx("T", "Acme Ltd", [], "", {"payment_terms": "NET 30", "excluded_suppliers_or_products": ["Huawei", "ZTE"]})))
+_ws = _wb["Terms and statements"]
+ok(_ws["B4"].value == "NET 30" and "Huawei, ZTE" in str(_ws["B5"].value), "Terms sheet: payment terms and excluded manufacturers")
+print("release 5 extras done")

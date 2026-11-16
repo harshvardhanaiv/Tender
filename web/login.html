@@ -302,6 +302,7 @@
                   <button type="button" id="togglePasswordBtn" class="pwd-toggle-btn" disabled title="View password" aria-label="Show or hide password"><span id="eyeIcon">Show</span></button>
                 </div>
               </div>
+              <label class="remember-row" id="rememberWrap" style="display:flex;align-items:center;gap:8px;font-size:14px;"><input type="checkbox" id="rememberMe" checked /> Keep me signed in</label>
               <div class="forgot" id="forgotWrap"><a id="forgotLink" href="#" role="button">Forgot password?</a></div>
               <button type="submit" id="btnSubmit" class="btn btn-primary"><span id="btnText">Sign in</span></button>
             </form>
@@ -353,7 +354,7 @@
         const res = await fetch("/api/auth/firebase", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ idToken, company_name: companyName }),
+          body: JSON.stringify({ idToken, company_name: companyName, remember: !!($("rememberMe") && $("rememberMe").checked) }),
         });
         let data;
         try {

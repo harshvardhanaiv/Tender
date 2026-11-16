@@ -37,7 +37,7 @@ def _col(header: list, pattern: str):
     return None
 
 
-def build_commercial_xlsx(title: str, company: str, schedules: list, vat_note: str = "") -> bytes:
+def build_commercial_xlsx(title: str, company: str, schedules: list, vat_note: str = "", terms: dict | None = None) -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
     wb = Workbook()
@@ -96,9 +96,34 @@ def build_commercial_xlsx(title: str, company: str, schedules: list, vat_note: s
             ws.cell(row=tr, column=tot_i + 1).font = bold
         for i in range(len(header)):
             ws.column_dimensions[chr(65 + i)].width = 18 if i != 1 else 44
+    _terms_sheet(wb, company, terms or {}, bold)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _terms_sheet(wb, company: str, terms: dict, bold) -> None:
+    """The buyer's commercial terms and the statements it requires, filled in for the bidder to confirm (Chemonics: NET 30
+    payment, and a statement that no excluded manufacturer's product is offered)."""
+    pay = str(terms.get("payment_terms") or "").strip()
+    excluded = [str(x).strip() for x in (terms.get("excluded_suppliers_or_products") or []) if str(x).strip()]
+    if not pay and not excluded:
+        return
+    ws = wb.create_sheet("Terms and statements")
+    ws.append([f"Commercial terms and required statements - {company}"])
+    ws["A1"].font = bold
+    ws.append([])
+    ws.append(["Item", "Buyer's requirement", "Bidder's response"])
+    for c in ws[3]:
+        c.font = bold
+    if pay:
+        ws.append(["Payment terms", pay, "Accepted (bidder to confirm)"])
+    if excluded:
+        ws.append(["Excluded manufacturers / products", ", ".join(excluded[:20]),
+                   "No product offered is made by, or contains components from, these (bidder to confirm)"])
+    ws.column_dimensions["A"].width = 32
+    ws.column_dimensions["B"].width = 50
+    ws.column_dimensions["C"].width = 60
 
 
 _PRICE = re.compile(r"(?:£|GBP|EUR|€|USD|\$)\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m|million)?|\d[\d,]*(?:\.\d+)?\s?(?:GBP|pounds)\b", re.I)
@@ -200,3 +225,42 @@ def classify_doc_roles(name: str, text: str) -> list:
     if "| specification]" in head:
         roles.add(2)
     return sorted(roles)
+
+
+# ---- R1: the bidder's own financial file, as figures the writers may use -----------------------------------------------
+
+_FIN_LABEL = re.compile(r"turnover|revenue|income|sales|grant|donation|cost|expens|wage|salar|staff|rent|rates|utilit|insurance|"
+                        r"maintenance|depreciation|profit|surplus|deficit|ebitda|margin|cash|balance|reserve|total|net\b|gross|q[1-4]|"
+                        r"year\s*\d|fy\d*|forecast|projection", re.I)
+_NUM = re.compile(r"^\(?-?[£$€]?\s?\d[\d,]*(?:\.\d+)?\)?%?$")
+
+
+def financial_model_block(documents: list, max_rows: int = 120) -> str:
+    """Rows of a financial file (a P&L, forecast or cash flow the bidder uploaded) as 'label: figures', for the writers
+    to build a financial answer from. Only numbers that are in the file appear; nothing is calculated or invented.
+    documents: [{name, content}]. Empty when no financial file is attached."""
+    blocks = []
+    for d in documents or []:
+        name, text = str(d.get("name") or d.get("filename") or "file"), str(d.get("content") or "")
+        if not looks_financial(name, text):
+            continue
+        rows = []
+        for line in text.splitlines():
+            cells = [c.strip() for c in line.split(" | ")]
+            if len(cells) < 2 or line.startswith("[Sheet:"):
+                if line.startswith("[Sheet:"):
+                    rows.append(line.strip())
+                continue
+            label = cells[0]
+            nums = [c for c in cells[1:] if _NUM.match(c.replace(" ", ""))]
+            if label and nums and _FIN_LABEL.search(label):
+                rows.append(f"{label}: " + " | ".join(nums[:8]))
+            if len(rows) >= max_rows:
+                break
+        if len([r for r in rows if not r.startswith("[Sheet:")]) >= 3:
+            blocks.append(f"FILE {name}:\n" + "\n".join(rows))
+    if not blocks:
+        return ""
+    return ("THE BIDDER'S OWN FINANCIAL MODEL (uploaded by the bidder; these figures are the bidder's evidence). Build the "
+            "financial answer from these rows, quoting the file name as the source. Do not add figures that are not here; where "
+            "the question needs one that is missing, write [NEEDS INPUT: ...].\n" + "\n\n".join(blocks) + "\n")

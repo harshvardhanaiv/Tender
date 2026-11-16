@@ -726,7 +726,8 @@ def spelling_variants(query: str, rows: list[dict[str, Any]], limit: int = 2) ->
     words = [w for w in re.findall(r"[a-z0-9]+", (query or "").lower()) if len(w) >= 6]
     out: list[str] = []
     if not words:
-        return out
+        # "lumbing" is 7 letters, but a short typo ("gas") is not worth guessing
+        words = []
     for row in rows:
         for tw in set(re.findall(r"[a-z0-9]+", str(row.get("title") or "").lower())):
             if len(tw) < 5:
@@ -738,7 +739,26 @@ def spelling_variants(query: str, rows: list[dict[str, Any]], limit: int = 2) ->
                         out.append(variant)
                         if len(out) >= limit:
                             return out
-    return out
+    # A word that is not a known trade word but is one letter from one ("lumbing" -> "plumbing") is a typo even when
+    # no result's title shows the right spelling.
+    for w in [w for w in re.findall(r"[a-z]+", (query or "").lower()) if len(w) >= 5 and w not in SEARCH_VOCAB]:
+        for v in sorted(SEARCH_VOCAB):
+            if _one_edit_apart(w, v):
+                variant = re.sub(r"(?<![A-Za-z0-9])" + re.escape(w) + r"(?![A-Za-z0-9])", v, query.lower()).strip()
+                if variant and variant not in out:
+                    out.append(variant)
+                break
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
+SEARCH_VOCAB = frozenset("""plumbing drainage heating electrical cleaning catering security maintenance construction refurbishment
+roofing painting decorating landscaping grounds flooring joinery carpentry glazing scaffolding demolition asbestos
+legionella ventilation lifts fire alarms lighting generators boilers gas water waste recycling transport vehicles
+fleet laundry uniforms stationery furniture software hardware telecoms consultancy engineering surveying architect
+planning training recruitment printing signage pest control insurance legal audit accountancy catering healthcare
+nursing pharmacy ambulance housing repairs voids social care mechanical building facilities management""".split())
 
 
 def _spelling_worker(job: SearchJob, source_id: str, cfg: dict[str, str], variant: str,

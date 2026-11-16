@@ -70,6 +70,7 @@ from tender_app.config import (
     ENABLE_EMAIL_SCHEDULER,
     SESSION_COOKIE_SECURE,
     SESSION_IDLE_TIMEOUT_SECONDS,
+    REMEMBER_ME_IDLE_SECONDS,
     SENTRY_DSN,
 )
 from tender_app.metering import require_credits
@@ -3597,7 +3598,7 @@ def create_app() -> Flask:
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=SESSION_COOKIE_SECURE,
-        PERMANENT_SESSION_LIFETIME=86400 * 7,
+        PERMANENT_SESSION_LIFETIME=86400 * 30,
         # Cache static assets for 1 hour in browsers (normal refresh uses cached files)
         SEND_FILE_MAX_AGE_DEFAULT=3600,
     )
@@ -4219,7 +4220,8 @@ def create_app() -> Flask:
         # advances on genuine traffic — nothing here polls in the background to fake activity.
         now_ts = time.time()
         last_activity = session.get("last_activity")
-        if last_activity is not None and (now_ts - last_activity) > SESSION_IDLE_TIMEOUT_SECONDS:
+        idle_limit = REMEMBER_ME_IDLE_SECONDS if session.get("remember") else SESSION_IDLE_TIMEOUT_SECONDS
+        if last_activity is not None and (now_ts - last_activity) > idle_limit:
             session.clear()
             if request.path.startswith("/api/"):
                 return jsonify({"error": "Unauthorized", "reason": "session_expired"}), 401
@@ -8036,7 +8038,12 @@ Return ONLY this JSON structure:
                     yield json.dumps({"status": "progress", "stage": 4, "message": f"Advice: {bid_decision['verdict']}{_fit}. The draft is still written; gaps are marked, not filled."}) + "\n"
                 cap_note = capability_note(bid_decision)
                 from tender_app.bid_release5 import required_statements_block as _required_block
-                writer_notes = closed_note + cap_note + _required_block(stage1_result if isinstance(stage1_result, dict) else {})
+                from tender_app.bid_release5 import buyer_dates_block as _buyer_dates_block
+                writer_notes = (closed_note + cap_note + _required_block(stage1_result if isinstance(stage1_result, dict) else {})
+                                + _buyer_dates_block(combined_tender_text[:200000]))
+                from tender_app.submission_pack import financial_model_block as _fin_block
+                _fin_model = _fin_block(list(company_documents))
+                writer_notes += _fin_model
                 shared_context = f"""TENDER DISSECTION:
 {dissection_for_writers}
 
@@ -8259,7 +8266,7 @@ Return ONLY valid JSON with no markdown fences:
                     })
                 # Secondary defence-in-depth scan for unverified claims. Figures the buyer published
                 # (weightings, lease terms) are allowed; figures about the bidder must be in its own data.
-                ground_truth_combined = f"{company_structured_data}\n{answer_bank_ctx}\n{company_ctx_text}"
+                ground_truth_combined = f"{company_structured_data}\n{answer_bank_ctx}\n{company_ctx_text}\n{_fin_model}"
                 stage3_result = verify_and_clean_bid_claims(stage3_result, ground_truth_combined, checklist_items,
                                                             tender_facts=f"{stage1_json_str}\n{published_clar}\n{combined_tender_text[:200000]}")
                 # Release 5 passes over the finished draft: nothing that says how it was produced (O1), dates already
@@ -8287,6 +8294,8 @@ Return ONLY valid JSON with no markdown fences:
                 for _lbl, _obj, _k in _r5_texts(stage3_result):
                     _obj[_k] = _reconcile_experience(_flag_passed_dates(_scrub_internal(_obj[_k]), _today), _incorporated, _today)
                 _apply_required(stage3_result, stage1_result if isinstance(stage1_result, dict) else {})
+                from tender_app.bid_release5 import drop_near_duplicates as _drop_dups
+                _drop_dups(stage3_result)
                 consistency_issues = _flag_contradictions(stage3_result)
                 _flag_checklist_dates(checklist_items, _today)
                 from tender_app.bid_writer import find_placeholders
@@ -8861,7 +8870,7 @@ Return ONLY valid JSON with no markdown fences:
                 break
         try:
             tech = build_technical_docx(title, company, authority, sections)
-            comm = build_commercial_xlsx(title, company, body.get("price_schedules") or [], vat_note)
+            comm = build_commercial_xlsx(title, company, body.get("price_schedules") or [], vat_note, body.get("terms") or {})
         except Exception as ex:  # noqa: BLE001
             print("[submission pack] failed:", ex)
             return jsonify({"error": "Could not build the submission pack. Download the full .docx instead."}), 500

@@ -464,3 +464,101 @@ _ELSEWHERE = re.compile(r"(?:available|released|accessed|accessible|obtained|dow
 def is_notice_only(text: str) -> bool:
     t = (text or "").strip()
     return len(t) < THIN_DOC_CHARS and "[Sheet: " not in t and bool(_ELSEWHERE.search(t))
+
+
+# ---- near-duplicate paragraphs ----------------------------------------------------------------------------------------
+
+_DUP_SKIP = re.compile(r"summary|letter", re.I)
+
+
+def drop_near_duplicates(bid_response: dict, threshold: float = 0.8, min_words: int = 15) -> int:
+    """Removes a paragraph that repeats an earlier one in another part of the bid almost word for word (the checker only
+    reported these). The summary and the covering letter restate the answers by design and are left alone, as is any
+    part that would be left empty. Returns how many paragraphs were removed."""
+    seen: list = []   # (label, token set) of paragraphs kept so far
+    removed = 0
+    for label, obj, key in _each_text(bid_response):
+        if _DUP_SKIP.search(label):
+            continue
+        paras = re.split(r"\n\s*\n", obj[key])
+        keep, kept_sets = [], []
+        for p in paras:
+            toks = set(re.findall(r"[a-z0-9']+", p.lower()))
+            dup = len(toks) >= min_words and any(
+                other != label and len(toks & ts) / len(toks | ts) >= threshold for other, ts in seen)
+            if dup:
+                removed += 1
+            else:
+                keep.append(p)
+                kept_sets.append(toks)
+        if keep and len(keep) < len(paras):
+            obj[key] = "\n\n".join(keep)
+        elif not keep:
+            removed -= len(paras)
+            kept_sets = [set(re.findall(r"[a-z0-9']+", p.lower())) for p in paras]
+        seen.extend((label, ts) for ts in kept_sets if len(ts) >= min_words)
+    return removed
+
+
+# ---- site visits and expressions of interest, read straight from the buyer's text ------------------------------------
+# (the dissection prompt asks for them, but a model can skip them; this reads the sentence itself and the writers are
+# told, so the draft names the visit dates and the EOI window and says which have passed.)
+
+_DAYS_LIST = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?((?:\s*(?:,|and|&|or|to|-)\s*\d{1,2}(?:st|nd|rd|th)?)*)\s+(" + _MONTH_WORD
+                        + r")\.?(?:,?\s+(\d{4}))?", re.I)
+_BOOKED_WITH = re.compile(r"\b(?:book(?:ed|ing)?|arrange[d]?|contact|request(?:ed)?)\b[^.\n]{0,60}?\b(?:with|through|via|by (?:contacting|emailing))\s+"
+                          r"((?:Mr|Mrs|Ms|Miss|Dr)\.?\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})")
+
+
+def _dates_in(sentence: str, today: _dt.date) -> list:
+    out = []
+    for m in _DAYS_LIST.finditer(sentence):
+        month = _MONTHS.get(m.group(3)[:3].lower())
+        days = [int(m.group(1))] + [int(d) for d in re.findall(r"\d{1,2}", m.group(2) or "")]
+        year = int(m.group(4)) if m.group(4) else today.year
+        span = bool(re.search(r"\bto\b|-", m.group(2) or ""))
+        ds = []
+        for d in days:
+            try:
+                ds.append(_dt.date(year, month, d))
+            except ValueError:
+                pass
+        if span and len(ds) == 2:
+            out.append(("range", ds[0], ds[1]))
+        else:
+            out.extend(("day", d, d) for d in ds)
+    return out
+
+
+def buyer_dates(text: str, today: _dt.date | None = None) -> dict:
+    """{site_visits: [dates], site_visit_contact, eoi_windows: [(start, end)]} found in the buyer's own sentences."""
+    today = today or _dt.date.today()
+    visits, windows, contact = [], [], ""
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        if re.search(r"\bsite visits?\b|\bvisits? (?:to|the) (?:the )?(?:site|premises|property)\b", sentence, re.I):
+            for kind, a, b in _dates_in(sentence, today):
+                if a not in visits:
+                    visits.append(a)
+            m = _BOOKED_WITH.search(sentence)
+            if m and not contact:
+                contact = ((m.group(1) or "") + m.group(2)).strip()
+        if re.search(r"expressions? of interest|\bEOI\b", sentence, re.I):
+            for kind, a, b in _dates_in(sentence, today):
+                if kind == "range" and (a, b) not in windows:
+                    windows.append((a, b))
+    return {"site_visits": sorted(visits), "site_visit_contact": contact, "eoi_windows": windows}
+
+
+def buyer_dates_block(text: str, today: _dt.date | None = None) -> str:
+    """A note for the writers naming optional site visits and the EOI window, and which of them have gone."""
+    today = today or _dt.date.today()
+    d = buyer_dates(text, today)
+    lines = []
+    if d["site_visits"]:
+        shown = ", ".join(f"{v.day} {v.strftime('%B %Y')}" + (" (passed)" if v < today else "") for v in d["site_visits"])
+        who = f"; visits are booked with {d['site_visit_contact']}" if d["site_visit_contact"] else ""
+        lines.append(f"- Site visits offered by the buyer: {shown}{who}. State these dates in the answer.")
+    for a, b in d["eoi_windows"]:
+        gone = " That window has PASSED: say so, do not write as if it is open, and flag that the bidder may need to ask the buyer whether late entry is allowed." if b < today else ""
+        lines.append(f"- Expression of interest window: {a.day} {a.strftime('%B')} to {b.day} {b.strftime('%B %Y')}.{gone}")
+    return ("\nBUYER DATES TO STATE (read from the buyer's documents):\n" + "\n".join(lines) + "\n") if lines else ""

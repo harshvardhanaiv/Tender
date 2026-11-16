@@ -168,13 +168,14 @@
     switch (p.status) {
       case "ok":
         bits.push(p.available && p.available > p.count ? `${fmtInt(p.count)} of ${fmtInt(p.available)}` : fmtInt(p.count));
-        if (p.partial) bits.push("incomplete");
+        if (p.partial && /results are from/i.test(String(p.message || ""))) bits.push("saved copy (portal did not answer)");
+        else if (p.partial) bits.push("incomplete");
         break;
       case "empty": bits.push("0 · no results"); break;
       case "timeout": bits.push(p.count ? `${fmtInt(p.count)} shown · timed out` : "timed out"); break;
       case "error": bits.push(shortReason(p.message)); break;
       case "stopped": bits.push("stopped"); break;
-      case "running": bits.push("searching…"); break;
+      case "running": bits.push(p.count > 0 ? `${fmtInt(p.count)} shown · refreshing…` : "searching…"); break;
       default: bits.push("waiting");
     }
     if (p.stored > 0) bits.push(`+${fmtInt(p.stored)} saved earlier`);

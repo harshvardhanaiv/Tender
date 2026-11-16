@@ -54,8 +54,12 @@ def api_auth_firebase():
     finally:
         conn.close()
 
+    remember = bool(body.get("remember")) if isinstance(body, dict) else False
     session.clear()
     session["logged_in"] = True
+    # "Keep me signed in": a persistent cookie and a 30-day idle allowance instead of the 8-hour one.
+    session["remember"] = remember
+    session.permanent = remember
     session["username"] = username
     session["firebase_uid"] = uid
     session["email"] = email.lower() if email else username

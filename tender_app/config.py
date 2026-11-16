@@ -112,6 +112,8 @@ SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "0") == "1"
 # 8 hours by default (pilot, 13 Nov: a 30-minute limit signed a user out three times in one day while they were
 # reading documents and writing a bid, which makes no requests). It slides: every request restarts the clock.
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_MINUTES", "480")) * 60
+# "Keep me signed in" on the sign-in page: idle allowance in days.
+REMEMBER_ME_IDLE_SECONDS = int(os.environ.get("REMEMBER_ME_DAYS", "30")) * 86400
 RATE_LIMIT_LOGIN = int(os.environ.get("RATE_LIMIT_LOGIN", "10"))
 RATE_LIMIT_SEARCH = int(os.environ.get("RATE_LIMIT_SEARCH", "30"))
 RATE_LIMIT_AI = int(os.environ.get("RATE_LIMIT_AI", "20"))
