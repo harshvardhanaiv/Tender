@@ -159,3 +159,30 @@ _rows = _ti.cpv_notices(_c, ["lumbing"])
 ok(len(_rows) == 1 and _rows[0]["matched_by"] == "CPV code" and "cpv_codes ~" in _c.sql, "a typo'd trade word finds the notice by CPV code")
 ok("4533" in _c.params[1], "the plumbing CPV group is searched: %s" % (_c.params,))
 ok(_ti.cpv_notices(_Cur(), ["matthewsgreen"]) == [], "a name has no CPV group")
+
+# the spelling retry does not wait for one slow portal
+asked.clear()
+ps._fetch_source_first_page_one = fake_fetch
+try:
+    src4 = dict(sources); src4["sell2wales"] = {"label": "Sell2Wales", "type": "sell2wales"}; src4["slowportal"] = {"label": "Slow", "type": "x"}
+    j = ps.SearchJob(job_id="t9", query="Matthewsgreen", scope="all", status="loading")
+    j.started_at = time.monotonic() - 30
+    j.rows = [{"source": "find_tender", "source_label": "Find a Tender", "resource_id": "093543-2026",
+               "title": "Mathewsgreen Community Centre - Operator Opportunity", "submission_deadline": "01/11/2026 23:59"}]
+    j.meta["source_progress"] = {"find_tender": "complete", "procontract": "complete", "pcs": "loading", "sell2wales": "complete", "slowportal": "complete"}
+    with j.lock:
+        ps._complete_if_settled(j, src4)
+    for _ in range(100):
+        if any(r.get("source") == "procontract" for r in j.rows):
+            break
+        time.sleep(0.05)
+    ok(any(r.get("source") == "procontract" for r in j.rows), "the retry found the record while a portal was still searching: %s" % asked)
+    ok(j.status == "loading", "the search itself keeps waiting for the slow portal")
+    j2 = ps.SearchJob(job_id="t10", query="Matthewsgreen", scope="all", status="loading")
+    j2.rows = list(j.rows[:1]); j2.meta["source_progress"] = dict(j.meta["source_progress"]); j2.meta["source_progress"]["procontract"] = "complete"
+    with j2.lock:
+        ps._complete_if_settled(j2, src4)
+    ok(not j2.meta.get("_spelling_pass"), "a search under 12 seconds old does not start the early retry")
+finally:
+    ps._fetch_source_first_page_one = real_fetch
+print("early spelling checks done")

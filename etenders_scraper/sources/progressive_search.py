@@ -799,13 +799,28 @@ def _spelling_worker(job: SearchJob, source_id: str, cfg: dict[str, str], varian
             _complete_if_settled(job, sources)
 
 
-def _start_spelling_pass(job: SearchJob, sources: dict[str, dict[str, str]]) -> bool:
-    """Once, when every portal has answered (job.lock held): portals that returned nothing are asked again with the
-    spelling the results use. Returns True when a retry was started, so the job is not marked complete yet."""
+EARLY_SPELLING_AFTER_SEC = 12.0
+EARLY_SPELLING_SHARE = 0.7
+
+
+def _start_spelling_pass(job: SearchJob, sources: dict[str, dict[str, str]], early: bool = False) -> bool:
+    """Once (job.lock held): portals that returned nothing are asked again with the spelling the results use. Normally
+    that waits for every portal; `early` starts it once most portals have answered, so one slow portal (Public Contracts
+    Scotland can take minutes) does not hold the retry back. An early attempt that has nothing to retry yet does not use
+    up the one go. Returns True when a retry was started, so the job is not marked complete yet."""
     if job.meta.get("_spelling_pass") or job.cancelled:
         return False
-    job.meta["_spelling_pass"] = True
     variants = spelling_variants(job.query, job.rows)
+    if early:
+        if not variants:
+            return False
+        progress0 = job.meta.get("source_progress", {})
+        by0 = _rows_by_source(job.rows, sources)
+        if not [sid for sid in sources if progress0.get(sid) == "complete" and not by0.get(sid)
+                and sid not in (job.meta.get("errors") or {}) and sid not in job.cancelled_sources
+                and sid not in LOOSE_MATCH_SOURCES]:
+            return False
+    job.meta["_spelling_pass"] = True
     if not variants:
         return False
     progress = job.meta.get("source_progress", {})
@@ -833,7 +848,16 @@ def _complete_if_settled(job: SearchJob, sources: dict[str, dict[str, str]]) -> 
     so the search can never report itself finished while a portal is still outstanding, nor stay
     unfinished after the last one settles."""
     progress = job.meta.get("source_progress", {})
-    if job.status != "loading" or not all(progress.get(sid) in SETTLED_STATES for sid in sources):
+    if job.status != "loading":
+        return
+    if not all(progress.get(sid) in SETTLED_STATES for sid in sources):
+        settled = sum(1 for sid in sources if progress.get(sid) in SETTLED_STATES)
+        if (sources and settled >= EARLY_SPELLING_SHARE * len(sources)
+                and time.monotonic() - job.started_at >= EARLY_SPELLING_AFTER_SEC):
+            try:
+                _start_spelling_pass(job, sources, early=True)
+            except Exception as exc:  # noqa: BLE001
+                _log(job, f"early spelling pass failed: {exc}")
         return
     try:
         if _start_spelling_pass(job, sources):
