@@ -12757,6 +12757,82 @@ function showModalError(errorMsg) {
 // The first click used to show nothing for ~20 s (fresh tender details, document checks), and a second click then
 // said a generation was already running. Show the busy state at once and ignore a second click while starting.
 let _bidStarting = false;
+// Internal bid plan: how to bid, which files to prepare and what each one must meet. Free, one read of the documents.
+function renderBidPlan(plan) {
+  const li = (arr) => arr.map(x => `<li>${esc(x)}</li>`).join("");
+  const kindIcon = { technical: "📄", commercial: "💷", form: "✍️", certificate: "🏅", insurance: "🛡️",
+                     financial: "📊", references: "👥", social_value: "🌱", registration: "🔑" };
+  const files = (plan.files || []).map(f => `
+    <div style="padding:10px 12px;border:1px solid var(--border,#e2e8f0);border-radius:10px;background:var(--surface,#fff);">
+      <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;">
+        <strong>${kindIcon[f.kind] || "📎"} ${esc(f.name)}</strong>
+        <span style="font-size:11px;padding:1px 8px;border-radius:99px;background:${f.mandatory ? "#fee2e2" : "#e2e8f0"};color:${f.mandatory ? "#991b1b" : "#475569"};">${f.mandatory ? "Required" : "Scored or optional"}</span>
+        <span style="font-size:11.5px;color:var(--muted,#64748b);">${esc(f.who)}</span>
+      </div>
+      ${(f.rules || []).length ? `<ul style="margin:6px 0 0 18px;padding:0;font-size:12.5px;line-height:1.5;">${li(f.rules)}</ul>` : ""}
+    </div>`).join("");
+  const dates = (plan.dates || []).map(d => `
+    <tr style="${d.passed ? "opacity:.55;" : ""}"><td style="padding:3px 10px 3px 0;white-space:nowrap;"><strong>${esc(d.date)}</strong></td>
+    <td style="padding:3px 0;">${esc(d.event)}${d.action && !d.passed ? " ⚑" : ""}${d.note ? ` <span style="color:var(--muted,#64748b);">(${esc(d.note)})</span>` : ""}${d.passed ? " <em>(passed)</em>" : ""}</td></tr>`).join("");
+  const rq = plan.requirements || {};
+  const mand = (rq.mandatory || []).map(m =>
+    `<li>${esc(m.requirement)}${m.evidence ? ` <span style="color:var(--muted,#64748b);">Proof: ${esc(m.evidence)}.</span>` : ""}${m.if_missed ? ` <strong>If missed: ${esc(m.if_missed)}.</strong>` : ""}</li>`).join("");
+  const scoring = (rq.scoring || []).map(c =>
+    `<li>${esc(c.criterion)}${c.weight != null ? ` — ${esc(c.weight)}%` : ""}${c.type ? ` (${esc(c.type)})` : ""}</li>`).join("");
+  const rulings = (rq.buyer_rulings || []).map(r => `<li>${r.topic ? `<strong>${esc(r.topic)}:</strong> ` : ""}${esc(r.ruling)}</li>`).join("");
+  const sect = (title, inner) => inner ? `<h4 style="margin:16px 0 6px;font-size:13.5px;">${title}</h4>${inner}` : "";
+  const head = [plan.title, plan.buyer, plan.reference].filter(Boolean).map(esc).join(" · ");
+  return `
+    <div class="bid-plan" style="padding:14px 4px;font-size:13px;line-height:1.5;">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap;">
+        <h3 style="margin:0;font-size:15px;">🗺 Bid plan</h3>
+        <span style="font-size:11.5px;color:var(--muted,#64748b);">Internal. Not part of the submission.</span>
+      </div>
+      ${head ? `<div style="color:var(--muted,#64748b);margin-top:2px;">${head}</div>` : ""}
+      ${(plan.warnings || []).length ? `<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:#fef3c7;color:#78350f;"><ul style="margin:0 0 0 16px;padding:0;">${li(plan.warnings)}</ul></div>` : ""}
+      ${sect("How to bid", `<ol style="margin:0 0 0 20px;padding:0;">${li(plan.steps || [])}</ol>`)}
+      ${sect(`Files to prepare (${(plan.files || []).length})`, `<div style="display:grid;gap:8px;">${files}</div>`)}
+      ${sect("Timetable", dates ? `<table style="border-collapse:collapse;font-size:12.5px;">${dates}</table><div style="font-size:11.5px;color:var(--muted,#64748b);margin-top:4px;">⚑ = you have to do something by this date.</div>` : "")}
+      ${sect("Mandatory requirements", mand ? `<ul style="margin:0 0 0 18px;padding:0;">${mand}</ul>` : "")}
+      ${sect("Buyer's published rulings (these override the tender text)", rulings ? `<ul style="margin:0 0 0 18px;padding:0;">${rulings}</ul>` : "")}
+      ${sect("How it is scored", scoring ? `<ul style="margin:0 0 0 18px;padding:0;">${scoring}</ul>` : "")}
+      ${(rq.excluded || []).length ? sect("Must not be offered", `<p style="margin:0;">${esc(rq.excluded.join(", "))}</p>`) : ""}
+      ${plan.empty ? `<p>The documents did not state what to submit. Upload the buyer's invitation to tender or instructions and run the plan again.</p>` : ""}
+      ${(plan.documents_read || []).length ? `<div style="margin-top:14px;font-size:11.5px;color:var(--muted,#64748b);">Read: ${esc(plan.documents_read.join("; "))}</div>` : ""}
+    </div>`;
+}
+
+let _bidPlanBusy = false;
+async function runBidPlan() {
+  if (_bidPlanBusy) return;
+  const body = $("bidModalBody");
+  const btn = $("btnBidPlan");
+  const pastedText = $("bidTenderText")?.value?.trim() || "";
+  const files = [...(state.bidUploadedFiles || [])];
+  if (!_bidRow && !files.length && !pastedText) {
+    await showAlert("Upload the tender documents or paste the tender text first, then build the plan.");
+    return;
+  }
+  _bidPlanBusy = true;
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ Reading the tender…"; }
+  if (body) body.innerHTML = `<div style="padding:24px;text-align:center;color:var(--muted,#64748b);">Reading the tender documents to build your plan. This takes up to a minute.</div>`;
+  try {
+    const res = await fetch("/api/bid-plan", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tender: _bidRow || {}, files, text: pastedText })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || "The plan could not be built.");
+    if (body) body.innerHTML = renderBidPlan(data.plan);
+  } catch (e) {
+    if (body) body.innerHTML = `<div style="padding:16px;color:#991b1b;">${esc(e.message || "The plan could not be built.")} You can still generate the bid.</div>`;
+  } finally {
+    _bidPlanBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
+}
+
 async function runBidAssistant(isRefresh = false) {
   if (_bidStarting) return;
   _bidStarting = true;
@@ -15390,6 +15466,7 @@ $("bidModal")?.addEventListener("click", (e) => {
   if (e.target === $("bidModal")) closeBidModal();
 });
 $("btnRunBidAssistant")?.addEventListener("click", runBidAssistant);
+$("btnBidPlan")?.addEventListener("click", runBidPlan);
 $("btnReRunBidAssistant")?.addEventListener("click", () => runBidAssistant(true));
 $("btnPauseBidAssistant")?.addEventListener("click", (e) => {
   e.preventDefault();

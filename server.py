@@ -7424,6 +7424,83 @@ Return ONLY this JSON structure:
             "clarifications":   stage4_result,
         }
 
+    _BID_PLAN_CACHE: dict = {}
+
+    @app.post("/api/bid-plan")
+    @rate_limit(15, 3600)
+    def api_bid_plan():
+        """Internal bid plan: how to bid, which files to prepare and what each must meet. One read of the tender
+        documents (the same stage 1 analysis the draft uses), no credits, cached 6 hours, 15 an hour per user."""
+        import base64
+        from tender_app.bid_plan import build_bid_plan
+        from tender_app.bid_release5 import fill_buyer_basics
+        username = session.get("username") or ""
+        body = request.get_json(silent=True) or {}
+        t = body.get("tender") if isinstance(body.get("tender"), dict) else {}
+        uploads = [f for f in (body.get("files") or []) if isinstance(f, dict)][:12]
+        pasted = str(body.get("text") or "").strip()[:60000]
+        key = (username, str(t.get("source") or ""), str(t.get("resource_id") or t.get("title") or "")[:200],
+               hashlib.sha1((pasted + "|".join(f"{f.get('filename')}:{len(str(f.get('content') or ''))}" for f in uploads))
+                            .encode("utf-8", "ignore")).hexdigest())
+        hit = _BID_PLAN_CACHE.get(key)
+        if hit and time.time() - hit[0] < 6 * 3600 and not body.get("refresh"):
+            return jsonify({"ok": True, "plan": hit[1], "cached": True})
+
+        parts: list[str] = []
+        # The buyer documents the user uploaded are the most authoritative, so they go first.
+        for f in uploads:
+            fname = str(f.get("filename") or "uploaded_file")
+            try:
+                text = _extract_bytes(base64.b64decode(f.get("content") or ""), fname, max_chars=120000)
+            except Exception:
+                text = ""
+            if text.strip():
+                parts.append(f"=== Document: {fname} (uploaded by the user) ===\n{text}")
+        if pasted:
+            parts.append(f"=== Document: pasted tender text ===\n{pasted}")
+        parts.append("=== Document: Tender Details Overview ===\n" + "\n".join(
+            f"{k}: {t.get(k)}" for k in ("title", "description", "contracting_authority", "submission_deadline",
+                                         "estimated_value_eur", "procedure") if t.get(k)))
+        source, resource_id = str(t.get("source") or ""), str(t.get("resource_id") or "")
+        cfg = SOURCES.get(source) if source else None
+        if cfg and resource_id:
+            try:
+                docs_meta = (list_cft_documents(cfg["base_url"], resource_id) if cfg.get("type") == "etenders"
+                             else list_non_etenders_documents(source, resource_id, str(t.get("detail_url") or "")))
+                for doc in docs_meta[:15]:
+                    if cfg.get("type") == "etenders":
+                        text = fetch_and_extract_text(cfg["base_url"], resource_id, doc["doc_id"], doc["filename"], max_chars=60000)
+                    else:
+                        import requests
+                        r = requests.get(doc["doc_id"], headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+                        text = _extract_bytes(r.content, doc["filename"], max_chars=60000) if r.status_code == 200 else ""
+                    if text.strip():
+                        parts.append(f"=== Document: {doc['title'] or doc['filename']} ===\n{text}")
+            except Exception as e:
+                print("bid-plan: portal documents could not be read:", e)
+        tender_text = "\n\n".join(parts)
+        if len(tender_text) < 400:
+            return jsonify({"ok": False, "error": "There is not enough tender text to plan from. Upload the tender documents or paste the text."}), 400
+
+        provider, key_, model = get_ai_credentials()
+        try:
+            stage1 = call_deepseek_stage(system=STAGE_1_SYSTEM, user=STAGE_1_USER.format(tender_text=smart_chunk(tender_text)),
+                                         api_key=DEEPSEEK_API_KEY, max_tokens=6000,
+                                         _provider=provider, _key=key_, _model=model)
+        except Exception as e:
+            print("bid-plan: analysis failed:", e)
+            return jsonify({"ok": False, "error": "The plan could not be built just now. You can still generate the bid."}), 502
+        if not isinstance(stage1, dict):
+            stage1 = {}
+        fill_buyer_basics(stage1, tender_text[:200000])
+        plan = build_bid_plan(stage1)
+        plan["documents_read"] = [p.split("===")[1].replace("Document:", "").strip() for p in parts if p.startswith("=== Document:")][:20]
+        _BID_PLAN_CACHE[key] = (time.time(), plan)
+        if len(_BID_PLAN_CACHE) > 200:
+            for k in sorted(_BID_PLAN_CACHE, key=lambda k: _BID_PLAN_CACHE[k][0])[:50]:
+                _BID_PLAN_CACHE.pop(k, None)
+        return jsonify({"ok": True, "plan": plan, "cached": False})
+
     @app.post("/api/proposal")
     @require_credits(CREDIT_COST_PROPOSAL, "proposal", get_db_connection)
     def api_proposal():
