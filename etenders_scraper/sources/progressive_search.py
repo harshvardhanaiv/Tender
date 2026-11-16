@@ -511,8 +511,14 @@ def _update_job_portal(
 
     with job.lock:
         rows_by_source = _rows_by_source(job.rows, sources)
+        seeded = (job.meta.get("_seeded") or {}).get(source_id)
         if batch or not rows_by_source.get(source_id):
             rows_by_source[source_id] = batch
+            if seeded and batch:
+                job.meta["_seeded"].pop(source_id, None)
+        elif seeded and progress == "complete" and not err:
+            rows_by_source[source_id] = []  # the portal answered and has nothing now: the saved copy is out of date
+            job.meta["_seeded"].pop(source_id, None)
         _set_state(job, source_id, progress)
         job.meta.setdefault("source_timings_sec", {})
         if elapsed_sec is not None:
@@ -570,6 +576,15 @@ def _portal_worker(
 
         with job.lock:
             _set_state(job, source_id, "loading")
+            # The last answer to this search (older than the 15-minute window) is shown at once, while the portal is
+            # asked again; the fresh answer replaces it (or empties it, if the portal now has nothing).
+            seed = _stale_answer(keyword, source_id)
+            if seed and not _rows_by_source(job.rows, sources).get(source_id):
+                seeded_rows = [dict(r) for r in seed[0]]
+                rows_now = _rows_by_source(job.rows, sources)
+                rows_now[source_id] = seeded_rows
+                job.meta.setdefault("_seeded", {})[source_id] = seed[1]
+                _finalize_job_meta(job, sources, rows_now)
 
         # Stagger requests going to the same family of gov.uk domains (Find a Tender and Contracts Finder)
         if source_id == "contracts_finder":

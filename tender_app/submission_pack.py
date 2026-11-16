@@ -264,3 +264,143 @@ def financial_model_block(documents: list, max_rows: int = 120) -> str:
     return ("THE BIDDER'S OWN FINANCIAL MODEL (uploaded by the bidder; these figures are the bidder's evidence). Build the "
             "financial answer from these rows, quoting the file name as the source. Do not add figures that are not here; where "
             "the question needs one that is missing, write [NEEDS INPUT: ...].\n" + "\n\n".join(blocks) + "\n")
+
+
+# ---- the buyer's own price workbook, completed in place --------------------------------------------------------------
+
+_IDENTITY_LABEL = re.compile(r"^\s*(?:name of |your )?(?:supplier|bidder|tenderer|vendor|company|organi[sz]ation)(?: name)?\s*:?\s*$", re.I)
+
+
+def fill_buyer_workbook(data: bytes, company: str, terms: dict | None = None, vat_note: str = "") -> bytes:
+    """The buyer's own .xlsx with what can honestly be filled in done in the buyer's layout: the bidder's name beside a
+    supplier/bidder label, line totals as formulas from Qty x Unit price, a total row, unit-price cells marked yellow for the
+    bidder. Prices are never invented. The buyer's formatting, sheets and other content are kept. A terms sheet is added."""
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font, PatternFill
+    wb = load_workbook(io.BytesIO(data))
+    yellow = PatternFill("solid", fgColor="FEF08A")
+    bold = Font(bold=True)
+    for ws in wb.worksheets:
+        # the bidder's name beside a "Supplier name" / "Bidder" label that has nothing next to it
+        for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 40), max_col=min(ws.max_column, 12)):
+            for cell in row:
+                if isinstance(cell.value, str) and _IDENTITY_LABEL.match(cell.value):
+                    right = ws.cell(row=cell.row, column=cell.column + 1)
+                    if right.value in (None, "") and not type(right).__name__ == "MergedCell":
+                        right.value = company
+        # the price table: header row with a quantity column and a price column
+        hdr = None
+        for r in range(1, min(ws.max_row, 40) + 1):
+            texts = [str(ws.cell(row=r, column=c).value or "") for c in range(1, min(ws.max_column, 20) + 1)]
+            joined = " ".join(texts)
+            if re.search(r"\b(qty|quantity)\b", joined, re.I) and re.search(r"\b(unit\s*price|price|rate)\b", joined, re.I):
+                hdr = (r, texts)
+                break
+        if not hdr:
+            continue
+        r0, texts = hdr
+        qty_c = next((i + 1 for i, t in enumerate(texts) if re.search(r"\b(qty|quantity)\b", t, re.I)), None)
+        unit_c = next((i + 1 for i, t in enumerate(texts) if re.search(r"unit\s*price|\bprice\b|\brate\b", t, re.I)), None)
+        tot_c = next((i + 1 for i, t in enumerate(texts) if re.search(r"\btotal\b|\bamount\b|line (?:price|total)", t, re.I) and (i + 1) != unit_c), None)
+        if not (qty_c and unit_c):
+            continue
+        from openpyxl.utils import get_column_letter as L
+        last = r0
+        for r in range(r0 + 1, ws.max_row + 1):
+            q = ws.cell(row=r, column=qty_c).value
+            if isinstance(q, str):
+                try:
+                    q = float(q.replace(",", ""))
+                except ValueError:
+                    q = None
+            if not isinstance(q, (int, float)):
+                continue
+            last = r
+            u = ws.cell(row=r, column=unit_c)
+            if u.value in (None, ""):
+                u.fill = yellow
+            if tot_c:
+                t = ws.cell(row=r, column=tot_c)
+                if t.value in (None, ""):
+                    t.value = f"=IF(ISNUMBER({L(unit_c)}{r}),{L(unit_c)}{r}*{L(qty_c)}{r},0)"
+        if tot_c and last > r0:
+            tr = last + 2
+            label = ws.cell(row=tr, column=max(1, tot_c - 1))
+            if label.value in (None, ""):
+                label.value = "Total (excluding VAT)" if "exclu" in vat_note.lower() else "Total"
+                label.font = bold
+                total = ws.cell(row=tr, column=tot_c)
+                total.value = f"=SUM({L(tot_c)}{r0 + 1}:{L(tot_c)}{last})"
+                total.font = bold
+    _terms_sheet(wb, company, terms or {}, bold)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# ---- the buyer's own question template (Cornwall Section D), answered in place ---------------------------------------------
+
+_QNUM = re.compile(r"^\s*(?:question\s+|q\s*)?([A-Z]?\d+(?:\.\d+)*[a-z]?)\b[\s.:)\-–]", re.I)
+
+
+def _norm_qnum(n: str) -> str:
+    m = re.search(r"[A-Z]?\d+(?:\.\d+)*[a-z]?", str(n or ""), re.I)
+    return re.sub(r"\.+$", "", m.group(0)).lower() if m else ""
+
+
+def fill_buyer_template(data: bytes, answers: list) -> tuple:
+    """Writes each answer into the buyer's own .docx questionnaire, under or beside the question with the same number,
+    keeping the buyer's headings, tables and layout. answers: [(question_number, text)]. Returns (docx bytes, how many were
+    placed). Questions the template has no place for are left for the main document."""
+    from docx import Document
+    import copy
+    doc = Document(io.BytesIO(data))
+    by_num = {_norm_qnum(n): str(t or "").replace("**", "").strip() for n, t in answers if _norm_qnum(n) and str(t or "").strip()}
+    placed = set()
+
+    def para_after(par, text):
+        new = copy.deepcopy(par._p)
+        par._p.addnext(new)
+        from docx.text.paragraph import Paragraph
+        p = Paragraph(new, par._parent)
+        for r in p.runs[1:]:
+            r._r.getparent().remove(r._r)
+        if p.runs:
+            p.runs[0].text = text
+            p.runs[0].bold = False
+        else:
+            p.add_run(text)
+        return p
+
+    # tables: the question number is in a cell; the answer goes in the first empty cell to its right, else in the row below
+    for table in doc.tables:
+        rows = table.rows
+        for ri, row in enumerate(rows):
+            for ci, cell in enumerate(row.cells):
+                m = _QNUM.match(cell.text.strip() + " ")
+                num = _norm_qnum(m.group(1)) if m else ""
+                if not num or num not in by_num or num in placed:
+                    continue
+                target = next((c for c in row.cells[ci + 1:] if not c.text.strip()), None)
+                if target is None and ri + 1 < len(rows):
+                    target = next((c for c in rows[ri + 1].cells if not c.text.strip()), None)
+                if target is not None:
+                    target.text = by_num[num]
+                    placed.add(num)
+    # paragraphs: the answer goes straight after the question's own paragraph(s)
+    pars = list(doc.paragraphs)
+    for i, par in enumerate(pars):
+        m = _QNUM.match(par.text.strip() + " ")
+        num = _norm_qnum(m.group(1)) if m else ""
+        if not num or num not in by_num or num in placed:
+            continue
+        j = i
+        while j + 1 < len(pars) and pars[j + 1].text.strip() and not _QNUM.match(pars[j + 1].text.strip() + " ") and j - i < 6:
+            j += 1
+        anchor = pars[j]
+        for line in reversed([x for x in by_num[num].split("\n") if x.strip()]):
+            para_after(anchor, line.strip())
+        placed.add(num)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue(), len(placed)

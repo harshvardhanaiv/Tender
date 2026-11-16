@@ -14142,6 +14142,8 @@ async function downloadSubmissionPack() {
         title, authority: _lastProposal.buyer_name || _bidRow.contracting_authority || "",
         company_name: _lastProposal.bid_company || _lastProposal.company || _bidRow.company || "",
         price_schedules: _lastProposal.price_schedules || [],
+        buyer_workbooks: _lastProposal.buyer_workbooks || [],
+        buyer_templates: _lastProposal.buyer_templates || [],
         terms: { payment_terms: _lastProposal.dissection?.payment_terms || "", excluded_suppliers_or_products: _lastProposal.dissection?.excluded_suppliers_or_products || [] },
         dissection_rulings: {
           clarification_rulings: _lastProposal.dissection?.clarification_rulings || [],

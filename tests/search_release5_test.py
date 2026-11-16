@@ -118,3 +118,44 @@ ok(ps.spelling_variants("plumbing", []) == [], "a correct trade word is left alo
 ok(ps.spelling_variants("Matthewsgreen", []) == [], "a name is not 'corrected' to a trade word")
 
 print(f"search_release5_test: {n} checks passed")
+
+# saved results are shown at once, while the portal is asked again
+import time as _time
+ps._PORTAL_RESULTS_CACHE.clear()
+_old = [{"title": "Old plumbing tender", "resource_id": "x1", "source": "find_tender", "submission_deadline": "01/12/2099 12:00"}]
+ps._PORTAL_RESULTS_CACHE[("plumbing", "find_tender")] = (_old, None, _time.time() - 3 * 3600, {})
+_job = ps.SearchJob(job_id="seed1", query="plumbing", scope="find_tender", status="loading")
+_one = {"find_tender": {"label": "Find a Tender (UK)"}}
+_seen = {}
+_orig = ps._fetch_source_first_page
+def _slow(sid, cfg, kw, notes):
+    with _job.lock: pass
+    _seen["rows_during_fetch"] = len(_job.rows)
+    return sid, [], None, None
+ps._fetch_source_first_page = _slow
+_orig_b = ps._fetch_source_batch
+ps._fetch_source_batch = lambda sid, cfg, kw, notes, **k: (sid, [], None)
+try:
+    ps._portal_worker(_job, "find_tender", _one["find_tender"], "plumbing", _one)
+finally:
+    ps._fetch_source_first_page = _orig
+    ps._fetch_source_batch = _orig_b
+ok(_seen.get("rows_during_fetch") == 1, "the saved copy is on screen while the portal is asked again: %s" % _seen)
+ok(len(_job.rows) == 0, "a portal that now answers with nothing clears the out-of-date saved copy: %s rows" % len(_job.rows))
+ps._PORTAL_RESULTS_CACHE.clear()
+
+# CPV-code matching: a trade word (or its one-letter typo) also finds notices filed under that trade's CPV codes
+from tender_app import tender_index as _ti
+class _Cur:
+    def __init__(self): self.sql, self.params = "", []
+    def execute(self, sql, params): self.sql, self.params = sql, params
+    def fetchall(self):
+        import datetime as dt
+        return [("find_tender", "1-2026", "Reactive repairs and maintenance", "Hertfordshire Police", "Herts", "contract", "open", None, None, None, "GBP",
+                 "45330000-9", "Herts", "http://x", None)][:1] if False else [("find_tender", "1-2026", "Reactive repairs and maintenance", "", "Herts Police", "contract", "open",
+                 None, None, None, "GBP", "45330000-9", "Herts", "http://x", None)]
+_c = _Cur()
+_rows = _ti.cpv_notices(_c, ["lumbing"])
+ok(len(_rows) == 1 and _rows[0]["matched_by"] == "CPV code" and "cpv_codes ~" in _c.sql, "a typo'd trade word finds the notice by CPV code")
+ok("4533" in _c.params[1], "the plumbing CPV group is searched: %s" % (_c.params,))
+ok(_ti.cpv_notices(_Cur(), ["matthewsgreen"]) == [], "a name has no CPV group")

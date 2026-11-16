@@ -179,3 +179,40 @@ _wb = _lw(_io.BytesIO(_bcx("T", "Acme Ltd", [], "", {"payment_terms": "NET 30", 
 _ws = _wb["Terms and statements"]
 ok(_ws["B4"].value == "NET 30" and "Huawei, ZTE" in str(_ws["B5"].value), "Terms sheet: payment terms and excluded manufacturers")
 print("release 5 extras done")
+
+# the buyer's own workbook is completed in the buyer's layout
+from openpyxl import Workbook as _Wb
+from tender_app.submission_pack import fill_buyer_workbook as _fill
+_w = _Wb(); _s = _w.active; _s.title = "Volume 3 Price"
+_s["A1"] = "ITT 2026-PAR-105 Price schedule"; _s["A3"] = "Supplier name"; _s["A3"].font = _s["A3"].font.copy(bold=True)
+_s.append([]); _s.append(["Item", "Description", "Qty", "Unit price", "Total"])
+_s.append(["1", "Laptop 14in", 10, None, None]); _s.append(["2", "Docking station", 10, None, None])
+_buf = _io.BytesIO(); _w.save(_buf)
+_out = _lw(_io.BytesIO(_fill(_buf.getvalue(), "Acme Ltd", {"payment_terms": "NET 30"}, "VAT excluded")))
+_o = _out["Volume 3 Price"]
+ok(_o["B3"].value == "Acme Ltd", "the bidder's name is written beside the supplier label")
+ok(_o["E6"].value == "=IF(ISNUMBER(D6),D6*C6,0)" and _o["D6"].fill.fgColor.rgb.endswith("FEF08A"), "line totals are formulas and unit prices are marked, not invented")
+ok(_o["D6"].value is None, "no price was invented")
+ok(any(str(_o.cell(row=r, column=5).value).startswith("=SUM(E6:E7)") for r in range(1, 14)), "a total row sums the lines")
+ok(_o["A1"].value == "ITT 2026-PAR-105 Price schedule" and "Terms and statements" in _out.sheetnames, "the buyer's content is kept and the terms sheet is added")
+print("workbook checks done")
+
+# the buyer's own Word questionnaire is answered in place
+from docx import Document as _Doc
+from tender_app.submission_pack import fill_buyer_template as _ft
+_dd = _Doc(); _dd.add_heading("Section D - Technical", 1)
+_tb = _dd.add_table(rows=2, cols=2)
+_tb.cell(0, 0).text = "D1.1 Describe your sample process (max 500 words)"; _tb.cell(0, 1).text = ""
+_tb.cell(1, 0).text = "D1.2 Describe your delivery"; _tb.cell(1, 1).text = ""
+_dd.add_paragraph("D1.3 Describe your environmental policy")
+_dd.add_paragraph("Please answer in the space below.")
+_dd.add_paragraph("D1.4 Describe your quality control")
+_b = _io.BytesIO(); _dd.save(_b)
+_res, _n2 = _ft(_b.getvalue(), [("D1.1", "Answer one."), ("Question D1.2", "Answer two."), ("D1.3", "Answer **three**.\nSecond line."), ("D9", "Nowhere to go.")])
+_rd = _Doc(_io.BytesIO(_res))
+ok(_n2 == 3, "three answers placed, the one with no place is left for the main document: %s" % _n2)
+ok(_rd.tables[0].cell(0, 1).text == "Answer one." and _rd.tables[0].cell(1, 1).text == "Answer two.", "table answers go in the buyer's answer cells")
+_pt = [p.text for p in _rd.paragraphs]
+ok(_pt.index("Answer three.") == _pt.index("Please answer in the space below.") + 1 and "Second line." in _pt and _pt.index("D1.4 Describe your quality control") > _pt.index("Second line."), "a paragraph answer follows its question and stays before the next one: %s" % _pt)
+ok(_rd.paragraphs[0].text == "Section D - Technical", "the buyer's headings are kept")
+print("template checks done")

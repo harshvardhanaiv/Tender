@@ -485,6 +485,68 @@ SCRAPED_SOURCES = ("pcs",)
 OCDS_SOURCES = ("find_tender", "contracts_finder")
 
 
+# Trade words and the CPV code groups notices for that work are filed under. A notice titled "Reactive repairs and
+# maintenance" with CPV 45330000 is plumbing work even though the word is not in its title.
+CPV_BY_TRADE = {
+    "plumbing": ("4533", "4232", "5072"), "drainage": ("45232", "4524", "9040", "9041"), "heating": ("4533", "4224", "5072"),
+    "electrical": ("4531", "5171", "3130"), "cleaning": ("9091", "9090"), "catering": ("5552", "5523", "1555"),
+    "security": ("7971", "3571"), "roofing": ("4526", "4526"), "painting": ("4544",), "decorating": ("4544",),
+    "landscaping": ("7731", "7731", "4511"), "flooring": ("4543",), "glazing": ("4544", "4542"), "joinery": ("4542",),
+    "carpentry": ("4542",), "scaffolding": ("4526",), "demolition": ("4511",), "asbestos": ("4511", "9052"),
+    "legionella": ("7931", "9051"), "lifts": ("4231", "5075"), "ventilation": ("4233", "4533"), "refurbishment": ("4545", "4521"),
+    "construction": ("45",), "waste": ("90",), "recycling": ("9051", "9052"), "laundry": ("9831",), "printing": ("7981", "7982"),
+    "signage": ("3412", "7981"), "fire": ("4531", "3511", "5111"),
+}
+
+
+def cpv_prefixes_for(terms: list[str]) -> list[str]:
+    """CPV prefixes for the trade words in the search, allowing one wrong letter ("lumbing" -> plumbing)."""
+    from etenders_scraper.sources.progressive_search import _one_edit_apart
+    out: list[str] = []
+    for term in terms or []:
+        for w in re.findall(r"[a-z]+", term.lower()):
+            for trade, prefixes in CPV_BY_TRADE.items():
+                if w == trade or (len(w) >= 5 and _one_edit_apart(w, trade)):
+                    out.extend(p for p in prefixes if p not in out)
+    return out
+
+
+def _stored_where(cursor, where: str, params: list, wanted: list[str], limit: int) -> list[dict[str, Any]]:
+    cursor.execute(
+        f"SELECT source, resource_id, title, description, contracting_authority, notice_type, status, published_at, deadline_at, value, currency, "
+        f"cpv_codes, location_text, detail_url, last_seen_at FROM tender_notices WHERE source = ANY(%s) AND ({where}) "
+        f"ORDER BY published_at DESC NULLS LAST, last_seen_at DESC LIMIT %s",
+        [wanted, *params, int(limit)])
+    labels = {"find_tender": "Find a Tender", "contracts_finder": "Contracts Finder", "pcs": "Public Contracts Scotland"}
+    out = []
+    for (src, rid, title, desc, authority, ntype, status, published, deadline, value, currency, cpvs, location, url, seen) in cursor.fetchall():
+        out.append({
+            "source": src, "source_label": labels.get(src, src), "resource_id": rid, "title": title, "description": desc or "",
+            "contracting_authority": authority or "", "notice_type": ntype or "", "cpv_codes": cpvs or "", "location": location or "",
+            "status": "Active" if status == "open" else ("Closed" if status in ("closed", "expired") else (status or "Active").title()),
+            "date_published": published.strftime("%d/%m/%Y %H:%M:%S") if published else "",
+            "submission_deadline": deadline.strftime("%d/%m/%Y %H:%M:%S") if deadline else "",
+            "estimated_value_eur": f"{value:g} {currency or 'GBP'}" if value is not None else "",
+            "detail_url": url or "", "procedure": "", "procurement_type": "",
+            "indexed_at": seen.isoformat() if seen else None, "from_saved": True,
+        })
+    return out
+
+
+def cpv_notices(cursor, terms: list[str], sources: list[str] | None = None, limit: int = 150) -> list[dict[str, Any]]:
+    """Open or recent stored notices filed under the CPV codes of the trade the search names, even when the trade word is not in
+    their title or description. Each row says it was matched by CPV code."""
+    prefixes = cpv_prefixes_for(terms)
+    wanted = [s for s in (sources or OCDS_SOURCES + SCRAPED_SOURCES) if s in OCDS_SOURCES + SCRAPED_SOURCES]
+    if not prefixes or not wanted:
+        return []
+    pattern = r"(^|[^0-9])(" + "|".join(prefixes) + ")"
+    rows = _stored_where(cursor, "cpv_codes ~ %s", [pattern], wanted, limit)
+    for r in rows:
+        r["matched_by"] = "CPV code"
+    return rows
+
+
 def stored_rows(cursor, terms: list[str], sources: list[str], limit: int = 300) -> list[dict[str, Any]]:
     """Stored Find a Tender / Contracts Finder notices that match the words, as the rows their live search returns. Used only when the live
     portal could not answer (Find a Tender returns HTTP 429 under load), so a search shows saved notices instead of nothing."""

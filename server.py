@@ -4978,6 +4978,22 @@ def create_app() -> Flask:
                 meta["served_from_saved"] = {src: sum(1 for r in saved if r.get("source") == src) for src in failed_ocds}
             except Exception as exc:
                 print(f"[Search] saved fallback skipped: {exc}", flush=True)
+        # Notices filed under the CPV codes of the trade searched ("plumbing" -> 4533...) are added even when the word is
+        # not in their title or description, and a one-letter typo of the trade ("lumbing") still finds them.
+        if os.environ.get("SEARCH_USE_INDEX", "1") != "0":
+            try:
+                from tender_app import tender_index as _ti
+                _cc = get_db_connection()
+                try:
+                    _cpv_rows = _ti.cpv_notices(_cc.cursor(), split_terms(q), None if scope == "all" else [s.strip() for s in scope.split(",")])
+                finally:
+                    _cc.close()
+                _cpv_rows = [r for r in translate_row_list(_cpv_rows) if not _is_invalid_tender_row(r, q)]
+                if _cpv_rows:
+                    meta["matched_by_cpv"] = len(_cpv_rows)
+                    index_rows = list(index_rows) + _cpv_rows
+            except Exception as exc:  # CPV matching is a top-up: a failure must never cost the search its rows
+                print(f"[Search] CPV match skipped: {exc}", flush=True)
         db_rows = list(index_rows) + list(db_rows or [])
         _d = count_by_source(db_rows or [])
 
@@ -7803,6 +7819,25 @@ Return ONLY this JSON structure:
                 for _d in documents:
                     _price_schedules.extend(_ps_from_text(str(_d.get("content") or "")))
                 _price_schedules = _price_schedules[:6]
+                # The buyer's own price workbooks, kept so the pack can return them completed in the buyer's layout.
+                _buyer_workbooks, _wb_bytes = [], 0
+                for f in uploaded_files:
+                    _fn = str(f.get("filename") or "")
+                    if _fn.lower().endswith((".xlsx", ".xlsm")) and f.get("content") and _wb_bytes < 1_500_000:
+                        try:
+                            from etenders_scraper.xlsx_text import sheet_summary as _sheet_summary
+                            if any(s["kind"] == "price_schedule" for s in _sheet_summary(base64.b64decode(f["content"]))):
+                                _buyer_workbooks.append({"filename": _fn, "content": f["content"]})
+                                _wb_bytes += len(f["content"])
+                        except Exception as _wb_err:  # noqa: BLE001
+                            print("[proposal] could not keep buyer workbook:", _wb_err)
+                # The buyer's own Word questionnaire(s), kept so the pack can return the answers inside the buyer's template.
+                _buyer_templates, _tp_bytes = [], 0
+                for f in uploaded_files:
+                    _fn = str(f.get("filename") or "")
+                    if _fn.lower().endswith(".docx") and f.get("content") and _tp_bytes < 1_500_000:
+                        _buyer_templates.append({"filename": _fn, "content": f["content"]})
+                        _tp_bytes += len(f["content"])
                 for _d in list(documents):
                     # By content as well as name: turnover / profit / cash-flow terms with figures (the buyer's own
                     # price schedule and Q&A are not the bidder's finances).
@@ -8392,6 +8427,8 @@ Return ONLY valid JSON with no markdown fences:
                     "provisional_structure": not q_mode,
                     "needs_financial_upload": _needs_financials,
                     "price_schedules": _price_schedules,
+                    "buyer_workbooks": _buyer_workbooks,
+                    "buyer_templates": _buyer_templates,
                     "docs_used": doc_names,
                     "docs_unreadable": docs_failed,
                     "docs_cut": docs_cut,
@@ -8877,7 +8914,31 @@ Return ONLY valid JSON with no markdown fences:
         readme = ("Technical offer (technical_offer.docx): no prices.\n"
                   "Commercial offer (commercial_offer.xlsx): the buyer's price schedule; enter unit prices in the yellow cells.\n"
                   "Submit them as separate files if the buyer requires separate technical and commercial offers.\n")
-        data = build_pack_zip({"technical_offer.docx": tech, "commercial_offer.xlsx": comm, "README.txt": readme})
+        files = {"technical_offer.docx": tech, "commercial_offer.xlsx": comm}
+        from tender_app.submission_pack import fill_buyer_workbook
+        import base64 as _b64
+        for _i, _wbk in enumerate((body.get("buyer_workbooks") or [])[:3]):
+            try:
+                _name = re.sub(r"[^A-Za-z0-9._ -]+", "_", str(_wbk.get("filename") or f"buyer_price_workbook_{_i + 1}.xlsx"))
+                files["completed_" + _name] = fill_buyer_workbook(_b64.b64decode(_wbk.get("content") or ""), company, body.get("terms") or {}, vat_note)
+                readme += f"completed_{_name}: the buyer's own workbook, in the buyer's layout, with your name, line totals and a total row filled; enter unit prices in the yellow cells.\n"
+            except Exception as ex:  # noqa: BLE001 - the rebuilt commercial_offer.xlsx is still in the pack
+                print("[submission pack] could not complete the buyer's workbook:", ex)
+        from tender_app.submission_pack import fill_buyer_template
+        _answers = [(q.get("question_number"), q.get("response")) for q in (bid.get("itt_question_responses") or []) if isinstance(q, dict)]
+        for _i, _tp in enumerate((body.get("buyer_templates") or [])[:4]):
+            if not _answers:
+                break
+            try:
+                _tname = re.sub(r"[^A-Za-z0-9._ -]+", "_", str(_tp.get("filename") or f"buyer_template_{_i + 1}.docx"))
+                _tdata, _placed = fill_buyer_template(_b64.b64decode(_tp.get("content") or ""), _answers)
+                if _placed:
+                    files["answered_" + _tname] = _tdata
+                    readme += f"answered_{_tname}: the buyer's own template with {_placed} answer(s) written under or beside the buyer's questions.\n"
+            except Exception as ex:  # noqa: BLE001 - the technical offer still carries every answer
+                print("[submission pack] could not fill the buyer's template:", ex)
+        files["README.txt"] = readme
+        data = build_pack_zip(files)
         safe = re.sub(r"[^A-Za-z0-9]+", "_", title).strip("_")[:50] or "tender"
         return send_file(io.BytesIO(data), as_attachment=True, download_name=f"{safe}_submission_pack.zip", mimetype="application/zip")
 
