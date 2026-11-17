@@ -1400,7 +1400,7 @@ def api_winning_bids_list():
     cur = conn.cursor()
     sql = (
         "SELECT id, profile_id, title, buyer, contract_year, file_name, "
-        "LENGTH(extracted_text), uploaded_at FROM winning_bids WHERE username=%s"
+        "LENGTH(extracted_text), uploaded_at, outcome FROM winning_bids WHERE username=%s"
     )
     params = [username]
     if profile_id is not None:
@@ -1423,6 +1423,7 @@ def api_winning_bids_list():
                 "file_name": r[5],
                 "char_count": r[6],
                 "uploaded_at": str(r[7]),
+                "outcome": r[8] or "unknown",
             }
             for r in rows
         ],
@@ -1461,6 +1462,8 @@ def api_winning_bids_upload():
         title = os.path.splitext(original_name)[0].replace("_", " ").replace("-", " ").strip().title()
     buyer = (request.form.get("buyer") or "").strip() or None
     contract_year = (request.form.get("contract_year") or "").strip()[:10] or None
+    from tender_app.bid_style import normalise_outcome
+    outcome = normalise_outcome(request.form.get("outcome"))
 
     upload_dir = os.path.join(os.getcwd(), "uploads", "winning_bids_tmp")
     os.makedirs(upload_dir, exist_ok=True)
@@ -1492,9 +1495,9 @@ def api_winning_bids_upload():
             conn.close()
             return jsonify({"error": "Profile not found or access denied"}), 404
     cur.execute(
-        "INSERT INTO winning_bids (username, profile_id, title, buyer, contract_year, file_name, extracted_text) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id, uploaded_at",
-        (username, profile_id, title[:255], buyer, contract_year, original_name[:255], extracted_text),
+        "INSERT INTO winning_bids (username, profile_id, title, buyer, contract_year, file_name, extracted_text, outcome) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id, uploaded_at",
+        (username, profile_id, title[:255], buyer, contract_year, original_name[:255], extracted_text, outcome),
     )
     new_id, uploaded_at = cur.fetchone()
     conn.commit()
@@ -1508,6 +1511,7 @@ def api_winning_bids_upload():
             "title": title[:255],
             "buyer": buyer,
             "contract_year": contract_year,
+            "outcome": outcome,
             "file_name": original_name,
             "char_count": len(extracted_text),
             "uploaded_at": str(uploaded_at),
@@ -1530,6 +1534,60 @@ def api_winning_bids_delete(bid_id: int):
     if not deleted:
         return jsonify({"error": "Not found"}), 404
     return jsonify({"ok": True})
+
+
+def _brand_profile_id():
+    raw = (request.values.get("profile_id") or (request.get_json(silent=True) or {}).get("profile_id") or "")
+    return int(raw) if str(raw).isdigit() else 0
+
+
+@profiles_bp.get("/api/brand-kit")
+def api_brand_kit_get():
+    """The brand kit for one company profile (release 8, F3). The logo itself is not sent back, only whether one is set."""
+    username = session.get("username", "")
+    if not username:
+        return jsonify({"error": "Unauthorized"}), 401
+    from tender_app.brand_kit import load_kit, kit_exists
+    conn = _get_db()
+    try:
+        kit = load_kit(conn, username, _brand_profile_id())
+    finally:
+        conn.close()
+    if not kit:
+        return jsonify({"ok": True, "exists": False, "kit": None})
+    return jsonify({"ok": True, "exists": kit_exists(kit),
+                    "kit": {"color": kit["color"], "font": kit["font"], "footer_text": kit["footer_text"], "has_logo": bool(kit["logo_b64"])}})
+
+
+@profiles_bp.put("/api/brand-kit")
+def api_brand_kit_put():
+    username = session.get("username", "")
+    if not username:
+        return jsonify({"error": "Unauthorized"}), 401
+    from tender_app.brand_kit import load_kit, sanitize_kit, save_kit
+    body = request.get_json(silent=True) or {}
+    pid = _brand_profile_id()
+    conn = _get_db()
+    try:
+        if pid:
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM company_profiles WHERE id=%s AND username=%s", (pid, username))
+            found = cur.fetchone()
+            cur.close()
+            if not found:
+                return jsonify({"error": "Profile not found or access denied"}), 404
+        if "logo_b64" not in body:                      # editing colour or font keeps the saved logo
+            old = load_kit(conn, username, pid) or {}
+            body["logo_b64"] = old.get("logo_b64", "")
+        elif body.get("logo_b64") == "":
+            body["logo_b64"] = ""
+        kit, problems = sanitize_kit(body)
+        if problems:
+            return jsonify({"error": " ".join(problems)}), 400
+        save_kit(conn, username, pid, kit)
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "has_logo": bool(kit["logo_b64"])})
 
 
 @profiles_bp.post("/api/answer-bank/generate")

@@ -46,6 +46,7 @@
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=20" />
   <link rel="stylesheet" href="/pages.css?v=33" />
+  <link rel="stylesheet" href="/workspace.css?v=4" />
   <link rel="stylesheet" href="/funding.css?v=25" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
@@ -1060,6 +1061,20 @@
             </svg>
           </div>
           <div class="bid-step-body" id="bidStepBody5">
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; font-size:12px;">
+              <label>Learn from past bids
+                <select id="bidPastBidsMode" class="select" title="Applies to this bid only">
+                  <option value="auto">Let TenderFlow choose (won bids count most)</option>
+                  <option value="library">Only the bids I tick below</option>
+                  <option value="off">Do not use past bids</option>
+                </select></label>
+              <label>Next upload was
+                <select id="bidPastBidOutcome" class="select">
+                  <option value="won">Won</option>
+                  <option value="unknown" selected>Submitted, outcome not known</option>
+                  <option value="lost">Lost</option>
+                </select></label>
+            </div>
             <div class="bid-dropzone bid-dropzone--company">
               <label for="bidWinningBidFiles" class="bid-dropzone__label">
                 <div class="bid-dropzone__icon">
@@ -1131,6 +1146,45 @@
             </div>
           </div>
         </div>
+
+        <!-- Readiness score, to-do list and sign-off list (free, no credits) -->
+        <details class="bid-step-card" id="bidReadinessCard" style="padding:10px 14px;">
+          <summary style="cursor:pointer; font-weight:600;">Readiness score and sign-off</summary>
+          <div style="margin-top:10px; font-size:12px;">
+            <button type="button" class="btn btn--small" id="btnRefreshReadiness">Refresh</button>
+            <div id="bidReadinessOut" style="margin-top:8px;"></div>
+          </div>
+        </details>
+
+        <!-- What TenderFlow learned from the chosen past bids, and the answer plan (free, no credits) -->
+        <details class="bid-step-card" id="bidStyleCard" style="padding:10px 14px;">
+          <summary style="cursor:pointer; font-weight:600;">What TenderFlow learned and the answer plan</summary>
+          <div style="margin-top:10px; font-size:12px;">
+            <button type="button" class="btn btn--small" id="btnRefreshStyle">Refresh</button>
+            <div id="bidStyleOut" style="margin-top:8px;"></div>
+          </div>
+        </details>
+
+        <!-- Brand kit and anonymised answers: settings for this bid only -->
+        <details class="bid-step-card" id="bidBrandCard" style="padding:10px 14px;">
+          <summary style="cursor:pointer; font-weight:600;">Use my branding <span id="bidBrandSummary" style="font-weight:400; color:var(--text-muted); font-size:12px; margin-left:8px;"></span></summary>
+          <div style="margin-top:10px; font-size:12px; display:grid; gap:8px;">
+            <label><input type="checkbox" id="bidBrandingOn" checked /> Apply my brand kit to the Word file for this bid</label>
+            <label><input type="checkbox" id="bidAnonymiseAnswers" /> The buyer asks for anonymised answers (logo and company line only on the cover page)</label>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">
+              <label>Heading colour <input type="color" id="brandColor" value="#1e3a8a" /></label>
+              <label>Font
+                <select id="brandFont" class="select">
+                  <option>Calibri</option><option>Arial</option><option selected>Segoe UI</option><option>Georgia</option>
+                  <option>Times New Roman</option><option>Verdana</option><option>Cambria</option><option>Tahoma</option>
+                </select></label>
+              <label>Footer line <input type="text" id="brandFooter" maxlength="160" placeholder="Company name | Company no. 12345678" style="min-width:240px;" /></label>
+              <label>Logo (PNG or JPEG, under 400 KB) <input type="file" id="brandLogo" accept="image/png,image/jpeg" /></label>
+              <button type="button" class="btn btn--small" id="btnSaveBrandKit">Save brand kit</button>
+            </div>
+            <div id="brandKitStatus" style="color:var(--text-muted);"></div>
+          </div>
+        </details>
 
       </div>
 
@@ -3518,7 +3572,7 @@
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=2"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=299"></script>
+  <script src="/app.js?v=304"></script>
   <script src="/planning.js?v=23"></script>
   <script src="/funding.js?v=11"></script>
   <script src="/grants-board.js?v=1"></script>

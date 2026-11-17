@@ -74,8 +74,28 @@ def _render(body_html: str):
     return buf.getvalue()
 
 
-def build_pdf(title: str, sections: list, front_html: str = ""):
-    """sections: [{label, html, page_limit}]. Returns (pdf_bytes, counts)."""
+def _brand_css(kit):
+    """Heading colour and font family from the brand kit (release 8). Serif fonts map to serif, the rest to sans-serif."""
+    serif = kit["font"] in ("Georgia", "Times New Roman", "Cambria")
+    return "body { font-family: %s; } h1, h2 { color: #%s; } " % ("serif" if serif else "sans-serif", kit["color"])
+
+
+def build_pdf(title: str, sections: list, front_html: str = "", brand=None, anonymise: bool = False):
+    """sections: [{label, html, page_limit}]. Returns (pdf_bytes, counts).
+    `brand` is a sanitised brand kit: heading colour and font, a logo on every page, a footer line. Anonymised: the logo
+    is on the cover page only and there is no company footer line, so the answers carry no company mark."""
+    import pymupdf
+    global _CSS
+    base_css = _CSS
+    if brand:
+        _CSS = base_css + _brand_css(brand)
+    try:
+        return _build_pdf(title, sections, front_html, brand, anonymise)
+    finally:
+        _CSS = base_css
+
+
+def _build_pdf(title, sections, front_html, brand, anonymise):
     import pymupdf
     merged = pymupdf.open()
     counts: list = []
@@ -97,8 +117,20 @@ def build_pdf(title: str, sections: list, front_html: str = ""):
     merged.set_metadata({"title": title or "Bid response"})
     # Page numbers, bottom centre.
     total = merged.page_count
+    logo = None
+    if brand and brand.get("logo_b64"):
+        import base64
+        from tender_app.brand_kit import _logo_extent
+        logo = base64.b64decode(brand["logo_b64"])
+        lcx, lcy = _logo_extent(brand, 1.0)
+        lw, lh = lcx / 12700.0, lcy / 12700.0           # EMU to points
     for i, page in enumerate(merged, 1):
         page.insert_text((page.rect.width / 2 - 25, page.rect.height - 30), f"Page {i} of {total}", fontsize=8, color=(0.4, 0.4, 0.4))
+        if brand and not anonymise and brand.get("footer_text"):
+            page.insert_text((54, page.rect.height - 18), brand["footer_text"][:110], fontsize=7.5, color=(0.4, 0.4, 0.4))
+        if logo and (i == 1 or not anonymise):
+            size = (lw * 2.0, lh * 2.0) if i == 1 else (lw, lh)
+            page.insert_image(pymupdf.Rect(54, 16, 54 + size[0], 16 + size[1]), stream=logo)
     out = merged.tobytes(garbage=3, deflate=True)
     merged.close()
     return out, counts

@@ -12739,6 +12739,7 @@ window.stopTask = stopTask;
 
 function showProposalResultInModal(task) {
   _lastProposal = task.proposal;
+  try { applyBrandingRules(_lastProposal); if ($("bidReadinessCard")?.open) loadReadiness(false); } catch (e) { console.warn("branding rules:", e); }
   rememberDeadlineZone(_bidRow, _lastProposal);
   state.resolvedPlaceholders = {};
   if (task.proposal?.bid_response?.all_placeholders) {
@@ -12854,7 +12855,120 @@ function renderBidPlan(plan) {
     </div>`;
 }
 
+let _lastBidPlanQuestions = [];
 let _bidPlanBusy = false;
+// On the full-page Bid response view the results sit below the setup steps; bring them into view when they appear.
+function revealBidResults() {
+  const el = $("bidModalBody");
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// Release 8 (F1): readiness score, to-do list and sign-off list. Free; runs on the draft already on screen.
+function _brandPrefKey() { return "tf_brand_" + (_bidRow ? rowKey(_bidRow) : ""); }
+function applyBrandingRules(proposal) {
+  // Buyer rules win: anonymised answers, a buyer template or set fonts switch branding off, with the reason shown.
+  const rules = proposal?.branding_rules || {};
+  const on = $("bidBrandingOn"), anon = $("bidAnonymiseAnswers"), sum = $("bidBrandSummary");
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(_brandPrefKey()) || "null"); } catch (e) { saved = null; }
+  if (anon) anon.checked = saved ? Boolean(saved.anon) : Boolean(rules.anonymise);
+  if (on && rules.auto_off && !saved) { on.checked = false; }
+  else if (on && saved) { on.checked = Boolean(saved.on); }
+  if (sum && rules.auto_off) sum.textContent = rules.reason || "";
+}
+// The per-bid branding choices, sent with every export so the Word file, the PDF and the submission pack agree.
+function brandExportFields() {
+  return { profile_id: $("bidCompanyProfileSelect")?.value || "", branding_enabled: $("bidBrandingOn") ? $("bidBrandingOn").checked : true,
+           anonymise_answers: Boolean($("bidAnonymiseAnswers")?.checked) };
+}
+function rememberBrandPrefs() {
+  try { localStorage.setItem(_brandPrefKey(), JSON.stringify({ on: Boolean($("bidBrandingOn")?.checked), anon: Boolean($("bidAnonymiseAnswers")?.checked) })); } catch (e) { /* private window */ }
+}
+$("bidBrandingOn")?.addEventListener("change", rememberBrandPrefs);
+$("bidAnonymiseAnswers")?.addEventListener("change", rememberBrandPrefs);
+
+function renderReadiness(d) {
+  const sev = { P0: "#b91c1c", P1: "#b45309", P2: "#64748b" };
+  const items = (d.items || []).map(i => `<li style="margin:3px 0;"><b style="color:${sev[i.severity] || "#64748b"};">${esc(i.severity)}</b> ${esc(i.text)}</li>`).join("");
+  const sign = (d.signoff || []).map(s => `<label style="display:block;margin:4px 0;"><input type="checkbox" data-signoff="${esc(s.key)}" ${s.ticked ? "checked" : ""}/> ${esc(s.text)}${s.ticked ? ` <span style="color:var(--text-muted);">(${esc(s.by)}, ${esc(s.at)})</span>` : ""}</label>`).join("");
+  const head = d.limited
+    ? `<div style="font-weight:600;">${esc(d.label)}</div>`
+    : `<div style="font-size:22px;font-weight:700;">${d.score}<span style="font-size:13px;font-weight:400;"> / 100 readiness</span></div>
+       <div style="color:var(--text-muted);margin-bottom:6px;">A readiness check, not a prediction of the evaluators' marks.</div>`;
+  return `${head}
+    <h4 style="margin:10px 0 4px;">To do, most marks first</h4>${items ? `<ul style="margin:0;padding-left:18px;">${items}</ul>` : "<div>Nothing open.</div>"}
+    <h4 style="margin:10px 0 4px;">Sign-off before the final export</h4>${sign}
+    <div style="margin-top:6px;color:var(--text-muted);">${d.ready ? "Ready for the final export." : "The final export unlocks when nothing is open and every box above is ticked."}</div>`;
+}
+async function loadReadiness(gate = false) {
+  const out = $("bidReadinessOut");
+  if (!out) return;
+  if (!_lastProposal?.bid_response) { out.textContent = "Generate the bid first. The score is worked out from the draft."; return; }
+  try {
+    const res = await fetch("/api/bid-readiness", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bid_response: _lastProposal.bid_response, dissection: _lastProposal.dissection || {},
+        tender_closed: Boolean(_lastProposal.tender_closed), bid_key: _bidRow ? rowKey(_bidRow) : "", gate })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || "Could not work out the score.");
+    out.innerHTML = renderReadiness(data.readiness);
+    out.querySelectorAll("input[data-signoff]").forEach(cb => cb.addEventListener("change", async () => {
+      await fetch("/api/bid-signoff", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bid_key: rowKey(_bidRow), item_key: cb.dataset.signoff, ticked: cb.checked }) });
+      loadReadiness(gate);
+    }));
+  } catch (e) { out.textContent = e.message || "Could not work out the score."; }
+}
+$("bidReadinessCard")?.addEventListener("toggle", e => { if (e.target.open) loadReadiness(false); });
+$("btnRefreshReadiness")?.addEventListener("click", () => loadReadiness(false));
+
+// Release 8 (F2): "What TenderFlow learned" and the answer plan. Free; reads the user's own past bids.
+function renderStylePreview(d) {
+  const p = d.profile || {};
+  if (!p.learned) {
+    return `<div style="color:var(--text-muted);">${d.mode === "off" ? "Learning from past bids is switched off for this bid." : "No past bid with enough answer text to learn from yet. Upload a past bid in step 4."}</div>`;
+  }
+  const stat = (v, l) => `<div style="border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:8px 12px;min-width:120px;"><strong style="font-size:18px;">${esc(String(v))}</strong><div style="font-size:11px;color:var(--text-muted);">${esc(l)}</div></div>`;
+  const outcome = o => ({ won: "Won", lost: "Lost" }[o] || "Outcome not known");
+  const rows = (d.plan || []).map(r => `<tr>
+      <td>${esc(r.number)}</td><td>${esc(r.question)}</td><td>${r.weight_pct == null ? "" : esc(String(r.weight_pct)) + "%"}</td><td>${esc(String(r.words || ""))}</td>
+      <td>${esc(r.subheadings)}</td>
+      <td>${r.reusable ? `<b>1 paragraph</b><div style="font-size:11px;color:var(--text-muted);">From ${esc(r.reusable.source_bid)}, ${esc(r.reusable.source_question)}. ${r.reusable.facts_to_confirm} fact(s) to confirm.</div>` : "-"}</td></tr>`).join("");
+  return `<div style="margin-bottom:8px;">Learned from ${(d.bids || []).length} bid(s): ${(d.bids || []).map(b => esc(b.title) + " (" + outcome(b.outcome) + ")").join("; ")}.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      ${stat(p.words_per_sentence, "words per sentence")}${stat(p.figures_per_100, "figures per 100 words")}
+      ${stat(p.tables + " of " + p.answers, "answers use a table")}${stat(p.subheadings, "sub-headings per answer")}
+      ${stat(p.words_per_answer, "words per answer")}${stat(p.opens_direct ? "Yes" : "No", "opens with a direct summary")}
+    </div>
+    <h4 style="margin:12px 0 4px;">Style brief added to the drafting prompt</h4><div>${esc(d.style_brief || "")}</div>
+    <h4 style="margin:12px 0 4px;">Fact guard</h4>
+    <div>Money, percentages, dates, years, accreditations, counts and other organisations' names from old bids come back as [CONFIRM]. The old buyer's name becomes "[the buyer]".</div>
+    <h4 style="margin:12px 0 4px;">Answer plan</h4>
+    ${rows ? `<div style="overflow-x:auto;"><table class="plan" style="border-collapse:collapse;width:100%;font-size:12px;"><thead><tr><th>Q</th><th>Question</th><th>Weight</th><th>Words</th><th>Sub-headings</th><th>Reusable text</th></tr></thead><tbody>${rows}</tbody></table></div>`
+            : `<div style="color:var(--text-muted);">Build the Bid plan first so TenderFlow has the buyer's questions, then open this again.</div>`}`;
+}
+async function loadStylePreview() {
+  const out = $("bidStyleOut");
+  if (!out) return;
+  out.innerHTML = "Working it out...";
+  const ids = typeof getSelectedWinningBidIds === "function" ? getSelectedWinningBidIds() : [];
+  const questions = _lastBidPlanQuestions.length ? _lastBidPlanQuestions
+    : (_lastProposal?.dissection?.itt_questions || []);
+  try {
+    const res = await fetch("/api/bid-style-preview", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tender: _bidRow || {}, profile_id: $("bidCompanyProfileSelect")?.value || "",
+        past_bids_mode: $("bidPastBidsMode")?.value || "", winning_bid_ids: ids, questions })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || "Could not read your past bids.");
+    out.innerHTML = renderStylePreview(data);
+  } catch (e) { out.textContent = e.message || "Could not read your past bids."; }
+}
+$("bidStyleCard")?.addEventListener("toggle", e => { if (e.target.open) loadStylePreview(); });
+$("btnRefreshStyle")?.addEventListener("click", loadStylePreview);
+
 async function runBidPlan() {
   if (_bidPlanBusy) return;
   const body = $("bidModalBody");
@@ -12869,6 +12983,7 @@ async function runBidPlan() {
   const label = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "⏳ Reading the tender…"; }
   if (body) body.innerHTML = `<div style="padding:24px;text-align:center;color:var(--muted,#64748b);">Reading the tender documents to build your plan. This takes up to a minute.</div>`;
+  revealBidResults();
   try {
     const res = await fetch("/api/bid-plan", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -12876,9 +12991,27 @@ async function runBidPlan() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) throw new Error(data.error || "The plan could not be built.");
+    _lastBidPlanQuestions = Array.isArray(data.plan?.questions) ? data.plan.questions : [];
     if (body) body.innerHTML = renderBidPlan(data.plan);
+    revealBidResults();
   } catch (e) {
-    if (body) body.innerHTML = `<div style="padding:16px;color:#991b1b;">${esc(e.message || "The plan could not be built.")} You can still generate the bid.</div>`;
+    const needsDocs = /not enough tender text/i.test(e.message || "");
+    if (body) body.innerHTML = needsDocs
+      ? `<div style="padding:18px 20px;border:1px solid #f1d9a8;background:#fdf6e6;border-radius:12px;">
+           <div style="font-weight:700;margin-bottom:4px;">Add the tender documents to build the plan</div>
+           <div style="color:#5b6785;margin-bottom:12px;">The portal notice for this tender is too short to plan from, and no documents could be fetched automatically. Upload the ITT or instructions (PDF, Word, Excel, TXT), or paste the text, then click Bid plan again.</div>
+           <button type="button" id="btnPlanAddDocs" class="btn btn--small" style="background:#c58a1b;color:#1b1303;border:0;font-weight:700;">Add tender documents</button>
+         </div>`
+      : `<div style="padding:16px;color:#991b1b;">${esc(e.message || "The plan could not be built.")} You can still generate the bid.</div>`;
+    $("btnPlanAddDocs")?.addEventListener("click", () => {
+      const card = $("bidStepCard4");
+      if (card) {
+        if (card.classList.contains("is-collapsed") && typeof window.toggleBidStep === "function") window.toggleBidStep(4);
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => $("bidTenderText")?.focus(), 350);
+      }
+    });
+    revealBidResults();
   } finally {
     _bidPlanBusy = false;
     if (btn) { btn.disabled = false; btn.textContent = label; }
@@ -13034,6 +13167,7 @@ async function _runBidAssistantInner(isRefresh = false) {
     user_document_ids.push(parseInt(cb.dataset.id, 10));
   });
   const winning_bid_ids = getSelectedWinningBidIds();
+  const past_bids_mode = ($("bidPastBidsMode")?.value) || (winning_bid_ids.length ? "library" : "auto");
 
   const taskId = "proposal-" + rowKey(_bidRow);
   if (state.tasks.find(t => t.id === taskId && t.status === "running")) {
@@ -13053,6 +13187,7 @@ async function _runBidAssistantInner(isRefresh = false) {
     company_files,
     user_document_ids,
     winning_bid_ids,
+    past_bids_mode,
     profile_id: selectedProfileId,
     fit_check: _bidFitDecision,
     refresh: isRefresh,
@@ -13129,7 +13264,7 @@ async function executeProposalTask(task) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal,
-      body: JSON.stringify({ tender: task.row, company: task.company, files: task.files, company_files: task.company_files, user_document_ids: task.user_document_ids, winning_bid_ids: task.winning_bid_ids || [], profile_id: task.profile_id, fit_check: task.fit_check || null, refresh: task.refresh || false }),
+      body: JSON.stringify({ tender: task.row, company: task.company, files: task.files, company_files: task.company_files, user_document_ids: task.user_document_ids, winning_bid_ids: task.winning_bid_ids || [], past_bids_mode: task.past_bids_mode || "", profile_id: task.profile_id, fit_check: task.fit_check || null, refresh: task.refresh || false }),
     });
 
     if (!res.ok) {
@@ -14301,6 +14436,7 @@ async function downloadSubmissionPack() {
     const res = await fetch("/api/download-submission-pack", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        ...brandExportFields(),
         title, authority: _lastProposal.buyer_name || _bidRow.contracting_authority || "",
         company_name: _lastProposal.bid_company || _lastProposal.company || _bidRow.company || "",
         price_schedules: _lastProposal.price_schedules || [],
@@ -15147,6 +15283,11 @@ async function downloadFullProposalDoc(btnElem = null, opts = null) {
           format_requirements: _lastProposal?.dissection?.format_requirements || null,
           writer_note: _lastProposal?.writer_note || "",
           final_export: finalExport,
+          profile_id: $("bidCompanyProfileSelect")?.value || "",
+          bid_key: _bidRow ? rowKey(_bidRow) : "",
+          dissection: _lastProposal?.dissection || null,
+          branding_enabled: $("bidBrandingOn") ? $("bidBrandingOn").checked : true,
+          anonymise_answers: Boolean($("bidAnonymiseAnswers")?.checked),
           dissection_rulings: {
             clarification_rulings: _lastProposal?.dissection?.clarification_rulings || [],
             published_clarifications: _lastProposal?.dissection?.published_clarifications || []
@@ -15157,6 +15298,13 @@ async function downloadFullProposalDoc(btnElem = null, opts = null) {
         const errJson = await res.json().catch(() => null);
         if (errJson && errJson.code === "FINAL_EXPORT_BLOCKED") {
           showFinalExportBanner(errJson);
+          return;
+        }
+        if (errJson && errJson.code === "SIGNOFF_REQUIRED") {
+          const card = $("bidReadinessCard");
+          if (card) { card.open = true; card.scrollIntoView({ behavior: "smooth", block: "center" }); }
+          loadReadiness(true);
+          await showAlert("Nothing is open in the draft. Tick the sign-off list in the readiness panel, then export again.");
           return;
         }
         throw new Error((errJson && errJson.error) || `Docx creation failed (HTTP ${res.status})`);
@@ -15235,6 +15383,7 @@ async function downloadFullProposalPdf() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        ...brandExportFields(),
         title,
         authority: _lastProposal.buyer_name || _bidRow.contracting_authority || "",
         company_name: _lastProposal.bid_company || _lastProposal.company || _bidRow.company || "",
@@ -15636,6 +15785,49 @@ $("bidTenderText")?.addEventListener("input", () => {
 });
 $("bidCompanyFiles")?.addEventListener("change", handleBidCompanyDocUpload);
 $("bidWinningBidFiles")?.addEventListener("change", handleBidWinningBidUpload);
+
+// Release 8 (F3): brand kit for the selected company profile. The kit is saved once; the switch on this screen is per bid.
+let _brandLogoB64 = null;   // null = keep the saved logo
+async function loadBrandKit() {
+  const pid = $("bidCompanyProfileSelect")?.value || "";
+  const sum = $("bidBrandSummary"), on = $("bidBrandingOn");
+  try {
+    const res = await fetch(`/api/brand-kit?profile_id=${encodeURIComponent(pid)}`);
+    const data = await res.json().catch(() => ({}));
+    const kit = data && data.exists ? data.kit : null;
+    if (kit) {
+      if ($("brandColor")) $("brandColor").value = "#" + kit.color;
+      if ($("brandFont")) $("brandFont").value = kit.font;
+      if ($("brandFooter")) $("brandFooter").value = kit.footer_text || "";
+    }
+    if (on) { on.disabled = !kit; on.checked = Boolean(kit); }
+    if (sum) sum.textContent = kit ? "brand kit set" : "no brand kit yet - set one below";
+  } catch (e) { if (sum) sum.textContent = ""; }
+}
+$("bidBrandCard")?.addEventListener("toggle", e => { if (e.target.open) loadBrandKit(); });
+$("bidCompanyProfileSelect")?.addEventListener("change", () => { if ($("bidBrandCard")?.open) loadBrandKit(); });
+$("brandLogo")?.addEventListener("change", e => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) { _brandLogoB64 = null; return; }
+  if (f.size > 400 * 1024) { $("brandKitStatus").textContent = "The logo is over 400 KB; use a smaller image."; e.target.value = ""; return; }
+  const fr = new FileReader();
+  fr.onload = () => { _brandLogoB64 = String(fr.result || ""); };
+  fr.readAsDataURL(f);
+});
+$("btnSaveBrandKit")?.addEventListener("click", async () => {
+  const st = $("brandKitStatus");
+  const body = { profile_id: $("bidCompanyProfileSelect")?.value || "", color: ($("brandColor")?.value || "").replace("#", ""),
+                 font: $("brandFont")?.value || "", footer_text: $("brandFooter")?.value || "" };
+  if (_brandLogoB64 !== null) body.logo_b64 = _brandLogoB64;
+  try {
+    const res = await fetch("/api/brand-kit", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Could not save the brand kit");
+    st.textContent = "Brand kit saved. It applies to the Word file when you download.";
+    _brandLogoB64 = null;
+    loadBrandKit();
+  } catch (err) { st.textContent = err.message; }
+});
 $("bidUserDocUploadInput")?.addEventListener("change", (e) => {
   if (e.target.files && e.target.files.length > 0) {
     uploadBidUserDoc(e.target.files[0]);
@@ -25407,6 +25599,7 @@ async function handleBidWinningBidUpload(e) {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("profile_id", profileId);
+      formData.append("outcome", $("bidPastBidOutcome")?.value || "unknown");
       try {
         const res = await fetch("/api/winning-bids", { method: "POST", body: formData });
         const data = await res.json().catch(() => ({}));
@@ -28562,4 +28755,114 @@ window.updateBidStepSummary = function(stepNumber, summaryEl) {
   } else {
     setup();
   }
+})();
+
+// ── Tender workspace: Summary, Clarifications, Bid response and Deep analysis open as full pages ──
+// The existing overlays keep their content and logic (see workspace.css); this adds one header with the tender and four tabs.
+(function () {
+  const VIEWS = [
+    ["summary", "Summary", "btnSummary"],
+    ["clarifications", "Clarifications", "btnAnalyse"],
+    ["bid", "Bid response", "btnReadyBid"],
+    ["analysis", "Deep analysis", "btnDeepAnalysis"],
+  ];
+  const OVERLAYS = ["analyseModal", "bidModal"];
+
+  function currentRow() {
+    if (!state.activeKey) return window._detailRow || null;
+    return window._detailRow || state.rows.find(r => rowKey(r) === state.activeKey) || (state.pipeline || {})[state.activeKey] || null;
+  }
+  function activeView(overlayId) {
+    if (overlayId === "bidModal") return "bid";
+    const t = ($("modalTitle")?.textContent || "").trim();
+    if (/^Tender Summary/i.test(t)) return "summary";
+    if (/^Deep analysis/i.test(t)) return "analysis";
+    return "clarifications";
+  }
+  function closeOverlay(overlayId) {
+    if (overlayId === "bidModal") closeBidModal(); else closeAnalyseModal();
+  }
+  function openView(view, fromOverlay) {
+    const btn = VIEWS.find(v => v[0] === view);
+    if (!btn) return;
+    closeOverlay(fromOverlay);
+    $(btn[2])?.click();
+  }
+  function buildBar(overlay) {
+    const modal = overlay.querySelector(":scope > .modal");
+    if (!modal) return;
+    let bar = modal.querySelector(":scope > .ws-bar");
+    const row = currentRow();
+    const view = activeView(overlay.id);
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.className = "ws-bar";
+      modal.insertBefore(bar, modal.firstChild);
+    }
+    const when = row && row.submission_deadline ? String(row.submission_deadline) : "";
+    bar.innerHTML = `
+      <div class="ws-bar__top">
+        <button type="button" class="ws-bar__back" data-ws-back>&larr; Back to results</button>
+        <span class="ws-bar__crumb">Tender search / ${esc(String((row && (row.reference || row.resource_id)) || ""))}</span>
+      </div>
+      <h1 class="ws-bar__title">${esc((row && row.title) || "Tender")}</h1>
+      <div class="ws-bar__chips">
+        ${row && row.contracting_authority ? `<span class="ws-chip">${esc(row.contracting_authority)}</span>` : ""}
+        ${row && row.source_label ? `<span class="ws-chip">${esc(row.source_label)}</span>` : (row && row.source ? `<span class="ws-chip">${esc(row.source)}</span>` : "")}
+        ${when ? `<span class="ws-chip ws-chip--when">Closes ${esc(when)}</span>` : ""}
+      </div>
+      <div class="ws-tabs" role="tablist" aria-label="Tender views">
+        ${VIEWS.map(v => `<button type="button" class="ws-tab" role="tab" data-ws-view="${v[0]}" aria-selected="${v[0] === view}">${v[1]}</button>`).join("")}
+      </div>`;
+    bar.querySelector("[data-ws-back]").addEventListener("click", () => closeOverlay(overlay.id));
+    bar.querySelectorAll("[data-ws-view]").forEach(b => b.addEventListener("click", () => {
+      if (b.dataset.wsView !== view) openView(b.dataset.wsView, overlay.id);
+    }));
+  }
+  // The page fills the area to the right of the left menu and below the top bar, so credits and the menu stay visible.
+  function placeBelowChrome() {
+    const head = document.querySelector(".tf-masthead");
+    const rail = document.querySelector(".tf-rail");
+    const top = head ? Math.max(0, Math.round(head.getBoundingClientRect().bottom)) : 0;
+    const left = rail && rail.offsetParent !== null ? Math.max(0, Math.round(rail.getBoundingClientRect().right)) : 0;
+    document.documentElement.style.setProperty("--ws-top", top + "px");
+    document.documentElement.style.setProperty("--ws-left", left + "px");
+  }
+  function sync() {
+    placeBelowChrome();
+    let any = false;
+    OVERLAYS.forEach(id => {
+      const o = $(id);
+      if (!o) return;
+      const open = !o.classList.contains("hidden");
+      if (o.classList.contains("ws-page") !== open) o.classList.toggle("ws-page", open);
+      if (open) { any = true; buildBar(o); }
+    });
+    if (document.body.classList.contains("ws-open") !== any) document.body.classList.toggle("ws-open", any);
+  }
+  function start() {
+    OVERLAYS.forEach(id => {
+      const o = $(id);
+      if (o) new MutationObserver(sync).observe(o, { attributes: true, attributeFilter: ["class"] });
+    });
+    const t = $("modalTitle");
+    if (t) new MutationObserver(sync).observe(t, { childList: true, characterData: true, subtree: true });
+    new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ["class"] });   // menu collapse
+    window.addEventListener("resize", placeBelowChrome);
+    // Going somewhere else (a left-menu page, a new custom tender, the browser's back button) leaves the tender page first,
+    // otherwise the new page opens hidden behind it.
+    function leaveTenderPage() {
+      OVERLAYS.forEach(id => {
+        const o = $(id);
+        if (o && !o.classList.contains("hidden")) closeOverlay(id);
+      });
+    }
+    document.addEventListener("click", e => {
+      const hit = e.target.closest && e.target.closest(".tf-rail .tf-nav, .tf-rail a, #btnUploadCustomTender");
+      if (hit && !hit.closest(".tf-rail__collapse-btn")) leaveTenderPage();
+    }, true);
+    window.addEventListener("popstate", leaveTenderPage);
+    sync();
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
 })();

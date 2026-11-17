@@ -1,0 +1,123 @@
+/* Tender workspace: Summary, Clarifications, Bid response and Deep analysis open as full pages, not pop-ups.
+   The existing overlays (#analyseModal, #bidModal) keep all their content and logic; this file lays them out as a page and the
+   small script at the end of app.js adds the shared header with the four tabs. */
+body.ws-open { overflow: hidden; }
+
+/* pages.css styles these two windows as small rounded cards with body.tf-shell and !important, so the page mode repeats that
+   prefix and !important to take precedence. */
+body.tf-shell #analyseModal.modal-overlay.ws-page,
+body.tf-shell #bidModal.modal-overlay.ws-page {
+  /* the page sits inside the app: the top bar (credits, language) and the left menu stay visible around it */
+  top: var(--ws-top, 0px) !important;
+  left: var(--ws-left, 0px) !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  inset: var(--ws-top, 0px) 0 0 var(--ws-left, 0px) !important;
+  padding: 0 !important;
+  background: var(--bg, #f5f6fa) !important;
+  backdrop-filter: none !important;
+  align-items: stretch;
+  justify-content: stretch;
+  overflow: hidden;
+}
+body.tf-shell #analyseModal.ws-page > .modal,
+body.tf-shell #bidModal.ws-page > .modal {
+  max-width: none !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: none !important;
+  border-radius: 0 !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  overflow-y: auto !important;
+  background: var(--bg, #f5f6fa) !important;
+  display: flex;
+  flex-direction: column;
+}
+/* the old pop-up headers: the page header replaces them */
+body.tf-shell #analyseModal.ws-page .modal__header,
+body.tf-shell #bidModal.ws-page .bid-modal-header { display: none !important; }
+
+/* content sits in a readable column under the header; the bid screen gets a wider one */
+body.tf-shell #analyseModal.ws-page > .modal > :not(.ws-bar) {
+  width: min(100%, 1080px);
+  align-self: center;
+  box-sizing: border-box;
+}
+body.tf-shell #bidModal.ws-page > .modal > :not(.ws-bar) {
+  width: min(100%, 1240px);
+  align-self: center;
+  box-sizing: border-box;
+}
+/* the page scrolls as a whole, not each block inside it */
+body.tf-shell #analyseModal.ws-page .modal__body { overflow: visible !important; max-height: none !important; flex: none !important; }
+body.tf-shell #bidModal.ws-page #bidModalBody { overflow: visible !important; max-height: none !important; flex: none !important; }
+body.tf-shell #bidModal.ws-page .bid-modal-content { max-height: none !important; overflow: visible !important; }
+
+.ws-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  width: 100% !important;
+  max-width: none !important;
+  background: var(--surface, #fff);
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  padding: 12px clamp(16px, 3vw, 40px) 0;
+  box-sizing: border-box;
+  margin-bottom: 16px;
+}
+.ws-bar__top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ws-bar__back {
+  border: 1px solid var(--border, #e2e8f0);
+  background: var(--surface, #fff);
+  color: inherit;
+  border-radius: 8px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ws-bar__back:hover { border-color: var(--gold, #c58a1b); }
+.ws-bar__crumb { font-size: 12.5px; color: var(--muted, #64748b); }
+.ws-bar__title { margin: 8px 0 2px; font-size: 20px; line-height: 1.25; font-weight: 700; text-wrap: balance; }
+.ws-bar__chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
+.ws-chip { font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--surface-2, #eef1f8); }
+.ws-chip--when { background: #fbf1dc; color: #8a5a06; font-weight: 600; }
+.ws-tabs { display: flex; gap: 2px; overflow-x: auto; }
+.ws-tab {
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--muted, #64748b);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ws-tab:hover { color: inherit; }
+.ws-tab[aria-selected="true"] { color: inherit; border-bottom-color: var(--gold, #c58a1b); }
+.ws-tab:focus-visible, .ws-bar__back:focus-visible { outline: 2px solid var(--gold, #c58a1b); outline-offset: 2px; }
+
+:root[data-theme="dark"] .ws-chip--when { background: #3a2f16; color: #f0b45a; }
+@media (max-width: 700px) {
+  .ws-bar__title { font-size: 17px; }
+  #analyseModal.ws-page > .modal > :not(.ws-bar), #bidModal.ws-page > .modal > :not(.ws-bar) { padding-left: 12px; padding-right: 12px; }
+}
+
+/* Bid response: the action bar (Bid plan, Pause, Stop, Generate) stays pinned to the bottom of the page, so nobody has to scroll
+   past the steps to find it. order puts it last in the column, so it also stays in view after a draft is shown above it. */
+body.tf-shell #bidModal.ws-page > .modal > .bid-modal-footer {
+  order: 99;
+  position: sticky;
+  bottom: 0;
+  z-index: 15;
+  background: var(--surface, #fff) !important;
+  border-top: 1px solid var(--border, #e2e8f0) !important;
+  box-shadow: 0 -8px 18px rgba(15, 23, 42, .08);
+  border-radius: 12px 12px 0 0;
+  margin-top: 12px !important;
+}
+body.tf-shell #bidModal.ws-page .bid-modal-footer__left { flex: 1 1 auto; min-width: 0; }
+body.tf-shell #bidModal.ws-page .bid-modal-footer .bid-btn-generate { padding: 11px 22px !important; font-size: 14px !important; }

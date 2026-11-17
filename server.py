@@ -468,6 +468,28 @@ def init_db():
             );
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_winning_bids_user_profile ON winning_bids (username, profile_id);")
+        cursor.execute("ALTER TABLE winning_bids ADD COLUMN IF NOT EXISTS outcome VARCHAR(12) DEFAULT 'unknown';")
+        # Release 8 (F1): the sign-off list the user ticks before a final export: who ticked it and when.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS bid_signoffs (
+                username VARCHAR(100) NOT NULL,
+                bid_key VARCHAR(300) NOT NULL,
+                item_key VARCHAR(80) NOT NULL,
+                ticked_by VARCHAR(150) NOT NULL,
+                ticked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (username, bid_key, item_key)
+            );
+        """)
+        # Release 8 (F3): one brand kit per company profile (profile_id 0 = the account-wide kit).
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS brand_kits (
+                username VARCHAR(100) NOT NULL,
+                profile_id INTEGER NOT NULL DEFAULT 0,
+                kit_json TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (username, profile_id)
+            );
+        """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS translation_cache (
@@ -7426,6 +7448,121 @@ Return ONLY this JSON structure:
 
     _BID_PLAN_CACHE: dict = {}
 
+    def _brand_for(body):
+        """(brand kit or None, anonymise) for an export. The kit is read from the saved profile, never from the request;
+        branding_enabled=false switches it off for this bid. A failure leaves the file unbranded rather than failing it."""
+        if body.get("branding_enabled") is False:
+            return None, bool(body.get("anonymise_answers"))
+        try:
+            from tender_app.brand_kit import load_kit, kit_exists
+            conn = get_db_connection()
+            try:
+                pid = int(body["profile_id"]) if str(body.get("profile_id") or "").isdigit() else 0
+                kit = load_kit(conn, session.get("username", ""), pid)
+            finally:
+                conn.close()
+            return (kit if kit_exists(kit) else None), bool(body.get("anonymise_answers"))
+        except Exception as ex:  # noqa: BLE001
+            print("[brand kit] not applied:", ex)
+            return None, bool(body.get("anonymise_answers"))
+
+    def _load_signoffs(username, bid_key):
+        """{item_key: {by, at}} for one bid. A database problem means nothing is ticked, never a wrong tick."""
+        if not username or not bid_key:
+            return {}
+        try:
+            conn = get_db_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT item_key, ticked_by, ticked_at FROM bid_signoffs WHERE username = %s AND bid_key = %s",
+                            (username, bid_key[:300]))
+                rows = cur.fetchall()
+                cur.close()
+            finally:
+                conn.close()
+            return {r[0]: {"by": r[1], "at": str(r[2])[:16]} for r in rows}
+        except Exception as e:  # noqa: BLE001
+            print("[readiness] sign-offs not loaded:", e)
+            return {}
+
+    @app.post("/api/bid-readiness")
+    @rate_limit(120, 3600)
+    def api_bid_readiness():
+        """Release 8 (F1): the readiness score and to-do list for a draft. Free; no model call."""
+        from tender_app.bid_writer import qa_gate
+        from tender_app.bid_release4 import rulings_list
+        from tender_app.readiness import readiness
+        body = request.get_json(silent=True) or {}
+        bid = body.get("bid_response") if isinstance(body.get("bid_response"), dict) else {}
+        s1 = body.get("dissection") if isinstance(body.get("dissection"), dict) else {}
+        qa = qa_gate(bid, closed=bool(body.get("tender_closed")), rulings=rulings_list(s1))
+        out = readiness(bid, s1, qa, closed=bool(body.get("tender_closed")), gate=bool(body.get("gate")),
+                        signoffs=_load_signoffs(session.get("username") or "", str(body.get("bid_key") or "")))
+        return jsonify({"ok": True, "readiness": out})
+
+    @app.post("/api/bid-signoff")
+    @rate_limit(300, 3600)
+    def api_bid_signoff():
+        username = session.get("username") or ""
+        body = request.get_json(silent=True) or {}
+        bid_key, item_key = str(body.get("bid_key") or "")[:300], str(body.get("item_key") or "")[:80]
+        if not username or not bid_key or not item_key:
+            return jsonify({"error": "A bid and an item are required."}), 400
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
+            if body.get("ticked"):
+                cur.execute("INSERT INTO bid_signoffs (username, bid_key, item_key, ticked_by) VALUES (%s,%s,%s,%s) "
+                            "ON CONFLICT (username, bid_key, item_key) DO UPDATE SET ticked_by = EXCLUDED.ticked_by, "
+                            "ticked_at = CURRENT_TIMESTAMP", (username, bid_key, item_key, username))
+            else:
+                cur.execute("DELETE FROM bid_signoffs WHERE username = %s AND bid_key = %s AND item_key = %s",
+                            (username, bid_key, item_key))
+            conn.commit()
+            cur.close()
+        finally:
+            conn.close()
+        return jsonify({"ok": True})
+
+    @app.post("/api/bid-style-preview")
+    @rate_limit(60, 3600)
+    def api_bid_style_preview():
+        """Release 8 (F2): what TenderFlow learns from the past bids chosen for this bid, and the answer plan.
+        Free: reads the user's own library, no model call, no credits."""
+        from tender_app.bid_style import choose_past_bids
+        from tender_app.bid_style_learn import learn_style, style_brief, answer_plan
+        from tender_app.bid_writer import extract_questions
+        username = session.get("username") or ""
+        body = request.get_json(silent=True) or {}
+        t = body.get("tender") if isinstance(body.get("tender"), dict) else {}
+        pid = str(body.get("profile_id") or "")
+        mode = str(body.get("past_bids_mode") or "").strip().lower()
+        ids = [int(i) for i in (body.get("winning_bid_ids") or [])[:5] if str(i).isdigit()]
+        if mode not in ("auto", "library", "off"):
+            mode = "library" if ids else "auto"
+        library: list[dict] = []
+        if mode != "off":
+            conn = get_db_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT id, title, buyer, contract_year, extracted_text, outcome FROM winning_bids "
+                            "WHERE username = %s AND (profile_id IS NULL OR profile_id = %s) ORDER BY id DESC LIMIT 60",
+                            (username, int(pid) if pid.isdigit() else -1))
+                library = [{"id": r[0], "title": r[1], "buyer": r[2] or "", "year": r[3] or "", "text": r[4] or "",
+                            "outcome": r[5] or "unknown"} for r in cur.fetchall()]
+                cur.close()
+            finally:
+                conn.close()
+        bids = choose_past_bids(mode, library, ids, str(t.get("title") or ""), "")
+        profile = learn_style(bids)
+        questions = extract_questions({"itt_questions": [q for q in (body.get("questions") or []) if isinstance(q, dict)][:60]})
+        return jsonify({
+            "ok": True, "mode": mode,
+            "bids": [{"title": b["title"], "buyer": b["buyer"], "year": b["year"], "outcome": b["outcome"]} for b in bids],
+            "profile": profile, "style_brief": style_brief(profile),
+            "plan": answer_plan(questions, profile, bids, ""),
+        })
+
     @app.post("/api/bid-plan")
     @rate_limit(15, 3600)
     def api_bid_plan():
@@ -7618,46 +7755,43 @@ Return ONLY this JSON structure:
                 wb_ids.append(int(_wid))
             except (TypeError, ValueError):
                 pass
-        if wb_ids:
+        # Release 8: the bid's own past-bid choice. "auto" picks the closest bids (won count most); "library" keeps the
+        # ticked ones (the old behaviour, and the default when ids are sent); "off" uses none.
+        from tender_app.bid_style import choose_past_bids, normalise_mode
+        _pb_mode = str(body.get("past_bids_mode") or "").strip().lower()
+        if _pb_mode not in ("auto", "library", "off"):
+            _pb_mode = "library" if wb_ids else "off"
+        if wb_ids or _pb_mode == "auto":
             try:
                 conn = get_db_connection()
                 cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT id, title, buyer, contract_year, extracted_text FROM winning_bids "
-                    "WHERE id = ANY(%s) AND username = %s ORDER BY id",
-                    (wb_ids, username)
-                )
-                for r in cursor.fetchall():
-                    winning_bids.append({
-                        "id": r[0], "title": r[1], "buyer": r[2] or "",
-                        "year": r[3] or "", "text": r[4] or "",
-                    })
+                if _pb_mode == "auto":
+                    cursor.execute(
+                        "SELECT id, title, buyer, contract_year, extracted_text, outcome FROM winning_bids "
+                        "WHERE username = %s AND (profile_id IS NULL OR profile_id = %s) ORDER BY id DESC LIMIT 60",
+                        (username, int(profile_id) if str(profile_id or "").isdigit() else -1)
+                    )
+                else:
+                    cursor.execute(
+                        "SELECT id, title, buyer, contract_year, extracted_text, outcome FROM winning_bids "
+                        "WHERE id = ANY(%s) AND username = %s ORDER BY id",
+                        (wb_ids, username)
+                    )
+                _lib = [{"id": r[0], "title": r[1], "buyer": r[2] or "", "year": r[3] or "",
+                         "text": r[4] or "", "outcome": r[5] or "unknown"} for r in cursor.fetchall()]
                 cursor.close()
                 conn.close()
+                winning_bids = choose_past_bids(_pb_mode, _lib, wb_ids, str((body.get("tender") or {}).get("title") or body.get("title") or ""), "")
             except Exception as e:
                 print("Failed to load winning bids for proposal:", e)
 
         def winning_bids_block(max_chars: int) -> str:
             """Reference block for a writer prompt; empty string when no bids were selected."""
-            if not winning_bids:
-                return ""
-            per_bid = max(1500, max_chars // len(winning_bids))
-            parts = []
-            for i, wb in enumerate(winning_bids, 1):
-                meta = " | ".join(x for x in (wb["buyer"], wb["year"]) if x)
-                header = f"[Winning Bid {i}: {wb['title']}{' (' + meta + ')' if meta else ''}]"
-                text = wb["text"]
-                if len(text) > per_bid:
-                    text = text[:per_bid] + "\n[...truncated]"
-                parts.append(f"{header}\n{text}")
-            return (
-                "\n\nPAST WINNING BIDS (reference for structure, tone, depth and win themes ONLY):\n"
-                + "\n\n".join(parts)
-                + "\nWINNING BID RULE: Use the PAST WINNING BIDS only to learn how successful responses are structured, "
-                "how evidence and win themes are presented, and the level of detail expected. Do NOT copy passages "
-                "verbatim, and do NOT reuse client names, figures, prices, dates or claims from them unless the same fact "
-                "also appears in DATA / ANSWER BANK / CHECKLIST."
-            )
+            from tender_app.bid_style import past_bids_block
+            from tender_app.bid_style_learn import learn_style, style_brief
+            _blk = past_bids_block(winning_bids, max_chars)
+            _brief = style_brief(learn_style(winning_bids)) if _blk else ""
+            return _blk + ("\nSTYLE BRIEF (learned from the past bids): " + _brief if _brief else "")
 
         lang = (body.get("lang") or request.args.get("lang", "en")).strip().lower()
         prop_type = f"proposal_{lang}" if lang != "en" else "proposal"
@@ -8490,6 +8624,12 @@ Return ONLY valid JSON with no markdown fences:
                 _flag_claims(stage3_result, bid_decision)
                 from tender_app.bid_release7 import confirm_certifications_in_bid as _confirm_certs
                 _confirm_certs(stage3_result, ground_truth_combined)
+                if winning_bids:
+                    from tender_app.bid_style import mark_reused_facts as _mark_reused
+                    _past_all = " ".join(w["text"] for w in winning_bids if w.get("outcome") != "lost")
+                    _buyers = tuple(w["buyer"] for w in winning_bids if w.get("buyer"))
+                    for _lbl, _obj, _k in _r5_texts(stage3_result):
+                        _obj[_k], _ = _mark_reused(_obj[_k], _past_all, ground_truth_combined, _buyers)
                 from tender_app.bid_release5 import drop_near_duplicates as _drop_dups
                 _drop_dups(stage3_result)
                 consistency_issues = _flag_contradictions(stage3_result)
@@ -8577,6 +8717,9 @@ Return ONLY valid JSON with no markdown fences:
                     "qa_report": qa_report,
                     "questionnaire_mode": q_mode,
                     "tender_closed": tender_closed,
+                    "branding_rules": __import__("tender_app.bid_style", fromlist=["branding_rules"]).branding_rules(
+                        (stage1_result or {}).get("format_requirements") if isinstance(stage1_result, dict) else {},
+                        combined_tender_text[:200000]),
                     "bid_decision": bid_decision,
                     "stage_warnings": passed_stages,
                     "effective_deadline": effective_deadline.strftime("%d/%m/%Y") if effective_deadline else "",
@@ -9020,7 +9163,8 @@ Return ONLY valid JSON with no markdown fences:
             if isinstance(obj, dict) and str(obj.get("content") or "").strip():
                 sections.append({"label": label, "html": f"<h2>{e(label)}</h2>" + text_to_html(obj["content"])})
         try:
-            data, counts = build_pdf(title, sections, front)
+            _pb, _pa = _brand_for(body)
+            data, counts = build_pdf(title, sections, front, brand=_pb, anonymise=_pa)
         except Exception as ex:  # noqa: BLE001
             print("[pdf export] failed:", ex)
             return jsonify({"error": "Could not build the PDF. Download the .docx instead."}), 500
@@ -9095,7 +9239,8 @@ Return ONLY valid JSON with no markdown fences:
                 vat_note = "VAT: " + r["ruling"][:240]
                 break
         try:
-            tech = build_technical_docx(title, company, authority, sections)
+            _tb, _ta = _brand_for(body)
+            tech = build_technical_docx(title, company, authority, sections, brand=_tb, anonymise=_ta)
             comm = build_commercial_xlsx(title, company, body.get("price_schedules") or [], vat_note, body.get("terms") or {})
         except Exception as ex:  # noqa: BLE001
             print("[submission pack] failed:", ex)
@@ -9161,6 +9306,14 @@ Return ONLY valid JSON with no markdown fences:
             if _blockers:
                 from tender_app.bid_release5 import export_block_payload as _ebp
                 return jsonify(_ebp(bid_response, _blockers)), 409
+            # Release 8 (F1): once nothing is open, the user signs off what only they can check, once per bid.
+            if body.get("bid_key") and isinstance(body.get("dissection"), dict):
+                from tender_app.readiness import readiness as _readiness
+                _rd = _readiness(bid_response, body["dissection"], export_qa, closed=bool(body.get("tender_closed")), gate=True,
+                                 signoffs=_load_signoffs(session.get("username") or "", str(body.get("bid_key"))))
+                if not _rd["limited"] and _rd["signoff_open"]:
+                    return jsonify({"error": "Tick the sign-off list before the final export.", "code": "SIGNOFF_REQUIRED",
+                                    "signoff": [x for x in _rd["signoff"] if not x["ticked"]]}), 409
             # Text written before this release may still carry a production marker; the buyer must never see one.
             for _lbl, _obj, _k in _r5_each_text(bid_response):
                 _obj[_k] = _scrub_internal(_obj[_k])
@@ -10243,6 +10396,29 @@ Return ONLY valid JSON with no markdown fences:
         xml_content.append('</w:document>')
 
         doc_xml = "\n".join(xml_content)
+        # Release 8 (F3): the company's brand kit, when this bid has branding on. Loaded here from the saved kit, never
+        # from the request, and applied at export time so switching it needs no regeneration.
+        _brand = None
+        if body.get("branding_enabled") is not False:
+            try:
+                from tender_app.brand_kit import load_kit as _load_kit, kit_exists as _kit_exists
+                _bconn = get_db_connection()
+                try:
+                    _brand = _load_kit(_bconn, session.get("username", ""),
+                                       int(body["profile_id"]) if str(body.get("profile_id") or "").isdigit() else 0)
+                finally:
+                    _bconn.close()
+                if not _kit_exists(_brand):
+                    _brand = None
+            except Exception as _be:  # noqa: BLE001 - an unbranded file beats a failed download
+                print("[brand kit] not applied:", _be)
+                _brand = None
+        _anon = bool(body.get("anonymise_answers"))
+        if _brand:
+            from tender_app.brand_kit import brand_document_xml as _brand_doc, cover_logo_paragraph as _cover_logo
+            doc_xml = _brand_doc(doc_xml, _brand)
+            if _brand.get("logo_b64") and _anon:
+                doc_xml = doc_xml.replace("<w:body>", "<w:body>" + _cover_logo(_brand), 1) if "<w:body>" in doc_xml else doc_xml
         _hf_ns = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
                   'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"')
         _hf_run = '<w:rPr><w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI"/><w:sz w:val="16"/><w:color w:val="64748B"/></w:rPr>'
@@ -10269,12 +10445,25 @@ Return ONLY valid JSON with no markdown fences:
                 '  <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>',
                 '  <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>',
             ]
-            z.writestr("word/header1.xml", header_xml)
-            z.writestr("word/footer1.xml", footer_xml)
             doc_rels_entries = [
                 '  <Relationship Id="rIdHdr1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>',
                 '  <Relationship Id="rIdFtr1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>',
             ]
+            if _brand:
+                from tender_app.brand_kit import brand_header_footer as _brand_hf, header_rels as _brand_hrels
+                header_xml, footer_xml, _hdr_logo = _brand_hf(header_xml, footer_xml, _brand, anonymise=_anon)
+                if _brand.get("logo_b64"):
+                    import base64 as _b64l
+                    _logo_bytes = _b64l.b64decode(_brand["logo_b64"])
+                    _lext = _brand["logo_ext"]
+                    z.writestr("word/media/brand_logo." + _lext, _logo_bytes)
+                    content_types_entries.append('  <Default Extension="%s" ContentType="image/%s"/>' % (_lext, _lext))
+                    if _hdr_logo:
+                        z.writestr("word/_rels/header1.xml.rels", _brand_hrels(_lext))
+                    if _anon:
+                        doc_rels_entries.append('  <Relationship Id="rIdBrandLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/brand_logo.%s"/>' % _lext)
+            z.writestr("word/header1.xml", header_xml)
+            z.writestr("word/footer1.xml", footer_xml)
 
             if methodology_image_b64:
                 try:
@@ -10303,7 +10492,7 @@ Return ONLY valid JSON with no markdown fences:
                 "[Content_Types].xml",
                 '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
                 '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n'
-                + "\n".join(content_types_entries) +
+                + "\n".join(dict.fromkeys(content_types_entries)) +      # a repeated Default breaks the package in Word
                 '\n</Types>',
             )
             z.writestr(

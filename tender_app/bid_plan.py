@@ -235,6 +235,8 @@ def build_bid_plan(stage1: dict, today: date | None = None) -> dict:
         "files": files,
         "dates": dates,
         "requirements": build_requirements(s),
+        "questions": [{"number": _s(q.get("number") or q.get("question_number")), "question_text": _s(q.get("question_text") or q.get("question")),
+                       "weighting": q.get("weighting"), "word_limit": q.get("word_limit")} for q in _dicts(s.get("itt_questions"))[:60]],
         "warnings": warnings,
         "empty": not files and not dates,
     }

@@ -134,13 +134,34 @@ def strip_prices(text: str) -> str:
     return _PRICE.sub("[see commercial offer]", text or "")
 
 
-def build_technical_docx(title: str, company: str, authority: str, sections: list) -> bytes:
-    """sections: [(heading, text)]. Written with python-docx; every currency amount is removed."""
+def build_technical_docx(title: str, company: str, authority: str, sections: list, brand=None, anonymise: bool = False) -> bytes:
+    """sections: [(heading, text)]. Written with python-docx; every currency amount is removed.
+    `brand` (release 8): a sanitised brand kit; anonymised puts the logo on the first page only and adds no company footer."""
     from docx import Document
-    from docx.shared import Pt
+    from docx.shared import Pt, RGBColor, Emu
     d = Document()
-    d.styles["Normal"].font.name = "Calibri"
+    d.styles["Normal"].font.name = (brand or {}).get("font") or "Calibri"
     d.styles["Normal"].font.size = Pt(11)
+    if brand:
+        rgb = RGBColor.from_string(brand["color"])
+        for sname in ("Title", "Heading 1", "Heading 2", "Heading 3"):
+            try:
+                d.styles[sname].font.color.rgb = rgb
+                d.styles[sname].font.name = brand["font"]
+            except KeyError:
+                pass
+        if brand.get("logo_b64"):
+            import base64
+            from tender_app.brand_kit import _logo_extent
+            lcx, lcy = _logo_extent(brand, 2.0 if anonymise else 1.2)
+            logo_stream = io.BytesIO(base64.b64decode(brand["logo_b64"]))
+            if anonymise:                                   # cover page only
+                d.add_paragraph().add_run().add_picture(logo_stream, width=Emu(lcx), height=Emu(lcy))
+            else:
+                hp = d.sections[0].header.paragraphs[0]
+                hp.add_run().add_picture(logo_stream, width=Emu(lcx), height=Emu(lcy))
+        if brand.get("footer_text") and not anonymise:
+            d.sections[0].footer.paragraphs[0].text = brand["footer_text"]
     d.add_heading(f"Technical offer - {title}", level=0)
     d.add_paragraph(f"Prepared for: {authority}")
     d.add_paragraph(f"Prepared by: {company}")
