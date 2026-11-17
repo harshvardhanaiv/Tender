@@ -676,6 +676,42 @@ def bid_texts(bid_response: dict) -> list[tuple[str, str]]:
     return out
 
 
+FAILED_SECTION_MARKERS = ("could not be generated", "this answer was cut off")
+
+
+def failed_sections(bid_response: dict) -> list[str]:
+    """Labels of the parts of a bid the writer failed to produce or that were cut off. A failed part counts as a
+    blocking item (release 7): the bidder regenerates it, and no download credits are taken while one remains."""
+    out = []
+    for label, text in bid_texts(bid_response or {}):
+        low = (text or "").lower()
+        if any(m in low for m in FAILED_SECTION_MARKERS):
+            out.append(label)
+    return out
+
+
+def placeholder_counts(bid_response: dict) -> dict:
+    """One count, worked out one way, for the download warning, the export refusal and the readiness score:
+    {"input": [NEEDS INPUT] tags, "confirm": [CONFIRM] tags, "other": other bracketed gaps, "failed": failed parts,
+    "total": input + confirm + other + failed}."""
+    c = {"input": 0, "confirm": 0, "other": 0}
+    failed = set(failed_sections(bid_response))
+    for label, text in bid_texts(bid_response or {}):
+        for m in PLACEHOLDER_RE.finditer(text or ""):
+            tag = m.group(0).upper()
+            if label in failed and ("COULD NOT BE GENERATED" in tag or "CUT OFF" in tag):
+                continue  # counted once, as a failed part
+            if tag.startswith("[NEEDS INPUT"):
+                c["input"] += 1
+            elif tag.startswith("[CONFIRM"):
+                c["confirm"] += 1
+            else:
+                c["other"] += 1
+    c["failed"] = len(failed)
+    c["total"] = c["input"] + c["confirm"] + c["other"] + c["failed"]
+    return c
+
+
 def find_placeholders(bid_response: dict) -> list[dict]:
     return [{"section": label, "tag": m.group(0)}
             for label, text in bid_texts(bid_response) for m in PLACEHOLDER_RE.finditer(text)]
@@ -733,6 +769,9 @@ def qa_gate(bid_response: dict, closed: bool = False, rulings: list | None = Non
             add("word_budget", "P2", sec, f"{words} words against a budget of {budget} from its weighting; "
                                           f"trim it so the higher-weighted answers get the space.")
 
+    for label in failed_sections(r):
+        if not label.startswith("Question "):
+            add("coverage", "P0", label, "This section could not be generated. Regenerate it.")
     for label, text in bid_texts(r):
         if label.startswith("Question "):
             continue
@@ -774,11 +813,12 @@ def qa_gate(bid_response: dict, closed: bool = False, rulings: list | None = Non
     if closed:
         add("status", "P1", "Whole bid", "The tender's stored deadline has passed.")
 
-    phs = find_placeholders(r)
-    if phs:
-        add("placeholders", "P2", "Whole bid", f"{len(phs)} item(s) still need your input ([NEEDS INPUT], [CONFIRM] and similar).")
+    counts = placeholder_counts(r)
+    if counts["total"]:
+        add("placeholders", "P2", "Whole bid", f"{counts['total']} item(s) still open: {counts['input']} need input, "
+            f"{counts['confirm']} need confirming" + (f", {counts['failed']} failed section(s)" if counts["failed"] else "") + ".")
     p0 = sum(1 for x in issues if x["severity"] == "P0")
-    return {"issues": issues, "p0": p0, "placeholders": len(phs), "passed": p0 == 0}
+    return {"issues": issues, "p0": p0, "placeholders": counts["total"], "counts": counts, "passed": p0 == 0}
 
 
 # ---------------------------------------------------------------------------

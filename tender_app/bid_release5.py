@@ -153,8 +153,19 @@ def flag_passed_dates_in_checklist(items: Any, today: _dt.date | None = None) ->
 
 # ---- Pilot: experience longer than the company has existed -----------------------------------------------------------
 
-_YEARS = re.compile(r"((?:over|more than|nearly|almost|around|some)\s+)?(\d{1,2})\+?\s+years(?:['’])?\s+(?:of\s+)?"
-                    r"(?:combined\s+|trading\s+|industry\s+)?experience", re.I)
+_NUM_WORDS = {"five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+              "fifteen": 15, "twenty": 20, "twenty-five": 25, "thirty": 30}
+_YEARS = re.compile(r"((?:over|more than|nearly|almost|around|some)\s+)?(\d{1,2}|" + "|".join(_NUM_WORDS) + r")\+?\s+years(?:['’])?\s+"
+                    r"(?:of\s+)?(?:combined\s+|trading\s+|industry\s+|relevant\s+|hands-on\s+)?"
+                    r"(?:experience|(?:in|within)\s+(?:the\s+)?(?:trade|industry|sector|business|field|plumbing|drainage|construction)|"
+                    r"(?:of\s+)?(?:service|trading))", re.I)
+
+
+def _years_value(raw: str) -> int:
+    raw = raw.lower()
+    return _NUM_WORDS[raw] if raw in _NUM_WORDS else int(raw)
+
+
 _INC = re.compile(r"(?:incorporat\w*|date_of_creation|date of creation|registered on|established on)\D{0,30}"
                   r"(\d{4}-\d{2}-\d{2}|\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{1,2}\s+" + _MONTH_WORD + r"\s+\d{4})", re.I)
 
@@ -193,7 +204,7 @@ def reconcile_experience(text: str, incorporated: _dt.date | None, today: _dt.da
 
     def fix(m: re.Match) -> str:
         nonlocal flagged
-        years = int(m.group(2))
+        years = _years_value(m.group(2))
         if years <= age:
             return m.group(0)
         before = text[max(0, m.start() - 40):m.start()]
@@ -456,13 +467,22 @@ def scrub_internal(text: str) -> str:
 def final_export_blockers(bid_response: dict, qa: dict | None = None) -> list:
     """Why a final (submission-ready) export is refused: open [NEEDS INPUT] / [CONFIRM] items and failed P0 checks."""
     out = []
-    open_items = [m.group(0) for _, t in bid_texts(bid_response or {}) for m in PLACEHOLDER_RE.finditer(t)]
-    if open_items:
+    from tender_app.bid_writer import placeholder_counts, failed_sections
+    open_items = [m.group(0) for _, t in bid_texts(bid_response or {}) for m in PLACEHOLDER_RE.finditer(t)
+                  if not any(k in m.group(0).lower() for k in ("could not be generated", "cut off"))]
+    counts = placeholder_counts(bid_response or {})
+    if counts["total"]:
         distinct = []
         for t in open_items:
             if t not in distinct:
                 distinct.append(t)
-        out.append(f"{len(open_items)} item(s) still need your input, for example: " + "; ".join(x[:90] for x in distinct[:3]))
+        parts = [f"{counts['input']} need input", f"{counts['confirm']} need confirming"]
+        if counts["other"]:
+            parts.append(f"{counts['other']} other gaps")
+        if counts["failed"]:
+            parts.append(f"{counts['failed']} failed section(s) to regenerate: " + ", ".join(failed_sections(bid_response)[:4]))
+        out.append(f"{counts['total']} item(s) still need your input ({'; '.join(parts)})"
+                   + (", for example: " + "; ".join(x[:90] for x in distinct[:3]) if distinct else ""))
     for i in (qa or {}).get("issues") or []:
         if i.get("severity") == "P0":
             out.append(f"{i.get('section')}: {i.get('detail')}")
@@ -620,33 +640,65 @@ _DIGITAL_RE = re.compile(r"\b(platform|software|digital|saas|app(?:lication)?|po
 _WELSH_RE = re.compile(r"\b(wales|welsh|cymru|nwssp|sell2wales)\b", re.I)
 
 
+_CONSULT_RE = re.compile(r"\b(evaluat\w*|consultan\w*|research|review|study|strategy|advisory|appraisal|assessment|"
+                         r"audit|analysis|feasibility|engagement|facilitat\w*|interpretation plan|training)\b", re.I)
+_PPM_RE = re.compile(r"\b(ppm|planned (?:preventive )?maintenance|servicing|inspection)\b", re.I)
+_DRAIN_RE = re.compile(r"\b(drain\w*|sewer\w*|cctv|jetting|tanker|gully|gullies)\b", re.I)
+_WATER_RE = re.compile(r"\b(plumb\w*|water|wc\b|toilet\w*|sanitary|legionella|boiler|heating|tmv|washroom)\b", re.I)
+
+
 def contract_type_note(title: str, description: str = "", tender_text: str = "") -> tuple:
-    """(kind, note): the sections a contract of this kind normally asks for. Used only when the buyer's ITT was not
-    uploaded, so the draft does not fall back to the same ten house sections for every tender (release 5)."""
+    """(kind, note): the sections a contract of this kind normally asks for. Used only when the buyer's questions were
+    not found, so the draft does not fall back to the same ten house sections for every tender (release 5). Release 7
+    adds consultancy / evaluation, a PPM, drainage and water-safety section where the scope has them, and a share of
+    the words for each section."""
     head = f"{title or ''} {description or ''}"
     blob = head + " " + str(tender_text or "")[:6000]
     digital = len(_DIGITAL_RE.findall(head)) >= 1
     works = len(_WORKS_RE.findall(head)) >= 1
+    consult = len(_CONSULT_RE.findall(head)) >= 1
     if digital and not works:
-        sections = ["Proposed solution and how it meets the requirement", "Implementation, onboarding and migration plan",
-                    "Data protection and information security (UK GDPR; only the certifications evidenced)",
-                    "Accessibility (WCAG 2.2 AA) and usability", "Support, service levels and account management",
-                    "Pricing and licensing model"]
+        sections = [("Proposed solution and how it meets the requirement", 25),
+                    ("Implementation, onboarding and migration plan", 20),
+                    ("Data protection and information security (UK GDPR; only the certifications evidenced, each [CONFIRM])", 15),
+                    ("Accessibility (WCAG 2.2 AA) and usability", 10),
+                    ("Support, service levels and account management", 15),
+                    ("Pricing and licensing model", 15)]
         if _WELSH_RE.search(blob):
-            sections.insert(3, "Welsh language provision (the Welsh Language Standards apply to Welsh public bodies)")
+            sections.insert(3, ("Welsh language provision (the Welsh Language Standards apply to Welsh public bodies)", 8))
         kind = "digital"
     elif works:
-        sections = ["Method of working and programme", "Reactive and emergency response (response and fix times, out-of-hours cover)",
-                    "Health and safety (risk assessments, method statements, CDM, RIDDOR)",
-                    "Staff, supervision, vetting and DBS/site access", "Quality control, compliance and the qualifications actually held",
-                    "Mobilisation and contract management",
-                    "Pricing basis (rates, provisional sums, VAT treatment, what is excluded)"]
+        sections = [("Method of working and programme", 15)]
+        if _PPM_RE.search(blob):
+            sections.append(("Planned preventive maintenance (PPM): schedule, inspection regime, records and reporting", 20))
+        sections.append(("Reactive and emergency response (response and fix times, out-of-hours cover, area covered from the bidder's base)", 15))
+        if _DRAIN_RE.search(blob):
+            sections.append(("Drainage service delivery: CCTV surveys, jetting, tankering, waste carriers licence and disposal records", 15))
+        if _WATER_RE.search(blob):
+            sections.append(("Water safety and plumbing compliance (Legionella and L8 risk management, TMVs, water hygiene, WRAS-approved materials; only qualifications the company data shows)", 10))
+        sections += [("Health and safety (risk assessments, method statements, CDM, RIDDOR)", 10),
+                     ("Staff, supervision, vetting and DBS/site access", 8),
+                     ("Quality control, compliance and the qualifications actually held", 5),
+                     ("Mobilisation and contract management", 5),
+                     ("Pricing basis (rates, provisional sums, VAT treatment, what is excluded)", 5)]
         kind = "works"
+    elif consult:
+        sections = [("Understanding of the requirement and the outcomes sought", 12),
+                    ("Approach, methodology and theory of change (what will change, evidence, how it is measured)", 25),
+                    ("Work plan, milestones and timeline", 15),
+                    ("Team, roles and any partner (name who does what; a missing specialism is a [NEEDS INPUT] or partner route)", 15),
+                    ("Ethics, safeguarding, data protection and data-sharing agreement (UK GDPR; policies only if evidenced)", 15),
+                    ("Risks and how they are managed", 8),
+                    ("Social value and added value (only commitments the user gives)", 5),
+                    ("Price: fee breakdown by stage or day rate, assumptions, expenses, and VAT treatment stated plainly", 5)]
+        kind = "consultancy"
     else:
         return ("", "")
+    total = sum(w for _s, w in sections) or 1
+    listing = "; ".join(f"{i + 1}. {name} (about {round(100 * w / total)}% of the words)" for i, (name, w) in enumerate(sections))
     note = ("STRUCTURE FOR THIS KIND OF CONTRACT (the buyer's ITT is not available, so the draft is provisional): write the "
-            "technical_methodology as these sections, each as a '### ' sub-heading, in this order: "
-            + "; ".join(f"{i + 1}. {s}" for i, s in enumerate(sections))
+            "technical_methodology as these sections, each as a '### ' sub-heading, in this order, giving each the share of the words "
+            "shown: " + listing
             + ". Leave social_value.content EMPTY unless the notice asks for social value, and keep relevant_experience to "
               "facts the company data evidences (otherwise one [NEEDS INPUT] line). Do not describe the company as 'fully insured', "
               "'experienced for N years' or 'public sector' unless the company data states it.\n")
@@ -696,3 +748,19 @@ def flag_unevidenced_claims(bid_response: dict, decision: dict | None) -> int:
             return s.rstrip() + " [CONFIRM: no public-sector work is evidenced in your profile - check this claim]"
         obj[key] = _PUBLIC_CLAIM.sub(mark, text)
     return n
+
+
+def export_block_payload(bid_response: dict, blockers: list) -> dict:
+    """The body of a refused final export: the blockers, one count split by type, and every open item grouped for
+    a to-do list. The same numbers the readiness check and the download warning use (release 7)."""
+    from tender_app.bid_writer import placeholder_counts
+    items = []
+    for label, text in bid_texts(bid_response or {}):
+        for m in PLACEHOLDER_RE.finditer(text or ""):
+            tag = m.group(0)
+            low = tag.lower()
+            kind = ("failed" if ("could not be generated" in low or "cut off" in low)
+                    else "confirm" if low.startswith("[confirm") else "input" if low.startswith("[needs input") else "other")
+            items.append({"section": label, "kind": kind, "tag": tag[:240]})
+    return {"error": "This bid is not ready for a final export.", "code": "FINAL_EXPORT_BLOCKED",
+            "blockers": (blockers or [])[:25], "counts": placeholder_counts(bid_response or {}), "items": items[:300]}

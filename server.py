@@ -7716,8 +7716,24 @@ Return ONLY this JSON structure:
                     except Exception as e:
                         print("Failed to query proposal cache:", e)
 
+                _undelivered = app.extensions.setdefault("bid_undelivered", {})
+                _ukey = (username, str(source), str(resource_id), str(company))
                 if cached_proposal:
                     _gen_state["done"] = True  # a stored draft is delivered at once; nothing to refund
+                    # Release 7: the earlier run finished and saved its draft, but the browser lost the connection
+                    # ("network error") before it arrived. Handing over that stored draft on the retry is not a new
+                    # generation, so the second charge is returned (releases 5 and 6 took 20 credits).
+                    _prev_t = _undelivered.pop(_ukey, None)
+                    if _prev_t and time.time() - _prev_t < 1800 and not refresh:
+                        try:
+                            from tender_app.credits import refund_credits
+                            rconn = get_db_connection()
+                            try:
+                                refund_credits(rconn, username, CREDIT_COST_PROPOSAL, "refund_proposal_undelivered_retry")
+                            finally:
+                                rconn.close()
+                        except Exception as refund_err:
+                            print("Retry refund failed:", refund_err)
                     yield json.dumps({"status": "progress", "stage": 1, "message": "Fetching and extracting tender documents..."}) + "\n"
                     yield json.dumps({"status": "progress", "stage": 1, "message": "Analysing tender documents... (Stage 1/5)"}) + "\n"
                     yield json.dumps({"status": "progress", "stage": 2, "message": "Building submission checklist... (Stage 2/5)"}) + "\n"
@@ -8129,6 +8145,13 @@ Return ONLY this JSON structure:
                 # (fix plan G5); every writer gets the same grounding rules (fix plan M7).
                 questions = extract_questions(stage1_result)
                 q_mode = questionnaire_mode(questions)
+                # Release 7: no scored questions but the buyer's own documents were read and list what to submit
+                # (Chemonics): structure the bid by those documents, never by the house template.
+                from tender_app.bid_release7 import use_submission_structure, with_submission_questions
+                if not q_mode and use_submission_structure(questions, stage1_result, combined_tender_text[:200000]):
+                    _sub_qs = extract_questions(with_submission_questions(stage1_result))
+                    if _sub_qs:
+                        questions, q_mode = _sub_qs, True
                 if q_mode:
                     yield json.dumps({"status": "progress", "stage": 4, "message": f"Drafting answers to the buyer's {len(questions)} questions... (Stage 4/5)"}) + "\n"
                 else:
@@ -8175,6 +8198,9 @@ Return ONLY this JSON structure:
                 if bid_decision:
                     _fit = f" (fit {bid_decision['fit_score']}/100)" if bid_decision.get("fit_score") is not None else ""
                     yield json.dumps({"status": "progress", "stage": 4, "message": f"Advice: {bid_decision['verdict']}{_fit}. The draft is still written; gaps are marked, not filled."}) + "\n"
+                from tender_app.bid_release7 import drop_irrelevant_trade_gaps as _drop_gas
+                _drop_gas(bid_decision, f"{title} {description} {json.dumps((stage1_result or {}).get('scope_of_work') or {})} "
+                                        f"{combined_tender_text[:60000]}")
                 cap_note = capability_note(bid_decision)
                 from tender_app.bid_release5 import required_statements_block as _required_block
                 from tender_app.bid_release5 import buyer_dates_block as _buyer_dates_block
@@ -8336,17 +8362,30 @@ Return ONLY valid JSON with no markdown fences:
                         return isinstance(res, dict) and any(
                             isinstance(v, dict) and str(v.get("content") or "").strip() and not _ends_cleanly(str(v["content"]))
                             for v in res.values())
-                    try:
-                        base = int(w.get("max_tokens", 3000))
-                        res = _once(base)
-                        if _cut(res):
-                            retry = _once(int(base * 1.8))
-                            if isinstance(retry, dict) and not _cut(retry):
-                                res = retry
-                        return w["key"], res
-                    except Exception as w_err:
-                        print(f"Writer {w['name']} error: {w_err}")
-                        return w["key"], {}
+                    # Release 7: a section that fails (error or empty reply) is retried automatically, up to two more
+                    # times, before it is left as a failed section. Herts printed "social value could not be generated".
+                    base = int(w.get("max_tokens", 3000))
+                    res = {}
+                    for attempt in range(3):
+                        try:
+                            res = _once(base if attempt == 0 else int(base * 1.4))
+                            if _cut(res):
+                                retry = _once(int(base * 1.8))
+                                if isinstance(retry, dict) and not _cut(retry):
+                                    res = retry
+                            if isinstance(res, dict) and any(isinstance(v, dict) and str(v.get("content") or "").strip()
+                                                             for v in res.values()):
+                                break
+                        except Exception as w_err:
+                            print(f"Writer {w['name']} attempt {attempt + 1} error: {w_err}")
+                            res = {}
+                    return w["key"], (res if isinstance(res, dict) else {})
+
+                from tender_app.financial_model import is_heavy_financial as _heavy_fin, financial_question_block as _fin_q_block
+
+                def _fin_brief(q):
+                    # Release 7: a heavily weighted financial question gets its own brief (Matthewsgreen Q4).
+                    return ("\n" + _fin_q_block(q, stage1_result, bool(_fin_model))) if _heavy_fin(q) else ""
 
                 def _run_question(q):
                     prompt = question_prompt(
@@ -8354,7 +8393,7 @@ Return ONLY valid JSON with no markdown fences:
                         tender_dissection=dissection_for_writers, clarifications_block=published_clar,
                         company_data=company_structured_data, company_context=company_ctx_short,
                         answer_bank=answer_bank_short, winning_bids=winning_bids_block(4000),
-                        other_questions=questions, closed_note=writer_notes, lang_instruction=lang_instruction,
+                        other_questions=questions, closed_note=writer_notes + _fin_brief(q), lang_instruction=lang_instruction,
                     )
                     return write_question(_ai_call, q, prompt)
 
@@ -8449,6 +8488,8 @@ Return ONLY valid JSON with no markdown fences:
                 _apply_required(stage3_result, stage1_result if isinstance(stage1_result, dict) else {})
                 from tender_app.bid_release5 import flag_unevidenced_claims as _flag_claims
                 _flag_claims(stage3_result, bid_decision)
+                from tender_app.bid_release7 import confirm_certifications_in_bid as _confirm_certs
+                _confirm_certs(stage3_result, ground_truth_combined)
                 from tender_app.bid_release5 import drop_near_duplicates as _drop_dups
                 _drop_dups(stage3_result)
                 consistency_issues = _flag_contradictions(stage3_result)
@@ -8568,6 +8609,7 @@ Return ONLY valid JSON with no markdown fences:
                 except Exception as db_err:
                     print("Failed to save proposal to history:", db_err)
                 _gen_state["done"] = True
+                _undelivered[_ukey] = time.time()  # cleared below once the browser has received the draft
 
                 yield json.dumps({
                     "status": "complete",
@@ -8576,6 +8618,7 @@ Return ONLY valid JSON with no markdown fences:
                     "docs_used": doc_names,
                     "docs_found": len(doc_names)
                 }) + "\n"
+                _undelivered.pop(_ukey, None)
 
             except GeneratorExit:
                 # The browser dropped the connection ("network error") before the draft was finished: nothing was
@@ -8899,6 +8942,17 @@ Return ONLY valid JSON with no markdown fences:
         return send_file(io.BytesIO(data), as_attachment=True, download_name=f"{safe}_financial_model.xlsx",
                          mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+    def _no_charge_download() -> bool:
+        """No download credits while the draft holds a failed section (release 7), or when a final export is refused."""
+        try:
+            from tender_app.bid_writer import failed_sections as _fs
+            b = request.get_json(silent=True) or {}
+            if _fs(b.get("bid_response") or {}):
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        return _final_export_refused()
+
     def _final_export_refused() -> bool:
         """True when this request asks for a final export that will be refused: then no credits are taken."""
         try:
@@ -8914,7 +8968,7 @@ Return ONLY valid JSON with no markdown fences:
             return False
 
     @app.post("/api/download-proposal-pdf")
-    @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection, skip_if=_final_export_refused)
+    @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection, skip_if=_no_charge_download)
     def api_download_proposal_pdf():
         """The bid as a PDF with a page count per section (QA scorecard N6). Same charge as a .docx download."""
         from datetime import datetime
@@ -8934,8 +8988,8 @@ Return ONLY valid JSON with no markdown fences:
             from tender_app.bid_release5 import final_export_blockers as _fb5, scrub_internal as _scrub5, _each_text as _et5
             _blockers = _fb5(bid, qa)
             if _blockers:
-                return jsonify({"error": "This bid is not ready for a final export.", "code": "FINAL_EXPORT_BLOCKED",
-                                "blockers": _blockers[:25]}), 409
+                from tender_app.bid_release5 import export_block_payload as _ebp
+                return jsonify(_ebp(bid, _blockers)), 409
             for _lbl, _obj, _k in _et5(bid):
                 _obj[_k] = _scrub5(_obj[_k])
         e = _html.escape
@@ -9010,7 +9064,7 @@ Return ONLY valid JSON with no markdown fences:
                         "portal": portal, "excerpt": "\n\n".join(excerpt)[:9000]})
 
     @app.post("/api/download-submission-pack")
-    @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection)
+    @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection, skip_if=_no_charge_download)
     def api_download_submission_pack():
         """Separate technical and commercial offers as one zip (QA scorecard N3): a technical .docx with no prices and
         a commercial .xlsx built from the buyer's own price schedule (unit prices left for the bidder)."""
@@ -9078,7 +9132,7 @@ Return ONLY valid JSON with no markdown fences:
         return send_file(io.BytesIO(data), as_attachment=True, download_name=f"{safe}_submission_pack.zip", mimetype="application/zip")
 
     @app.post("/api/download-proposal")
-    @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection, skip_if=_final_export_refused)
+    @require_credits(CREDIT_COST_AI_DOWNLOAD, "download_proposal", get_db_connection, skip_if=_no_charge_download)
     def api_download_proposal():
         import zipfile
         import re
@@ -9105,8 +9159,8 @@ Return ONLY valid JSON with no markdown fences:
         if final_export:
             _blockers = _final_blockers(bid_response, export_qa)
             if _blockers:
-                return jsonify({"error": "This bid is not ready for a final export.", "code": "FINAL_EXPORT_BLOCKED",
-                                "blockers": _blockers[:25]}), 409
+                from tender_app.bid_release5 import export_block_payload as _ebp
+                return jsonify(_ebp(bid_response, _blockers)), 409
             # Text written before this release may still carry a production marker; the buyer must never see one.
             for _lbl, _obj, _k in _r5_each_text(bid_response):
                 _obj[_k] = _scrub_internal(_obj[_k])

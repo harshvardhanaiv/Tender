@@ -291,3 +291,48 @@ def financial_answer(bid_response: dict | None) -> tuple[str, str]:
 
 def model_inputs_summary(stage1: dict | None, answer: str) -> dict[str, Any]:
     return {"buyer_figures": len(buyer_inputs(stage1)), "gaps": len(gap_inputs(answer))}
+
+
+# ---------------------------------------------------------------------------
+# Release 7: the financial question's own brief
+# ---------------------------------------------------------------------------
+
+def is_heavy_financial(q: dict) -> bool:
+    """A scored question that is financial and carries real weight (25% or more), or any financial one when no
+    weightings are given."""
+    text = str(q.get("text") or q.get("question_text") or "")
+    if not is_financial_question(text):
+        return False
+    w = q.get("weight_pct")
+    return w is None or float(w) >= 25
+
+
+def financial_question_block(q: dict, stage1: dict | None, has_model_file: bool) -> str:
+    """Extra instructions for a heavily weighted financial question (Matthewsgreen Q4, 40% of the marks). It lists the
+    buyer's own published figures with their source, sets out the structure of a scorable financial answer, and forbids
+    any outcome (surplus, break-even, return) the figures given do not show."""
+    figures = []
+    for r in buyer_inputs(stage1):
+        if r["kind"] == "share":
+            figures.append(f"- {r['label']}: {round(r['pct'] * 100, 1):g}% (source: {r['source']})")
+        else:
+            figures.append(f"- {r['label']}: GBP {r['value']:,.0f} (source: {r['source']})")
+    lines = ["FINANCIAL ANSWER BRIEF (this question carries a large share of the marks; answer it as a financial plan):"]
+    if figures:
+        lines.append("Figures the BUYER published. Use each one, quote its source, and build the cost lines from them:")
+        lines += figures
+    lines.append("Structure, in this order, using tables: (1) assumptions table (each assumption with its source: buyer "
+                 "document, clarification, or the bidder's own file); (2) income by stream; (3) costs by line, including the "
+                 "buyer's fixed and shared costs above; (4) annual surplus or deficit for the full term; (5) reserves and how "
+                 "the sinking fund or reserve is met; (6) sensitivity: income down 20%, costs up 10%; (7) who monitors it "
+                 "and how it is reported.")
+    if has_model_file:
+        lines.append("The bidder's own financial model is above under THE BIDDER'S OWN FINANCIAL MODEL: take income, staffing "
+                     "and cost figures from it, name the file as the source, and calculate nothing it does not support.")
+    else:
+        lines.append("The bidder has not supplied a financial model. Every income, wage, price, occupancy or investment figure "
+                     "of the bidder's is therefore [NEEDS INPUT: ...], one tag per figure, never an estimate. Do not state a "
+                     "surplus, break-even point, return or growth rate: say the plan will show it once the bidder's inputs are "
+                     "entered in the financial model workbook. Do not repeat the same tag for a figure already tagged.")
+    lines.append("Open the answer with a direct statement of what the financial plan shows, in the buyer's words, then the tables.")
+    return "\n".join(lines) + "\n"

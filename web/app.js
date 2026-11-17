@@ -5987,6 +5987,26 @@ function rowSearchText(row) {
   return parts.map((f) => extractTextFromField(f)).join(" ").toLowerCase();
 }
 
+// Release 7: a title word one letter away from a search word counts as a title match ("Matthewsgreen" finds the buyer's own
+// "Mathewsgreen"). Only words of 6+ letters, so short words are never guessed.
+function oneEditApart(a, b) {
+  if (a === b || Math.abs(a.length - b.length) > 1) return false;
+  if (a.length === b.length) {
+    const d = [];
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d.push(i);
+    return d.length === 1 || (d.length === 2 && d[1] === d[0] + 1 && a[d[0]] === b[d[1]] && a[d[1]] === b[d[0]]);
+  }
+  const [sh, lg] = a.length < b.length ? [a, b] : [b, a];
+  let i = 0;
+  while (i < sh.length && sh[i] === lg[i]) i++;
+  return sh.slice(i) === lg.slice(i + 1);
+}
+
+function fuzzyTitleWords(title, words) {
+  const tw = String(title || "").toLowerCase().match(/[a-z0-9]+/g) || [];
+  return words.some((w) => w.length >= 6 && tw.some((t) => t.length >= 5 && oneEditApart(w, t)));
+}
+
 // "all" when some alternative has every word in the row, "some" when only some of the words appear, else "none".
 function wordMatchLevel(row, query, titleOnly) {
   const alts = queryAlternatives(query);
@@ -5999,7 +6019,7 @@ function wordMatchLevel(row, query, titleOnly) {
   for (const words of alts) {
     const hits = words.filter((w) => stemInText(hay, w));
     if (hits.length === words.length) {
-      if (!row._match_reason) row._match_reason = words.every((w) => titleHay.includes(w)) ? "title" : "scope text";
+      if (!row._match_reason) row._match_reason = words.every((w) => titleHay.includes(w) || fuzzyTitleWords(titleHay, [w])) ? "title" : "scope text";
       return "all";
     }
     if (hits.length) some = true;
@@ -6033,6 +6053,10 @@ function matchRowToKeyword(row, query, scope = "all") {
   const checkTitle = () => {
     const title = (row.title || row.tender_title || row.name || "").toLowerCase();
     if (title.includes(q)) {
+      if (!row._match_reason) row._match_reason = "title";
+      return true;
+    }
+    if (q.length >= 6 && !/\s/.test(q) && fuzzyTitleWords(title, [q])) {
       if (!row._match_reason) row._match_reason = "title";
       return true;
     }
@@ -6257,6 +6281,9 @@ function filteredAndSortedRows() {
       return true;
     });
   }
+
+  // Release 7: say so when the Opportunities tab hides closed matches, as Matthewsgreen (closed 8 Nov) was hidden.
+  renderClosedHiddenHint(state.statusFilter === "opportunities" ? rows.filter(r => isClosedTender(r) && !isAwardNotice(r)).length : 0);
 
   // Filter by status (Opportunities vs Awards)
   if (state.statusFilter !== "all") {
@@ -11865,6 +11892,31 @@ $("btnResetDate")?.addEventListener("click", () => {
   updateResultsTotal();
 });
 
+// "N closed matches hidden. Show them": a link beside the Opportunities / Awards boxes, only when something is hidden.
+function renderClosedHiddenHint(n) {
+  const chkAwarded = $("chkAwarded");
+  if (!chkAwarded) return;
+  let el = document.getElementById("closedHiddenHint");
+  if (!n) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement("button");
+    el.type = "button";
+    el.id = "closedHiddenHint";
+    el.className = "btn btn--small";
+    el.style.cssText = "margin-left:8px;font-size:12px;padding:2px 8px;border-radius:6px";
+    el.addEventListener("click", () => {
+      state.statusFilter = "all";
+      lsSet(LS_STATUS_FILTER, state.statusFilter);
+      syncStatusFilterUI();
+      renderRows();
+      updateResultsTotal();
+    });
+    const host = chkAwarded.closest("label") || chkAwarded;
+    host.insertAdjacentElement("afterend", el);
+  }
+  el.textContent = `${n} closed match${n === 1 ? "" : "es"} hidden - show`;
+}
+
 function initStatusPills() {
   const chkOpp = $("chkOpportunities");
   const chkAwarded = $("chkAwarded");
@@ -13484,7 +13536,9 @@ async function checkAndWarnUnresolvedPlaceholders(text, onConfirmed, onCancelled
     // still have a placeholder or two left unresolved at this point, so this fired on
     // almost every real download attempt and looked exactly like the whole tab hanging.
     // window.showConfirm() is the app's own in-page, non-blocking equivalent.
-    const confirmMsg = `This draft still contains ${count} unfilled placeholder(s) (e.g. [Add 1–2 case studies...]).\n\nDo you want to proceed with downloading/copying now, or go back and review first?`;
+    const _nIn = (String(text).match(/\[NEEDS INPUT/gi) || []).length;
+    const _nCf = (String(text).match(/\[CONFIRM/gi) || []).length;
+    const confirmMsg = `This draft still contains ${count} unfilled placeholder(s): ${_nIn} need input, ${_nCf} need confirming, ${Math.max(0, count - _nIn - _nCf)} other gaps (e.g. [Add 1–2 case studies...]).\n\nDo you want to proceed with downloading/copying now, or go back and review first?`;
     const proceed = window.showConfirm
       ? await window.showConfirm(confirmMsg, "⚠️ Unresolved placeholders")
       : window.confirm(confirmMsg);
@@ -15102,9 +15156,7 @@ async function downloadFullProposalDoc(btnElem = null, opts = null) {
       if (!res.ok) {
         const errJson = await res.json().catch(() => null);
         if (errJson && errJson.code === "FINAL_EXPORT_BLOCKED") {
-          const list = (errJson.blockers || []).slice(0, 10).map(b => `• ${b}`).join("\n");
-          await showAlert("Final export is not available yet. Nothing was charged.\n\nFix these first:\n" + list
-            + "\n\nUse Download Full Proposal for a working draft.");
+          showFinalExportBanner(errJson);
           return;
         }
         throw new Error((errJson && errJson.error) || `Docx creation failed (HTTP ${res.status})`);
@@ -15128,6 +15180,46 @@ async function downloadFullProposalDoc(btnElem = null, opts = null) {
   };
   if (finalExport) await runExport();
   else checkAndWarnUnresolvedPlaceholders(fullTextToScan, runExport, resetButtons);
+}
+
+// Release 7: a refused final export is a banner on the page, not a pop-up, with one count split by type and the open
+// items grouped by section. Nothing was charged.
+function showFinalExportBanner(info) {
+  const c = info.counts || {};
+  const parts = [];
+  if (c.input) parts.push(`${c.input} need input`);
+  if (c.confirm) parts.push(`${c.confirm} need confirming`);
+  if (c.other) parts.push(`${c.other} other gaps`);
+  if (c.failed) parts.push(`${c.failed} failed section${c.failed === 1 ? "" : "s"} to regenerate`);
+  const kindLabel = { input: "Needs input", confirm: "Confirm", failed: "Failed section", other: "Gap" };
+  const bySection = new Map();
+  (info.items || []).forEach(it => {
+    if (!bySection.has(it.section)) bySection.set(it.section, []);
+    bySection.get(it.section).push(it);
+  });
+  const groups = [...bySection.entries()].map(([sec, its]) =>
+    `<div style="margin-top:8px"><strong>${esc(sec)}</strong> (${its.length})<ul style="margin:4px 0 0 18px">`
+    + its.slice(0, 12).map(i => `<li><em>${esc(kindLabel[i.kind] || "Gap")}:</em> ${esc(i.tag)}</li>`).join("")
+    + (its.length > 12 ? `<li>and ${its.length - 12} more in this section</li>` : "") + `</ul></div>`).join("");
+  const others = (info.blockers || []).filter(b => !/still need your input/.test(b));
+  let el = document.getElementById("finalExportBanner");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "finalExportBanner";
+    el.setAttribute("role", "alert");
+    const anchor = document.querySelector(".pills-container");
+    if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(el, anchor);
+    else document.body.prepend(el);
+  }
+  el.style.cssText = "border:1px solid #b45309;background:#fffbeb;color:#78350f;border-radius:8px;padding:12px 14px;margin:0 0 12px;font-size:13px;line-height:1.45";
+  el.innerHTML = `<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+      <div><strong>Final export is not available yet. Nothing was charged.</strong><br>${c.total ? `${c.total} items still open: ${esc(parts.join(", "))}.` : ""}</div>
+      <button type="button" id="finalExportBannerClose" class="btn btn--small" style="flex:none">Dismiss</button></div>
+    ${others.length ? `<ul style="margin:6px 0 0 18px">${others.slice(0, 6).map(b => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}
+    ${groups ? `<details style="margin-top:6px"><summary style="cursor:pointer;font-weight:600">Show the ${c.total || (info.items || []).length} items, by section</summary>${groups}</details>` : ""}
+    <div style="margin-top:6px">Use Download Full Proposal for a working draft.</div>`;
+  document.getElementById("finalExportBannerClose")?.addEventListener("click", () => el.remove());
+  el.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 // N6: PDF export with the page count of every section; a section over its page limit is named.
@@ -15522,6 +15614,10 @@ $("analyseCompanyProfileSelect")?.addEventListener("change", (e) => {
   }
 });
 $("bidTenderFiles")?.addEventListener("change", handleBidFileSelect);
+$("bidStepCheck4")?.addEventListener("change", e => {
+  // Only a person's click counts as "off"; a script's untick must not stop the files ticking the step later.
+  if (e.isTrusted) e.target.dataset.userOff = e.target.checked ? "" : "1";
+});
 $("bidTenderText")?.addEventListener("input", () => {
   const text = $("bidTenderText")?.value.trim();
   const hasFiles = (state.bidUploadedFiles && state.bidUploadedFiles.length > 0);
@@ -28029,6 +28125,12 @@ window.updateBidStepSummary = function(stepNumber, summaryEl) {
       } else {
         chk4.disabled = false;
         chk4.title = "";
+        // Release 7: attached files tick the step as soon as they appear, not seconds later, unless the user
+        // switched it off themselves (custom tenders opened it unticked and the notice was ignored).
+        if (hasFiles && !chk4.checked && chk4.dataset.userOff !== "1") {
+          chk4.checked = true;
+          if (typeof saveBidStepCheckStates === "function") saveBidStepCheckStates();
+        }
       }
     }
 

@@ -255,7 +255,7 @@ _k, _nt = r5.contract_type_note("NHS Wales coaching platform RFQ", "Digital coac
 ok(_k == "digital" and "Welsh language" in _nt and "WCAG" in _nt and "Support" in _nt, "a Welsh digital contract gets Welsh, accessibility and support sections")
 _k, _nt = r5.contract_type_note("Digital platform for England", "software")
 ok(_k == "digital" and "Welsh language" not in _nt, "no Welsh section outside Wales")
-ok(r5.contract_type_note("Strategic review of governance", "advice")[0] == "", "other contracts keep the general outline")
+ok(r5.contract_type_note("Introduction of a new town centre scheme", "advice")[0] == "", "other contracts keep the general outline")
 print("contract type checks done")
 
 # release 6: a buyer's hard word limit is met even when the model's condensing does not get there
