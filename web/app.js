@@ -1808,8 +1808,13 @@ function pipelineStageOf(key) {
 
 // HTML for the track/stage button used in rows and cards
 function trackBtnHtml(row) {
-  const key = rowKey(row);
-  const stage = pipelineStageOf(key);
+  let key = rowKey(row);
+  let stage = pipelineStageOf(key);
+  if (!stage && Array.isArray(row && row.linked_notices)) {
+    // Two portal records merged into one row: a tender tracked under the other copy is still tracked (Matthewsgreen showed "+ Track").
+    const other = row.linked_notices.find((l) => l && l.tender_key && pipelineStageOf(l.tender_key));
+    if (other) { key = other.tender_key; stage = pipelineStageOf(key); }
+  }
   if (stage) {
     return `<button class="track-btn track-btn--active ${STAGE_COLOR[stage]}" data-key="${esc(key)}"
       title="Change stage or remove">${STAGE_LABEL[stage]}</button>`;
@@ -12407,6 +12412,7 @@ function openBidModal(row) {
 
   $("bidModalBody").innerHTML = renderBidModalPlaceholder();
   $("bidModal").classList.remove("hidden");
+  try { loadBrandKit(); } catch (e) { /* optional */ }
 
   // Restore saved proposal from DB if available
   fetch(`/api/proposals/latest?tender_key=${encodeURIComponent(rkey)}`)
@@ -12889,7 +12895,10 @@ $("bidAnonymiseAnswers")?.addEventListener("change", rememberBrandPrefs);
 
 function renderReadiness(d) {
   const sev = { P0: "#b91c1c", P1: "#b45309", P2: "#64748b" };
-  const items = (d.items || []).map(i => `<li style="margin:3px 0;"><b style="color:${sev[i.severity] || "#64748b"};">${esc(i.severity)}</b> ${esc(i.text)}</li>`).join("");
+  const items = (d.items || []).map(i => `<li style="margin:3px 0;"><b style="color:${sev[i.severity] || "#64748b"};">${esc(i.severity)}</b> ${esc(i.text)}`
+    + (i.goto ? ` <a href="#" class="rd-goto" data-goto="${esc(i.goto)}" style="font-size:12px;">Go to ${esc(i.goto)}</a>` : "")
+    + (i.fix ? ` <button type="button" class="btn btn--small rd-fix" data-fix="${esc(JSON.stringify(i.fix))}">Regenerate this</button>` : "")
+    + `</li>`).join("");
   const sign = (d.signoff || []).map(s => `<label style="display:block;margin:4px 0;"><input type="checkbox" data-signoff="${esc(s.key)}" ${s.ticked ? "checked" : ""}/> ${esc(s.text)}${s.ticked ? ` <span style="color:var(--text-muted);">(${esc(s.by)}, ${esc(s.at)})</span>` : ""}</label>`).join("");
   const head = d.limited
     ? `<div style="font-weight:600;">${esc(d.label)}</div>`
@@ -12899,6 +12908,48 @@ function renderReadiness(d) {
     <h4 style="margin:10px 0 4px;">To do, most marks first</h4>${items ? `<ul style="margin:0;padding-left:18px;">${items}</ul>` : "<div>Nothing open.</div>"}
     <h4 style="margin:10px 0 4px;">Sign-off before the final export</h4>${sign}
     <div style="margin-top:6px;color:var(--text-muted);">${d.ready ? "Ready for the final export." : "The final export unlocks when nothing is open and every box above is ticked."}</div>`;
+}
+// Release 10: scroll to the part of the draft a to-do item names ("Question 4", "Social value").
+function gotoBidSection(label) {
+  const body = $("bidModalBody");
+  if (!body || !label) return;
+  const q = /^question\s+(.+)$/i.exec(label);
+  const wants = [label.toLowerCase()].concat(q ? ["q" + q[1].toLowerCase(), "question " + q[1].toLowerCase()] : []);
+  const heads = [...body.querySelectorAll("h1,h2,h3,h4,h5,summary,.bid-section-title,.proposal-section-title,strong")];
+  const hit = heads.find(h => { const t = (h.textContent || "").trim().toLowerCase(); return t.length < 140 && wants.some(w => t.startsWith(w) || t.includes(w + ":") || t.includes(w + " -")); })
+    || heads.find(h => { const t = (h.textContent || "").trim().toLowerCase(); return t.length < 140 && wants.some(w => t.includes(w)); });
+  if (!hit) { showToastError("Could not find that part on the page. Look for " + label + " in the draft."); return; }
+  hit.scrollIntoView({ behavior: "smooth", block: "center" });
+  const old = hit.style.background; hit.style.background = "#fef3c7";
+  setTimeout(() => { hit.style.background = old; }, 2500);
+}
+// Release 10: write one failed or cut-off answer or section again, without a full run and without credits.
+async function regenerateBidPart(btn, fix, gate) {
+  if (!_lastProposal?.bid_response || btn.disabled) return;
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Writing it again...";
+  try {
+    const res = await fetch("/api/bid-regenerate-section", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...fix, dissection: _lastProposal.dissection || {}, tender: _bidRow || {},
+                             profile_id: $("bidCompanyProfileSelect")?.value || "" })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || "It still could not be written. Try again in a minute.");
+    const r = _lastProposal.bid_response;
+    if (fix.question_number) {
+      const q = (r.itt_question_responses || []).find(x => String(x.question_number).toLowerCase() === String(fix.question_number).toLowerCase());
+      if (q && data.answer) Object.assign(q, data.answer);
+    } else if (fix.section) {
+      r[fix.section] = { ...(r[fix.section] || {}), content: data.content };
+    }
+    $("bidModalBody").innerHTML = renderProposal(_lastProposal, _bidRow);
+    wireBidResultButtons(); wireTabNavigation();
+    await loadReadiness(gate);
+  } catch (e) {
+    showToastError(e.message || "It could not be written again.");
+    btn.disabled = false; btn.textContent = label;
+  }
 }
 async function loadReadiness(gate = false) {
   const out = $("bidReadinessOut");
@@ -12913,6 +12964,8 @@ async function loadReadiness(gate = false) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) throw new Error(data.error || "Could not work out the score.");
     out.innerHTML = renderReadiness(data.readiness);
+    out.querySelectorAll("a.rd-goto").forEach(a => a.addEventListener("click", ev => { ev.preventDefault(); gotoBidSection(a.dataset.goto); }));
+    out.querySelectorAll("button.rd-fix").forEach(b => b.addEventListener("click", () => regenerateBidPart(b, JSON.parse(b.dataset.fix), gate)));
     out.querySelectorAll("input[data-signoff]").forEach(cb => cb.addEventListener("change", async () => {
       await fetch("/api/bid-signoff", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bid_key: rowKey(_bidRow), item_key: cb.dataset.signoff, ticked: cb.checked }) });
@@ -12951,6 +13004,10 @@ function renderStylePreview(d) {
 async function loadStylePreview() {
   const out = $("bidStyleOut");
   if (!out) return;
+  if (!$("bidStepCheck5")?.checked) {
+    out.innerHTML = `<div style="color:var(--text-muted);">Past bids are not used for this bid. Tick step 4 to learn from them.</div>`;
+    return;
+  }
   out.innerHTML = "Working it out...";
   const ids = typeof getSelectedWinningBidIds === "function" ? getSelectedWinningBidIds() : [];
   const questions = _lastBidPlanQuestions.length ? _lastBidPlanQuestions
@@ -13116,7 +13173,9 @@ async function _runBidAssistantInner(isRefresh = false) {
       docFacts = await classifyBidUploadsFull(uploads);
       // A custom tender (uploaded or pasted, not from search) has no notice: its fit check reads the text itself,
       // so this route gets the same check and the same credit confirmation as a tender from search (pilot P1).
-      const customText = notCustom ? "" : [pastedText, docFacts.facts.excerpt || ""].filter(Boolean).join("\n\n");
+      // The documents the user attached count for a tender from search too (release 7 re-test: the fit check said the
+      // buyer's documents gave no criteria with the ITT, DDQ and Q&A attached).
+      const customText = [pastedText, docFacts.facts.excerpt || ""].filter(Boolean).join("\n\n");
       [publicDocs, fitCheck] = await Promise.all([
         (!uploads.length && !pastedText && notCustom) ? fetchPublicTenderDocs(_bidRow) : Promise.resolve([]),
         (notCustom || customText.length >= 200)
@@ -13167,7 +13226,9 @@ async function _runBidAssistantInner(isRefresh = false) {
     user_document_ids.push(parseInt(cb.dataset.id, 10));
   });
   const winning_bid_ids = getSelectedWinningBidIds();
-  const past_bids_mode = ($("bidPastBidsMode")?.value) || (winning_bid_ids.length ? "library" : "auto");
+  // Step 4 unticked means no past bid at all (release 7 re-test: the library was used with the step off).
+  const past_bids_mode = !$("bidStepCheck5")?.checked ? "off"
+    : (($("bidPastBidsMode")?.value) || (winning_bid_ids.length ? "library" : "auto"));
 
   const taskId = "proposal-" + rowKey(_bidRow);
   if (state.tasks.find(t => t.id === taskId && t.status === "running")) {
@@ -14289,7 +14350,7 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
     // R1: no "The stored deadline (unknown) has passed" when the notice gives no date.
     warnings.push(hasDate
       ? `The stored deadline (${noticeDate(dl)}) has passed. If the buyer extended it, upload the update so the bid uses the new date.`
-      : "This tender is marked as closed and the notice gives no deadline. If it is still open, upload the buyer's latest documents so the bid uses the right date.");
+      : "We could not read a submission deadline for this tender from the notice, so we cannot tell if it is still open. Upload the buyer's documents: the bid takes the deadline from them, and the bid writer's note shows the date it used.");
   } else if (hasDate && !custom) {
     // The zone is known once a draft (or the tender panel) has read the buyer's documents: say it instead of "no time zone".
     const _zone = typeof recalledDeadlineZone === "function" ? recalledDeadlineZone(row) : "";
@@ -15115,15 +15176,24 @@ async function downloadFullProposalDoc(btnElem = null, opts = null) {
   // Export QA gate (fix plan M10): name what blocks a clean export before downloading. The server marks
   // such a document "DRAFT - NOT READY TO SUBMIT" on its first page.
   const qaP0 = ((_lastProposal.qa_report || {}).issues || []).filter(i => i.severity === "P0");
+  let _skipPlaceholderConfirm = false;
   if (qaP0.length && !finalExport) {
     const qaMsg = `This draft fails ${qaP0.length} export check${qaP0.length === 1 ? "" : "s"}:\n\n`
       + qaP0.slice(0, 8).map(i => `• ${i.section}: ${i.detail}`).join("\n")
       + (qaP0.length > 8 ? `\n• ...and ${qaP0.length - 8} more` : "")
       + "\n\nIt will download marked \"DRAFT - NOT READY TO SUBMIT\". Download anyway?";
+    // One pop-up, not two: the open placeholders are counted in the same message.
+    const _phN = countUnresolvedPlaceholdersInText(fullTextToScan);
+    const _phIn = (fullTextToScan.match(/\[NEEDS INPUT/gi) || []).length;
+    const _phCf = (fullTextToScan.match(/\[CONFIRM/gi) || []).length;
+    const qaMsg2 = qaMsg.split("\n\nIt will download marked")[0]
+      + (_phN ? `\n\nStill open in the text: ${_phN} (${_phIn} need input, ${_phCf} need confirming).` : "")
+      + "\n\nIt will download marked \"DRAFT - NOT READY TO SUBMIT\". Download anyway?";
     const okQa = window.showConfirm
-      ? await window.showConfirm(qaMsg, "Export checks failed", { okText: "Download draft", cancelText: "Go back" })
-      : window.confirm(qaMsg);
+      ? await window.showConfirm(qaMsg2, "Before you download", { okText: "Download draft", cancelText: "Go back" })
+      : window.confirm(qaMsg2);
     if (!okQa) return;
+    _skipPlaceholderConfirm = true;
   }
 
   const targetBtns = [
@@ -15298,6 +15368,8 @@ async function downloadFullProposalDoc(btnElem = null, opts = null) {
         const errJson = await res.json().catch(() => null);
         if (errJson && errJson.code === "FINAL_EXPORT_BLOCKED") {
           showFinalExportBanner(errJson);
+          const card = $("bidReadinessCard");
+          if (card) { card.open = true; loadReadiness(true); }
           return;
         }
         if (errJson && errJson.code === "SIGNOFF_REQUIRED") {
@@ -15327,6 +15399,7 @@ async function downloadFullProposalDoc(btnElem = null, opts = null) {
     }
   };
   if (finalExport) await runExport();
+  else if (_skipPlaceholderConfirm) runExport();
   else checkAndWarnUnresolvedPlaceholders(fullTextToScan, runExport, resetButtons);
 }
 
@@ -15355,7 +15428,7 @@ function showFinalExportBanner(info) {
     el = document.createElement("div");
     el.id = "finalExportBanner";
     el.setAttribute("role", "alert");
-    const anchor = document.querySelector(".pills-container");
+    const anchor = $("bidReadinessCard") || document.querySelector(".pills-container");
     if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(el, anchor);
     else document.body.prepend(el);
   }
@@ -15788,9 +15861,23 @@ $("bidWinningBidFiles")?.addEventListener("change", handleBidWinningBidUpload);
 
 // Release 8 (F3): brand kit for the selected company profile. The kit is saved once; the switch on this screen is per bid.
 let _brandLogoB64 = null;   // null = keep the saved logo
+// The bid screen only reads the kit (to enable the switch); the fields are edited in Company profiles.
 async function loadBrandKit() {
   const pid = $("bidCompanyProfileSelect")?.value || "";
   const sum = $("bidBrandSummary"), on = $("bidBrandingOn");
+  try {
+    const res = await fetch(`/api/brand-kit?profile_id=${encodeURIComponent(pid)}`);
+    const data = await res.json().catch(() => ({}));
+    const kit = data && data.exists ? data.kit : null;
+    if (on) { on.disabled = !kit; on.checked = Boolean(kit); }
+    if (sum) sum.textContent = kit ? "brand kit set" : "No brand kit yet: add one in Company profiles";
+  } catch (e) { if (sum) sum.textContent = ""; }
+}
+// The fields live in Company profiles (step 4) and belong to the profile being edited.
+async function loadBrandKitFields() {
+  const pid = cpState.editId ? String(cpState.editId) : "";
+  const sum = $("cpBrandKitSummary"), st = $("brandKitStatus");
+  if (!pid) { if (sum) sum.textContent = "save the profile first"; return; }
   try {
     const res = await fetch(`/api/brand-kit?profile_id=${encodeURIComponent(pid)}`);
     const data = await res.json().catch(() => ({}));
@@ -15800,12 +15887,14 @@ async function loadBrandKit() {
       if ($("brandFont")) $("brandFont").value = kit.font;
       if ($("brandFooter")) $("brandFooter").value = kit.footer_text || "";
     }
-    if (on) { on.disabled = !kit; on.checked = Boolean(kit); }
-    if (sum) sum.textContent = kit ? "brand kit set" : "no brand kit yet - set one below";
+    if (sum) sum.textContent = kit ? "set" : "not set yet";
+    if (st) st.textContent = "";
   } catch (e) { if (sum) sum.textContent = ""; }
 }
 $("bidBrandCard")?.addEventListener("toggle", e => { if (e.target.open) loadBrandKit(); });
-$("bidCompanyProfileSelect")?.addEventListener("change", () => { if ($("bidBrandCard")?.open) loadBrandKit(); });
+$("bidCompanyProfileSelect")?.addEventListener("change", () => loadBrandKit());
+$("bidBrandKitLink")?.addEventListener("click", ev => { ev.preventDefault(); if (typeof openCpEditForCurrentBidProfile === "function") openCpEditForCurrentBidProfile(); });
+
 $("brandLogo")?.addEventListener("change", e => {
   const f = e.target.files && e.target.files[0];
   if (!f) { _brandLogoB64 = null; return; }
@@ -15816,16 +15905,17 @@ $("brandLogo")?.addEventListener("change", e => {
 });
 $("btnSaveBrandKit")?.addEventListener("click", async () => {
   const st = $("brandKitStatus");
-  const body = { profile_id: $("bidCompanyProfileSelect")?.value || "", color: ($("brandColor")?.value || "").replace("#", ""),
+  const body = { profile_id: cpState.editId ? String(cpState.editId) : "", color: ($("brandColor")?.value || "").replace("#", ""),
                  font: $("brandFont")?.value || "", footer_text: $("brandFooter")?.value || "" };
   if (_brandLogoB64 !== null) body.logo_b64 = _brandLogoB64;
+  if (!body.profile_id) { st.textContent = "Save the company profile first, then add its brand kit."; return; }
   try {
     const res = await fetch("/api/brand-kit", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || "Could not save the brand kit");
-    st.textContent = "Brand kit saved. It applies to the Word file when you download.";
+    st.textContent = "Brand kit saved. It applies to the Word file of every bid made as this company.";
     _brandLogoB64 = null;
-    loadBrandKit();
+    loadBrandKitFields();
   } catch (err) { st.textContent = err.message; }
 });
 $("bidUserDocUploadInput")?.addEventListener("change", (e) => {
@@ -15912,10 +16002,8 @@ $("historyCompanyFilter")?.addEventListener("change", (e) => {
   state._historyFilterTouched = true;
   state.historyCompanyFilter = val;
   e.target.classList.toggle("is-set", val !== "all");
-  const match = (state.companyProfiles || []).find(p => p.name === val);
-  if (match && String(match.id) !== String(state.activeProfileId)) {
-    handleCompanyProfileSelectionChange(match.id, { makeDefault: false });
-  }
+  // A filter on History only filters History: it no longer switches the company used by search and quick-fit
+  // (release 7 re-test).
   renderHistoryList();
 });
 $("historyModal")?.addEventListener("click", (e) => {
@@ -16130,6 +16218,9 @@ function cpGoToStep(n) {
     const panel = document.getElementById("cpStep" + i);
     if (panel) panel.style.display = (i === n) ? "" : "none";
   }
+
+  const _bk = $("cpBrandKitCard");
+  if (_bk) { _bk.style.display = (n === 4) ? "" : "none"; if (n === 4) loadBrandKitFields(); }
 
   // Update progress bar fill
   const fill = $("cpProgressFill");
@@ -18564,6 +18655,24 @@ async function loadHistoryItem(id) {
         });
       }
       _lastProposal = d.analysis_json;
+      // The buyer documents attached to this tender come back too (release 7 re-test: step 5 read "No details provided").
+      try {
+        state.bidUploadedFiles = [];
+        if (typeof loadBidSupportingDocs === "function") loadBidSupportingDocs();
+        if (typeof updateBidStepSummary === "function") updateBidStepSummary(4);
+        if (typeof updateBidStepSummary === "function") updateBidStepSummary(3);
+      } catch (e) { /* the steps keep their state */ }
+      // The bid's own company is shown and used (release 7 re-test: a Priority Plumbing bid opened as "AIVHUB (Default)").
+      try {
+        const sel = $("bidCompanyProfileSelect");
+        const want = String(d.company || d.analysis_json?.bid_company || "").trim().toLowerCase();
+        const prof = (state.companyProfiles || []).find(p => (d.profile_id && String(p.id) === String(d.profile_id))
+          || (want && String(p.name || "").trim().toLowerCase() === want));
+        if (sel && prof) {
+          sel.value = String(prof.id);
+          if (typeof updateBidStepSummary === "function") updateBidStepSummary(1);
+        }
+      } catch (e) { /* the selector keeps its value */ }
 
       $("bidModalTitle").textContent = "Bid Application Response Assistant";
       $("btnRunBidAssistant")?.classList.add("hidden");
@@ -26442,6 +26551,9 @@ function initAll() {
         qInput.value = qVal;
         setTimeout(() => {
           if (typeof search === "function") search();
+          // The tab buttons and ticks are redrawn by later start-up code; show the link's own tab (a mode=all link opened on Opportunities).
+          syncStatusFilterUI();
+          setTimeout(syncStatusFilterUI, 1500);
         }, 300);
       }
     }
@@ -28803,11 +28915,11 @@ window.updateBidStepSummary = function(stepNumber, summaryEl) {
     bar.innerHTML = `
       <div class="ws-bar__top">
         <button type="button" class="ws-bar__back" data-ws-back>&larr; Back to results</button>
-        <span class="ws-bar__crumb">Tender search / ${esc(String((row && (row.reference || row.resource_id)) || ""))}</span>
+        <span class="ws-bar__crumb">Tender search / ${esc(String((row && row.title) || (row && (row.reference || row.resource_id)) || "").slice(0, 70))}</span>
       </div>
       <h1 class="ws-bar__title">${esc((row && row.title) || "Tender")}</h1>
       <div class="ws-bar__chips">
-        ${row && row.contracting_authority ? `<span class="ws-chip">${esc(row.contracting_authority)}</span>` : ""}
+        ${(() => { const b = (row && row.contracting_authority) || (typeof _lastProposal !== "undefined" && _lastProposal && _lastProposal.buyer_name) || ""; return b ? `<span class="ws-chip">${esc(b)}</span>` : ""; })()}
         ${row && row.source_label ? `<span class="ws-chip">${esc(row.source_label)}</span>` : (row && row.source ? `<span class="ws-chip">${esc(row.source)}</span>` : "")}
         ${when ? `<span class="ws-chip ws-chip--when">Closes ${esc(when)}</span>` : ""}
       </div>
@@ -28827,6 +28939,8 @@ window.updateBidStepSummary = function(stepNumber, summaryEl) {
     const left = rail && rail.offsetParent !== null ? Math.max(0, Math.round(rail.getBoundingClientRect().right)) : 0;
     document.documentElement.style.setProperty("--ws-top", top + "px");
     document.documentElement.style.setProperty("--ws-left", left + "px");
+    const wb = document.querySelector(".ws-page .ws-bar");
+    if (wb) document.documentElement.style.setProperty("--ws-bar-h", Math.round(wb.getBoundingClientRect().height) + "px");
   }
   function sync() {
     placeBelowChrome();
@@ -28840,7 +28954,70 @@ window.updateBidStepSummary = function(stepNumber, summaryEl) {
     });
     if (document.body.classList.contains("ws-open") !== any) document.body.classList.toggle("ws-open", any);
   }
+  // The three views each get one extra block from the design: Summary a key-facts card, Clarifications an "Ask the buyer" box,
+  // Deep analysis a row of counts. They are added to what the existing renderers draw, so those stay as they are.
+  function factRow(label, value) {
+    return value ? `<div class="ws-fact"><span class="ws-fact__k">${esc(label)}</span><span class="ws-fact__v">${esc(String(value))}</span></div>` : "";
+  }
+  function enhanceView() {
+    const body = $("modalBody");
+    const overlay = $("analyseModal");
+    if (!body || !overlay || overlay.classList.contains("hidden")) return;
+    const view = activeView("analyseModal");
+    const have = body.querySelector(":scope > .ws-extra");
+    if (have && have.dataset.view === view) return;
+    if (have) have.remove();
+    if (body.querySelector(".modal-placeholder, .analysis-loading")) return;
+    const row = currentRow() || {};
+    let html = "";
+    if (view === "summary") {
+      const rows = [
+        factRow("Buyer", row.contracting_authority || row.authority_name || row.authority || row.buyer),
+        factRow("Deadline", row.submission_deadline || row.deadline),
+        factRow("Value", row.estimated_value || row.value),
+        factRow("Portal", row.source_label || row.source),
+        factRow("Reference", row.reference || row.resource_id),
+      ].join("");
+      if (!rows) return;
+      html = `<div class="ws-extra ws-extra--facts" data-view="summary"><h3 class="ws-extra__h">Key facts</h3><div class="ws-facts">${rows}</div></div>`;
+    } else if (view === "clarifications") {
+      const ref = row.reference || row.resource_id || "";
+      const draft = `Dear ${row.contracting_authority || row.authority_name || "Sir or Madam"},\n\nRegarding "${row.title || "the tender"}"${ref ? " (" + ref + ")" : ""}: could you please clarify the following?\n\n1. \n\nKind regards`;
+      html = `<div class="ws-extra ws-extra--ask" data-view="clarifications"><h3 class="ws-extra__h">Ask the buyer</h3>
+        <p class="ws-extra__p">Write your question here, copy it, and send it through the buyer's portal message area. TenderFlow does not send messages to buyers.</p>
+        <textarea class="ws-ask__text" rows="6" aria-label="Question for the buyer">${esc(draft)}</textarea>
+        <button type="button" class="btn btn--secondary ws-ask__copy">Copy question</button> <span class="ws-ask__done" aria-live="polite"></span></div>`;
+    } else if (view === "analysis") {
+      const all = body.querySelectorAll(".deep-check");
+      if (!all.length) return;
+      const done = Array.from(all).filter(b => b.checked).length;
+      html = `<div class="ws-extra ws-extra--kpis" data-view="analysis"><div class="ws-kpi"><b>${all.length}</b><span>steps found</span></div>
+        <div class="ws-kpi"><b class="ws-kpi__done">${done}</b><span>done</span></div><div class="ws-kpi"><b class="ws-kpi__left">${all.length - done}</b><span>left</span></div></div>`;
+    }
+    if (html) body.insertAdjacentHTML("afterbegin", html);
+  }
+  function startViewExtras() {
+    const body = $("modalBody");
+    if (!body) return;
+    new MutationObserver(() => { try { enhanceView(); } catch (_) { /* the page works without the extra block */ } }).observe(body, { childList: true });
+    body.addEventListener("click", e => {
+      const b = e.target.closest && e.target.closest(".ws-ask__copy");
+      if (!b) return;
+      const ta = body.querySelector(".ws-ask__text"), msg = body.querySelector(".ws-ask__done");
+      const done = ok => { if (msg) msg.textContent = ok ? "Copied." : "Select the text and copy it."; };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).then(() => done(true), () => { ta.select(); done(false); });
+      else { ta.select(); done(false); }
+    });
+    body.addEventListener("change", e => {
+      if (!(e.target.classList && e.target.classList.contains("deep-check"))) return;
+      const all = body.querySelectorAll(".deep-check"), n = Array.from(all).filter(b => b.checked).length;
+      const d = body.querySelector(".ws-kpi__done"), l = body.querySelector(".ws-kpi__left");
+      if (d) d.textContent = n;
+      if (l) l.textContent = all.length - n;
+    });
+  }
   function start() {
+    startViewExtras();
     OVERLAYS.forEach(id => {
       const o = $(id);
       if (o) new MutationObserver(sync).observe(o, { attributes: true, attributeFilter: ["class"] });

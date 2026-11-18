@@ -196,9 +196,28 @@ def incorporation_date(*sources: Any) -> _dt.date | None:
 def reconcile_experience(text: str, incorporated: _dt.date | None, today: _dt.date | None = None) -> str:
     """"Priority Plumbing ... with over 12 years of experience" for a company incorporated in 2024 becomes the team's
     experience, with a [CONFIRM] so the bidder checks whose experience it is."""
-    if not text or not isinstance(text, str) or incorporated is None:
+    if not text or not isinstance(text, str):
         return text
     today = today or _dt.date.today()
+    if incorporated is None:
+        # No incorporation date on file or at Companies House: a long-experience claim is still never left unchecked
+        # (Herts plumbing said "over 12 years' experience" three times, unflagged, for a company formed in 2024).
+        def _fallback(m: re.Match) -> str:
+            if _years_value(m.group(2)) < 8:
+                return m.group(0)
+            before = text[max(0, m.start() - 40):m.start()]
+            if re.search(r"\b(?:team|staff|engineers?|founders?|directors?|people|personnel)\b[^.]{0,30}$", before, re.I):
+                return m.group(0)
+            return m.group(0) + "\x00"
+        marked = _YEARS.sub(_fallback, text)
+        at = marked.find("\x00")
+        if at < 0:
+            return text
+        yrs = _years_value(_YEARS.search(text).group(2)) if _YEARS.search(text) else 0
+        marked = marked.replace("\x00", "")
+        end = _sentence_end(marked, at)
+        return marked[:end] + (f" [CONFIRM: the company's records do not show how long it has traded; check that {yrs}+ years "
+                               f"is the company's own history or say it is the team's experience]") + marked[end:]
     age = max(0, (today - incorporated).days // 365)
     flagged = False
 
@@ -439,6 +458,21 @@ def apply_required_statements(bid_response: dict, stage1: dict | None) -> list:
 
 # ---- Pilot: a general outline is provisional --------------------------------------------------------------------------
 
+# The buyer's portal can be read from the notice reference when the notice does not name it (Oldham: OLDH001-DN835252 is The Chest).
+def portal_from_reference(*refs: str) -> str:
+    """The portal a notice reference points to, or "" when it matches no known pattern. A Due North reference of the form
+    <BUYER>-DN<digits> is the buyer's own Chest portal; a bare DN<digits> is ProContract."""
+    for ref in refs:
+        s = str(ref or "")
+        if re.search(r"-DN\d+", s, re.I):
+            return "The Chest (Due North)"
+        if re.search(r"\bDN\d{5,}\b", s, re.I):
+            return "ProContract (Due North)"
+        if re.search(r"\bitt_\d+|\bPQQ_\d+", s, re.I):
+            return "In-tend"
+    return ""
+
+
 def provisional_structure_note(questionnaire_mode: bool, stage1: dict | None) -> str:
     if questionnaire_mode:
         return ""
@@ -446,6 +480,8 @@ def provisional_structure_note(questionnaire_mode: bool, stage1: dict | None) ->
     portal = str(sd.get("portal") or "").strip() if isinstance(sd, dict) else ""
     if re.search(r"not stated|unknown|^null$|^n/?a$", portal, re.I):
         portal = ""
+    if not portal and isinstance(stage1, dict):
+        portal = portal_from_reference(*(stage1.get(k) for k in ("reference", "notice_reference", "notice_id", "tender_reference", "ocid")))
     where = f" from {portal}" if portal else " from the buyer's portal"
     return ("Structure is provisional: the documents provided contain no buyer questionnaire, so this draft uses a "
             f"general outline. Upload the ITT pack{where} and re-run to rebuild it around the buyer's questions.")

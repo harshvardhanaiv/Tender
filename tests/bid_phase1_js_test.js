@@ -41,7 +41,7 @@ vm.runInContext(_consts.replace(/^const /gm, "var ") + "\n" + grab("bidPortalSte
 const pcRow = { source: "procontract", resource_id: "DN831703", submission_deadline: "", title: "Matthewsgreen" };
 const costs = { proposal: "10 credits", download: "3 credits" };
 let pre = ctx.bidPreflight(pcRow, [], "", [], false, costs, true);
-ok(pre.show && !/\(unknown\)/.test(pre.message) && /notice gives no deadline/.test(pre.message), "R1: no '(unknown) has passed'");
+ok(pre.show && !/\(unknown\)/.test(pre.message) && /could not read a submission deadline/.test(pre.message), "R1: no '(unknown) has passed'");
 ok(/procontract\.due-north\.com/.test(pre.message) && /reference DN831703/.test(pre.message), "ProContract steps with the reference");
 ok(/☐ Questionnaire or response template/.test(pre.message) && /uses 10 credits; each download afterwards uses 3 credits/.test(pre.message), "expected documents + cost");
 pre = ctx.bidPreflight(pcRow, [{ filename: "Doc4_Questionnaire.pdf" }, { filename: "Clarification_log_6_Nov.pdf" }], "", ["Hall bid 2025"], true, costs, false);

@@ -5082,7 +5082,10 @@ def create_app() -> Flask:
                 linked = first.setdefault("linked_notices", [])
                 if not any(l.get("source") == src for l in linked):
                     linked.append({"source": src, "source_label": r.get("source_label") or src, "title": r.get("title"),
-                                   "submission_deadline": r.get("submission_deadline"), "url": r.get("detail_url") or r.get("url")})
+                                   "submission_deadline": r.get("submission_deadline"), "url": r.get("detail_url") or r.get("url"),
+                                   # so a tender tracked under this copy still shows as tracked on the merged row
+                                   "tender_key": (f"{src}:{r.get('resource_id') or r.get('ocid') or r.get('title') or ''}".strip()
+                                                  if (r.get("resource_id") or r.get("ocid") or r.get("title")) else "")})
                 if other and (own is None or other > own) and (
                         not first.get("newer_deadline_elsewhere") or other > parse_deadline(first["newer_deadline_elsewhere"]["date"])):
                     first["newer_deadline_elsewhere"] = {"date": other.strftime("%d/%m/%Y"), "source_label": r.get("source_label") or src}
@@ -5460,8 +5463,13 @@ def create_app() -> Flask:
 
         prompt = decision_prompt(notice, company=company or "the company", company_data=bidder_text[:9000],
                                  company_context="", answer_bank="", warnings=[], closed=False)
-        prompt += ("\n\nOnly the public notice is available at this point, not the full tender documents: judge the "
-                   "fit on the work described, and keep criteria to the main areas of work it names.")
+        if own_text and len(own_text) >= 200:
+            prompt += ("\n\nThe text above is taken from the buyer's own documents that the bidder attached (excerpts, not all of "
+                       "them). Judge the fit on the specification and criteria it states; do not say the documents give no "
+                       "criteria or scope if it does.")
+        else:
+            prompt += ("\n\nOnly the public notice is available at this point, not the full tender documents: judge the "
+                       "fit on the work described, and keep criteria to the main areas of work it names.")
         decision = assess_bid(_call, prompt, [], False)
         if not decision:
             return jsonify({"ok": False, "error": "The fit check could not run. You can still generate."}), 502
@@ -7500,6 +7508,69 @@ Return ONLY this JSON structure:
                         signoffs=_load_signoffs(session.get("username") or "", str(body.get("bid_key") or "")))
         return jsonify({"ok": True, "readiness": out})
 
+    @app.post("/api/bid-regenerate-section")
+    @rate_limit(20, 3600)
+    def api_bid_regenerate_section():
+        """Release 10: write one answer or one section again (a failed or cut-off one) without a full run. One model call,
+        no credits, 20 an hour per user. Takes the draft's dissection so it answers the same question the draft did."""
+        from tender_app.bid_writer import extract_questions, question_prompt, write_question, GROUNDING_RULES, ends_cleanly
+        username = session.get("username") or ""
+        body = request.get_json(silent=True) or {}
+        s1 = body.get("dissection") if isinstance(body.get("dissection"), dict) else {}
+        qnum = str(body.get("question_number") or "").strip()
+        section = str(body.get("section") or "").strip()
+        t = body.get("tender") if isinstance(body.get("tender"), dict) else {}
+        company, bidder_text = _load_bidder_context(username, body.get("profile_id") or None)
+        if not bidder_text:
+            return jsonify({"ok": False, "error": "Select a company profile first."}), 400
+        provider, key_, model = get_ai_credentials()
+        api_key = key_ if (provider != "deepseek" or key_) else DEEPSEEK_API_KEY
+
+        def _call(system, user, max_tokens):
+            return call_chat_api(system=system, user=user, max_tokens=max_tokens, temperature=0.3,
+                                 response_format_json=True, provider=provider, api_key=api_key, model=model)
+
+        clar = "\n".join(f"- Q: {c.get('question', '')} A: {c.get('answer', '')}" for c in (s1.get("published_clarifications") or [])
+                         if isinstance(c, dict))[:6000]
+        title = str(t.get("title") or s1.get("tender_title") or "")
+        authority = str(s1.get("contracting_authority") or t.get("contracting_authority") or "")
+        if qnum:
+            questions = extract_questions(s1)
+            q = next((x for x in questions if str(x["number"]).lower() == qnum.lower()), None)
+            if not q:
+                return jsonify({"ok": False, "error": "That question is not in the buyer's list."}), 404
+            prompt = question_prompt(q, title=title, authority=authority, company=company or "the company",
+                                     tender_dissection=json.dumps(s1, default=str)[:24000], clarifications_block=clar,
+                                     company_data=bidder_text[:8000], company_context="", answer_bank="", winning_bids="",
+                                     other_questions=questions)
+            ans = write_question(_call, q, prompt)
+            return jsonify({"ok": ans.get("status") == "ok", "status": ans.get("status"), "answer": ans})
+        names = {"cover_letter": "covering letter", "social_value": "social value section",
+                 "quality_and_compliance": "quality and compliance section", "executive_summary": "executive summary",
+                 "understanding_of_requirements": "understanding of the requirements", "technical_methodology": "technical methodology",
+                 "relevant_experience": "relevant experience", "team_and_personnel": "team and personnel", "pricing_notes": "pricing notes"}
+        if section not in names:
+            return jsonify({"ok": False, "error": "Unknown section."}), 400
+        prompt = (f"Write the {names[section]} of a UK public-sector tender response for {company or 'the company'}.\n\n"
+                  f"TENDER: {title}\nBUYER: {authority}\n\nTENDER DISSECTION:\n{json.dumps(s1, default=str)[:20000]}\n\n"
+                  f"PUBLISHED CLARIFICATIONS:\n{clar or 'None'}\n\nCOMPANY DATA:\n{bidder_text[:8000]}\n\n{GROUNDING_RULES}\n\n"
+                  "About 350 words. Finish every sentence. Use [NEEDS INPUT: ...] for anything the data does not give.\n"
+                  'Return ONLY valid JSON: {"content": "the section text"}')
+        text = ""
+        for _ in range(2):
+            try:
+                raw = _call("You are a senior UK public-sector proposal writer. Return ONLY valid JSON.", prompt, 2500)
+                val = _parse_json_robust(str(raw)) if not isinstance(raw, dict) else raw
+                text = str((val or {}).get("content") or "").strip() if isinstance(val, dict) else ""
+            except Exception as e:  # noqa: BLE001
+                print("regenerate section error:", e)
+                text = ""
+            if text and ends_cleanly(text):
+                break
+        if not text or not ends_cleanly(text):
+            return jsonify({"ok": False, "error": "It still could not be written. Try again in a minute."}), 502
+        return jsonify({"ok": True, "section": section, "content": text})
+
     @app.post("/api/bid-signoff")
     @rate_limit(300, 3600)
     def api_bid_signoff():
@@ -8351,6 +8422,7 @@ Return ONLY this JSON structure:
                 from tender_app.submission_pack import financial_model_block as _fin_block
                 _fin_model = _fin_block(list(company_documents))
                 writer_notes += _fin_model
+                _ctype = ""
                 if not q_mode:
                     from tender_app.bid_release5 import contract_type_note as _type_note
                     _ctype, _ctype_note = _type_note(title, description, combined_tender_text[:6000])
@@ -8419,8 +8491,8 @@ Return ONLY valid JSON with no markdown fences matching this schema:
                     section_writers.append({
                         "key": "w2",
                         "name": "Methodology writer",
-                        "max_tokens": 3000,
-                        "prompt": f"""You are a bid writer. Write the delivery methodology for this tender: how the work in the scope will be delivered, phase by phase, with sub-headings per deliverable or phase. Use only the scope in the dissection; do not add technology, systems or services the tender does not involve.
+                        "max_tokens": 7000 if _ctype else 3000,
+                        "prompt": f"""You are a bid writer. Write the delivery methodology for this tender: how the work in the scope will be delivered, phase by phase, with sub-headings per deliverable or phase. Use only the scope in the dissection; do not add technology, systems or services the tender does not involve.{" Each sub-heading in the STRUCTURE note is a real section of at least 200 words with specifics (who, what, when, how it is checked), not a one-line paragraph; the whole methodology runs 1800-2800 words." if _ctype else ""}
 
 {shared_context}
 ANSWER BANK: {answer_bank_short}{winning_bids_block(6000)}
@@ -8428,7 +8500,7 @@ ANSWER BANK: {answer_bank_short}{winning_bids_block(6000)}
 {GROUNDING_RULES}
 
 Return ONLY valid JSON with no markdown fences:
-{{"technical_methodology": {{"content": "600-1000 words", "word_count": 800}}}}
+{{"technical_methodology": {{"content": "{'1800-2800 words, one sub-section per heading in the STRUCTURE note' if _ctype else '600-1000 words'}", "word_count": {2200 if _ctype else 800}}}}}
 {lang_instruction}"""
                     })
                     section_writers.append({
@@ -8447,7 +8519,7 @@ Return ONLY valid JSON with no markdown fences matching this schema:
 {{
   "relevant_experience": {{"content": "experience narrative; [NEEDS INPUT: case study ...] where none is given", "word_count": 400, "case_study_placeholders": [{{"label": "Case Study 1", "what_to_include": "what the bidder should insert"}}]}},
   "team_and_personnel": {{"content": "team and governance narrative", "word_count": 350, "personnel_placeholders": ["roles needing CVs or bios"]}},
-  "pricing_notes": {{"content": "pricing approach narrative (no invented figures)", "pricing_table_placeholder": "[NEEDS INPUT: completed pricing schedule]"}}
+  "pricing_notes": {{"content": "pricing approach narrative, then a table of the cost lines (role or stage, unit, rate) with [NEEDS INPUT: rate] in every price cell; state VAT treatment and what is excluded; no invented figures", "pricing_table_placeholder": "[NEEDS INPUT: completed pricing schedule]"}}
 }}
 {lang_instruction}"""
                     })
@@ -8465,7 +8537,8 @@ Return ONLY valid JSON with no markdown fences matching this schema:
                 section_writers.append({
                     "key": "w3",
                     "name": "Compliance writer",
-                    "max_tokens": 2500,
+                    "max_tokens": 4000,
+                    "expect": ["declarations"] if q_mode else ["quality_and_compliance", "social_value", "declarations"],
                     "prompt": f"""You are a bid compliance lead. {w3_task}
 Every declaration, exclusion ground, conflict-of-interest statement or eligibility statement is written as a separate line '[CONFIRM: <statement>]' for the bidder to tick. Never state that any of them is met, signed or completed.
 
@@ -8513,7 +8586,31 @@ Return ONLY valid JSON with no markdown fences:
                         except Exception as w_err:
                             print(f"Writer {w['name']} attempt {attempt + 1} error: {w_err}")
                             res = {}
-                    return w["key"], (res if isinstance(res, dict) else {})
+                    # Release 10: a writer that returns some sections but not all (Herts social value failed three runs in a
+                    # row) is asked again for just the missing ones, before they are left as failed sections.
+                    res = res if isinstance(res, dict) else {}
+                    missing = [k for k in (w.get("expect") or [])
+                               if not (isinstance(res.get(k), dict) and str(res[k].get("content") or "").strip())]
+                    for _try in range(2):
+                        if not missing:
+                            break
+                        try:
+                            extra = call_deepseek_stage(
+                                system="You are a senior UK public-sector proposal writer. Return ONLY valid JSON.",
+                                user=w["prompt"] + "\n\nReturn ONLY these keys this time: " + ", ".join(missing)
+                                     + ". Keep each one concise and complete; end every sentence.",
+                                api_key=DEEPSEEK_API_KEY, max_tokens=int(base * 1.4),
+                                _provider=_ai_provider, _key=_ai_key, _model=_ai_model)
+                            extra = extra if isinstance(extra, dict) else _parse_json_robust(str(extra))
+                            if isinstance(extra, dict):
+                                for k in missing:
+                                    if isinstance(extra.get(k), dict) and str(extra[k].get("content") or "").strip():
+                                        res[k] = extra[k]
+                        except Exception as w_err:  # noqa: BLE001
+                            print(f"Writer {w['name']} missing-section retry error: {w_err}")
+                        missing = [k for k in missing
+                                   if not (isinstance(res.get(k), dict) and str(res[k].get("content") or "").strip())]
+                    return w["key"], res
 
                 from tender_app.financial_model import is_heavy_financial as _heavy_fin, financial_question_block as _fin_q_block
 
@@ -8624,14 +8721,25 @@ Return ONLY valid JSON with no markdown fences:
                 _flag_claims(stage3_result, bid_decision)
                 from tender_app.bid_release7 import confirm_certifications_in_bid as _confirm_certs
                 _confirm_certs(stage3_result, ground_truth_combined)
-                if winning_bids:
+                from tender_app.bid_release7 import strip_drafting_guides as _strip_guides
+                _strip_guides(stage3_result)
+                if isinstance(stage1_result, dict) and (stage1_result.get("separate_technical_commercial") or _price_schedules):
+                    from tender_app.bid_release7 import add_commercial_pack as _add_comm
+                    _add_comm(stage3_result, _price_schedules, combined_tender_text[:200000])
+                if winning_bids and _pb_mode != "off":
                     from tender_app.bid_style import mark_reused_facts as _mark_reused
                     _past_all = " ".join(w["text"] for w in winning_bids if w.get("outcome") != "lost")
                     _buyers = tuple(w["buyer"] for w in winning_bids if w.get("buyer"))
+                    # Facts the buyer's own documents state (their dates, years, amounts) are never "from a past bid".
+                    _guard_evidence = f"{ground_truth_combined}\n{stage1_json_str}\n{published_clar}\n{combined_tender_text[:200000]}"
                     for _lbl, _obj, _k in _r5_texts(stage3_result):
-                        _obj[_k], _ = _mark_reused(_obj[_k], _past_all, ground_truth_combined, _buyers)
+                        _obj[_k], _ = _mark_reused(_obj[_k], _past_all, _guard_evidence, _buyers)
                 from tender_app.bid_release5 import drop_near_duplicates as _drop_dups
                 _drop_dups(stage3_result)
+                from tender_app.bid_release7 import enforce_word_limits as _enforce_limits
+                from tender_app.bid_release7 import fix_spilled_question_headings as _fix_heads
+                _fix_heads(stage3_result)
+                _enforce_limits(stage3_result, stage1_result if isinstance(stage1_result, dict) else {})
                 consistency_issues = _flag_contradictions(stage3_result)
                 _flag_checklist_dates(checklist_items, _today)
                 from tender_app.bid_writer import find_placeholders
@@ -9499,8 +9607,22 @@ Return ONLY valid JSON with no markdown fences:
         # the deadline with its time zone and the dated actions. For the bidder, not the buyer.
         _writer_note_text = "" if final_export else str(body.get("writer_note") or "").strip()
         if _writer_note_text:
-            add_heading("Bid writer's note (remove before submission)", size=32, color="B45309")
-            add_paragraphs(_writer_note_text)
+            # A shaded, bordered box so nobody mistakes the note for bid text when copying sections out (release 7 re-test).
+            _box_ppr = ('<w:pPr><w:pBdr><w:top w:val="single" w:sz="12" w:space="6" w:color="B45309"/>'
+                        '<w:left w:val="single" w:sz="12" w:space="6" w:color="B45309"/>'
+                        '<w:bottom w:val="single" w:sz="12" w:space="6" w:color="B45309"/>'
+                        '<w:right w:val="single" w:sz="12" w:space="6" w:color="B45309"/></w:pBdr>'
+                        '<w:shd w:val="clear" w:color="auto" w:fill="FEF3C7"/><w:spacing w:after="60"/></w:pPr>')
+
+            def _box_line(txt, bold=False, color="3F2A07", size=21):
+                xml_content.append('    <w:p>' + _box_ppr + '<w:r><w:rPr><w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI"/>'
+                                   + ('<w:b/>' if bold else '') + f'<w:color w:val="{color}"/><w:sz w:val="{size}"/></w:rPr>'
+                                   f'<w:t xml:space="preserve">{xml_escape(txt)}</w:t></w:r></w:p>')
+            _box_line("DRAFT, INTERNAL, REMOVE BEFORE SUBMISSION", bold=True, color="B45309", size=24)
+            _box_line("Bid writer's note. For the bidder, not the buyer.", bold=True)
+            for _ln in _writer_note_text.splitlines():
+                _ln = _ln.replace("**", "").rstrip()
+                _box_line(_ln if _ln.strip() else " ", bold=bool(re.match(r"^(recommendation|decision)\b", _ln.strip(), re.I)))
             add_page_break()
 
         # ----------------------------------------------------

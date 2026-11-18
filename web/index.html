@@ -46,7 +46,7 @@
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=20" />
   <link rel="stylesheet" href="/pages.css?v=33" />
-  <link rel="stylesheet" href="/workspace.css?v=4" />
+  <link rel="stylesheet" href="/workspace.css?v=6" />
   <link rel="stylesheet" href="/funding.css?v=25" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
@@ -1171,18 +1171,7 @@
           <div style="margin-top:10px; font-size:12px; display:grid; gap:8px;">
             <label><input type="checkbox" id="bidBrandingOn" checked /> Apply my brand kit to the Word file for this bid</label>
             <label><input type="checkbox" id="bidAnonymiseAnswers" /> The buyer asks for anonymised answers (logo and company line only on the cover page)</label>
-            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">
-              <label>Heading colour <input type="color" id="brandColor" value="#1e3a8a" /></label>
-              <label>Font
-                <select id="brandFont" class="select">
-                  <option>Calibri</option><option>Arial</option><option selected>Segoe UI</option><option>Georgia</option>
-                  <option>Times New Roman</option><option>Verdana</option><option>Cambria</option><option>Tahoma</option>
-                </select></label>
-              <label>Footer line <input type="text" id="brandFooter" maxlength="160" placeholder="Company name | Company no. 12345678" style="min-width:240px;" /></label>
-              <label>Logo (PNG or JPEG, under 400 KB) <input type="file" id="brandLogo" accept="image/png,image/jpeg" /></label>
-              <button type="button" class="btn btn--small" id="btnSaveBrandKit">Save brand kit</button>
-            </div>
-            <div id="brandKitStatus" style="color:var(--text-muted);"></div>
+            <div style="color:var(--text-muted);">Colour, font, footer and logo are set once per company in Company profiles. <a href="#" id="bidBrandKitLink">Open Company profiles</a></div>
           </div>
         </details>
 
@@ -1628,6 +1617,23 @@
             <div id="cpStep2" class="cp-step-panel"></div>
             <div id="cpStep3" class="cp-step-panel"></div>
             <div id="cpStep4" class="cp-step-panel"></div>
+        <details id="cpBrandKitCard" class="bid-step-card" style="padding:10px 14px; margin-top:12px;">
+          <summary style="cursor:pointer; font-weight:600;">Brand kit for bids <span id="cpBrandKitSummary" style="font-weight:400; color:var(--text-muted); font-size:12px; margin-left:8px;"></span></summary>
+          <div style="margin-top:10px; font-size:12px; display:grid; gap:8px;">
+            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">
+              <label>Heading colour <input type="color" id="brandColor" value="#1e3a8a" /></label>
+              <label>Font
+                <select id="brandFont" class="select">
+                  <option>Calibri</option><option>Arial</option><option selected>Segoe UI</option><option>Georgia</option>
+                  <option>Times New Roman</option><option>Verdana</option><option>Cambria</option><option>Tahoma</option>
+                </select></label>
+              <label>Footer line <input type="text" id="brandFooter" maxlength="160" placeholder="Company name | Company no. 12345678" style="min-width:240px;" /></label>
+              <label>Logo (PNG or JPEG, under 400 KB) <input type="file" id="brandLogo" accept="image/png,image/jpeg" /></label>
+              <button type="button" class="btn btn--small" id="btnSaveBrandKit">Save brand kit</button>
+            </div>
+            <div id="brandKitStatus" style="color:var(--text-muted);"></div>
+          </div>
+        </details>
           </div>
 
         </div><!-- /cp-body -->
@@ -3572,7 +3578,7 @@
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=2"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=304"></script>
+  <script src="/app.js?v=308"></script>
   <script src="/planning.js?v=23"></script>
   <script src="/funding.js?v=11"></script>
   <script src="/grants-board.js?v=1"></script>

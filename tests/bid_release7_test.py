@@ -110,4 +110,48 @@ ok(n_ == 0, "a denial is not marked")
 bid = {"cover_letter": {"content": "We are ISO 27001 certified."}}
 ok(r7.confirm_certifications_in_bid(bid, "policy only") == 1 and "[CONFIRM" in bid["cover_letter"]["content"], "applies across a bid")
 
+# ---- release 9: repeated sub-headings and the portal named from the notice reference -------------------------------------------
+rep = r7.repeated_headings([("Section 4", "## Health and safety\ntext\n## Pricing basis"),
+                            ("Section 7", "**Health and safety**\nmore\n## Summary"), ("Section 8", "## Summary")])
+ok(rep == [("Health and safety", ["Section 4", "Section 7"])], "a repeated sub-heading is found, generic ones are not: %s" % rep)
+ok(r7.repeated_headings([("A", "## Staffing"), ("B", "## Pricing")]) == [] and r7.repeated_headings(None) == [], "no repeat, no finding")
+from tender_app import readiness as _rd
+_res = _rd.readiness({"sections": []}, {}, {})
+ok(isinstance(_res, dict), "readiness still runs")
+ok(r5.portal_from_reference("OLDH001-DN835252") == "The Chest (Due North)", "Oldham reference points to The Chest")
+ok(r5.portal_from_reference("DN831703") == "ProContract (Due North)" and r5.portal_from_reference("", None, "x") == "", "bare DN is ProContract; unknown is empty")
+ok("The Chest (Due North)" in r5.provisional_structure_note(False, {"reference": "OLDH001-DN835252"}), "the provisional note names the portal")
+ok("the buyer's portal" in r5.provisional_structure_note(False, {}), "no reference keeps the old wording")
+
+# ---- release 10: drafting guides never printed, experience claims flagged without an incorporation date, score capped -----------
+_qq = r7.submission_doc_questions({"required_submission_documents": [{"name": "5.1 Technical offer", "kind": "technical"}]})
+_bd = {"itt_question_responses": [{"question_number": "5.1", "question_text": _qq[0]["question_text"],
+                                   "response": "Intro. " + r7._KIND_GUIDE["technical"] + " Our offer."}]}
+ok(r7.strip_drafting_guides(_bd) == 2 and _bd["itt_question_responses"][0]["question_text"] == "5.1 Technical offer."
+   and "Write the technical offer" not in _bd["itt_question_responses"][0]["response"], "the drafting guide is stripped: %s" % _bd)
+_bd2 = {"itt_question_responses": [{"question_text": "Q1 text", "response": "Fine."}]}
+ok(r7.strip_drafting_guides(_bd2) == 0 and r7.strip_drafting_guides(None) == 0, "a clean bid is untouched")
+_exp = r5.reconcile_experience("We bring over 12 years' experience of plumbing.", None, datetime.date(2026, 11, 18))
+ok("[CONFIRM" in _exp, "a long experience claim with no incorporation date is still flagged: %s" % _exp)
+ok("[CONFIRM" not in r5.reconcile_experience("Our 3 years of experience.", None, datetime.date(2026, 11, 18)), "a short claim is left alone")
+_p0 = _rd.readiness({"cover_letter": {"content": "[NEEDS INPUT: the covering letter could not be generated - regenerate the bid]"},
+                     "itt_question_responses": [{"question_number": "1", "question_text": "Q", "response": "Good answer. " * 40}]},
+                    {"itt_questions": [{"number": "1", "question_text": "Q", "weighting": "100%"}]},
+                    {"issues": [{"check": "coverage", "severity": "P0", "section": "Cover letter", "detail": "x"}]})
+ok(_p0["p0_open"] >= 1 and _p0["score"] <= 69, "the score is capped while a P0 is open: %s" % _p0["score"])
+
+# ---- release 10b: commercial part, word limits, spilled headings, past-bid split ------------------------------------------------------
+_ct = r7.commercial_pack_text([{"sheet": "Vol 3", "header": ["Item", "Description", "Qty", "Unit price"], "rows": [["1", "Laptop", "10", ""], ["2", "Dock", "10", ""]]}],
+                              "Prices are converted to GBP at the OANDA rate on the closing date. Other text.")
+ok("[NEEDS INPUT: unit price]" in _ct and "| Laptop" in _ct and "OANDA" in _ct and "[CONFIRM" in _ct, "commercial part has line items, price cells and the currency rule: %s" % _ct)
+_bc = {"pricing_notes": {"content": "Our pricing."}}
+ok(r7.add_commercial_pack(_bc, [], "") and "unit price" in _bc["pricing_notes"]["content"] and not r7.add_commercial_pack(_bc, [], ""), "added once")
+_long = " ".join(["word"] * 614) + "."
+_wl = {"itt_question_responses": [{"question_number": "D1.4", "response": _long, "word_limit": 500}, {"question_number": "D1.5", "response": _long}]}
+ok(r7.enforce_word_limits(_wl, {"format_requirements": {"page_or_word_limits": "500 words per answer"}}) == 2
+   and all(len(q["response"].split()) <= 500 for q in _wl["itt_question_responses"]), "a hard limit is applied last, also from the format requirements")
+_sp = {"itt_question_responses": [{"question_number": "D", "response": "Team text.\n\n## E. Mobilisation"}, {"question_number": "E", "response": "Plan text."}]}
+ok(r7.fix_spilled_question_headings(_sp) == 1 and _sp["itt_question_responses"][1]["response"].startswith("## E. Mobilisation")
+   and "Mobilisation" not in _sp["itt_question_responses"][0]["response"], "a heading spilled onto the previous question moves back: %s" % _sp)
+
 print("release 7: %d checks passed" % n)

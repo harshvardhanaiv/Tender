@@ -332,7 +332,7 @@ note_body = {"title": "Office cleaning", "authority": "Chemonics Group UK Limite
 rn = client.post("/api/download-proposal", headers={"X-CSRF-Token": "t"}, json=note_body)
 zn = zipfile.ZipFile(io.BytesIO(rn.data))
 xn = zn.read("word/document.xml").decode("utf-8")
-ok("Bid writer&apos;s note (remove before submission)" in xn and "16:00 UK time" in xn, "docx opens with the bid writer's note")
+ok("REMOVE BEFORE SUBMISSION" in xn and "16:00 UK time" in xn, "docx opens with the bid writer's note")
 ok("[CONFIRM: partner name] x 6" in xn, "Appendix C groups the repeated placeholder with a count")
 try:
     import pymupdf  # noqa: F401

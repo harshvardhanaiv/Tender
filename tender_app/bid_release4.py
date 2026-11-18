@@ -214,7 +214,8 @@ def writer_note(decision, passed, stage1, tender_closed: bool = False) -> str:
     d = decision or {}
     fit = d.get("fit_score")
     verdict = str(d.get("verdict") or "")
-    if verdict and (verdict.lower() != "bid" or (isinstance(fit, (int, float)) and fit < 40)):
+    _advice = bool(verdict and (verdict.lower() != "bid" or (isinstance(fit, (int, float)) and fit < 40)))
+    if _advice:
         lines.append(f"Advice: {verdict}" + (f" (fit {fit}/100)" if fit is not None else "") + ". " + str(d.get("summary") or "").strip())
         gaps = [str(g) for g in (d.get("capability_gaps") or []) if str(g).strip()]
         if gaps:
@@ -234,5 +235,11 @@ def writer_note(decision, passed, stage1, tender_closed: bool = False) -> str:
         lines.append(f"Submission deadline: {dd}.")
     acts = key_actions(stage1)
     if acts:
-        lines.append("Dated actions for the bidder: " + "; ".join(acts[:8]) + ".")
-    return "\n".join(x for x in lines if x.strip())
+        lines.append("Actions for the bidder (tick them off on the Bid plan):")
+        lines.extend("- " + a for a in acts[:8])
+    lines = [x for x in lines if x.strip()]
+    if lines and verdict:
+        # One decision line first, then the reasons (release 7 re-test: the advice sat in a long paragraph).
+        lines.insert(0, "Recommendation: " + verdict.upper() + (f" (fit {fit}/100)" if fit is not None else "")
+                     + (f". Deadline: {dd}" if dd else "") + ".")
+    return "\n".join(lines)

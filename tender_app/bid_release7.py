@@ -180,3 +180,180 @@ def confirm_certifications_in_bid(bid_response: dict, evidence: str) -> int:
                 obj[key] = new
                 total += c
     return total
+
+
+# ---- Release 9: the same sub-heading in two sections ---------------------------------------------------------------------
+_HEADING_LINE = re.compile(r"^\s*(?:#{2,5}\s+|\*\*)(.{3,70}?)(?:\*\*)?\s*:?\s*$")
+_GENERIC_HEADING = re.compile(r"^(summary|overview|introduction|approach|our approach|conclusion|next steps|assumptions?|risks?)$", re.I)
+
+
+def repeated_headings(texts) -> list[tuple[str, list[str]]]:
+    """Sub-headings that appear in two or more sections of a draft, as [(heading, [section labels])]. Herts section 7 repeated the
+    sub-headings of section 4 (health and safety, staff, pricing basis, submission): the second one should point back instead."""
+    seen: dict[str, tuple[str, list[str]]] = {}
+    for label, text in texts or []:
+        mine = set()
+        for line in str(text or "").splitlines():
+            m = _HEADING_LINE.match(line)
+            if not m:
+                continue
+            h = re.sub(r"\s+", " ", m.group(1)).strip(" *#:")
+            if len(h) < 3 or _GENERIC_HEADING.match(h):
+                continue
+            key = h.lower()
+            if key in mine:
+                continue
+            mine.add(key)
+            entry = seen.setdefault(key, (h, []))
+            if label not in entry[1]:
+                entry[1].append(label)
+    return [(h, labels) for h, labels in seen.values() if len(labels) >= 2]
+
+
+# ---- Release 10: the buyer's question is printed, never our drafting prompt -----------------------------------------------------
+def strip_drafting_guides(bid_response: dict | None) -> int:
+    """The submission-document questions carry a drafting guide after the document name ("Technical offer. Write the technical
+    offer for this requirement ..."). Chemonics, Oldham and NHS Wales printed it in the bid. Keep the buyer's wording only."""
+    if not isinstance(bid_response, dict):
+        return 0
+    guides = [g for g in list(_KIND_GUIDE.values()) + [_DEFAULT_GUIDE] if g]
+    n = 0
+    for q in bid_response.get("itt_question_responses") or []:
+        if not isinstance(q, dict):
+            continue
+        for key in ("question_text", "response", "question"):
+            v = q.get(key)
+            if not isinstance(v, str):
+                continue
+            new = v
+            for g in guides:
+                head = g[:60]
+                i = new.find(head)
+                if i >= 0:
+                    j = i + len(g)
+                    new = (new[:i].rstrip() + " " + new[j:].lstrip()).strip() if new[j:j + 1] else new[:i].rstrip()
+            new = re.sub(r"\s+([.:])\s*$", r"\1", new)
+            if new != v:
+                q[key] = new
+                n += 1
+    return n
+
+
+# ---- Release 10: the commercial part of a bid whose prices go in a separate file ---------------------------------------------------
+_OANDA = re.compile(r"[^.\n]*\b(?:OANDA|exchange rate|currency conver\w+|converted to (?:GBP|USD|EUR))[^.\n]*[.\n]", re.I)
+
+
+def commercial_pack_text(schedules, buyer_text: str = "", max_rows: int = 30) -> str:
+    """Markdown for the commercial part: the buyer's line items with a unit-price cell left as [NEEDS INPUT], and any currency
+    conversion rule the buyer states (Chemonics: OANDA rate). Nothing is priced here; the figures come from the bidder."""
+    lines = []
+    for sch in (schedules or [])[:3]:
+        header = [str(h) for h in (sch.get("header") or [])]
+        rows = [r for r in (sch.get("rows") or []) if any(str(c).strip() for c in r)]
+        if not header or not rows:
+            continue
+        qty_i = next((i for i, h in enumerate(header) if re.search(r"\b(qty|quantity|units?)\b", h, re.I)), None)
+        keep = [i for i in range(len(header)) if not re.search(r"unit\s*price|price|rate|total|amount", header[i], re.I)][:3]
+        if qty_i is not None and qty_i not in keep:
+            keep.append(qty_i)
+        cols = [header[i] or "Item" for i in keep] + ["Unit price (GBP)"]
+        lines.append(f"**{sch.get('sheet') or 'Price schedule'}**")
+        lines.append("| " + " | ".join(c.replace("|", "/") for c in cols) + " |")
+        lines.append("|" + "---|" * len(cols))
+        for r in rows[:max_rows]:
+            cells = [(str(r[i]) if i < len(r) else "").replace("|", "/")[:80] for i in keep]
+            lines.append("| " + " | ".join(cells) + " | [NEEDS INPUT: unit price] |")
+        if len(rows) > max_rows:
+            lines.append(f"\n{len(rows) - max_rows} more line(s) are in the buyer's workbook: complete them there.")
+        lines.append("")
+    if not lines:
+        lines.append("The buyer's price schedule is completed in its own workbook. [NEEDS INPUT: unit price for each line item]")
+    m = _OANDA.search(buyer_text or "")
+    if m:
+        lines.append("Currency: " + re.sub(r"\s+", " ", m.group(0)).strip()
+                     + " [CONFIRM: state the rate source and the date you used when converting to GBP]")
+    return "\n".join(lines).strip()
+
+
+def add_commercial_pack(bid_response: dict, schedules, buyer_text: str) -> bool:
+    """Append the commercial part to the pricing section when the buyer wants prices in a separate file."""
+    if not isinstance(bid_response, dict):
+        return False
+    block = commercial_pack_text(schedules, buyer_text)
+    obj = bid_response.get("pricing_notes")
+    if not isinstance(obj, dict):
+        obj = bid_response["pricing_notes"] = {"content": ""}
+    cur = str(obj.get("content") or "")
+    if "[NEEDS INPUT: unit price" in cur:
+        return False
+    obj["content"] = (cur + "\n\n## Commercial offer: price schedule\n" + block).strip()
+    return True
+
+
+# ---- Release 10: a hard word limit is enforced after every later edit -------------------------------------------------------------
+_PER_ANSWER = re.compile(r"(\d{2,5})\s*words?\s*(?:per|for each|each|maximum per|max(?:imum)? per)\s*(?:answer|question|response|section)|"
+                         r"(?:answers?|questions?|responses?)\s*(?:are |is )?(?:limited to|capped at|max(?:imum)?(?: of)?)\s*(\d{2,5})\s*words?", re.I)
+
+
+def enforce_word_limits(bid_response: dict | None, stage1: dict | None = None) -> int:
+    """Cornwall College D1.4 ran 614 and D1.2 561 words against 500: the limit was applied before later steps (tags, notes) grew
+    the text, or was never read onto the question. Applies the buyer's limit last, using the question's own, else a per-answer limit
+    in the buyer's format requirements. Returns how many answers were cut."""
+    from tender_app.bid_writer import answer_words, trim_to_words
+    if not isinstance(bid_response, dict):
+        return 0
+    fmt = (stage1 or {}).get("format_requirements") if isinstance(stage1, dict) else None
+    blob = " ".join(str(v) for v in (fmt or {}).values()) if isinstance(fmt, dict) else ""
+    m = _PER_ANSWER.search(blob)
+    general = int(m.group(1) or m.group(2)) if m else None
+    n = 0
+    for q in bid_response.get("itt_question_responses") or []:
+        if not isinstance(q, dict):
+            continue
+        try:
+            limit = int(q.get("word_limit") or 0) or (general or 0)
+        except (TypeError, ValueError):
+            limit = general or 0
+        text = str(q.get("response") or "")
+        if limit and answer_words(text) > limit:
+            q["response"] = trim_to_words(text, limit)
+            q["word_count"] = answer_words(q["response"])
+            q["word_limit"] = limit
+            q["trimmed_to_limit"] = True
+            n += 1
+    return n
+
+
+# ---- Release 10: a heading that belongs to the next question is not left at the end of this one (Thetford D / E) -------------------
+_Q_HEAD = re.compile(r"^\s*(?:#{1,5}\s*|\*\*)?(?:Question\s+)?([A-Z]\d{0,2}(?:\.\d+)*|\d+(?:\.\d+)*)[.):\s]", re.I)
+
+
+def fix_spilled_question_headings(bid_response: dict | None) -> int:
+    """Moves a trailing line like "## E. Mobilisation" that sits at the end of question D's answer to the start of E's answer, and
+    drops it when E already opens with its own heading. Returns how many were moved."""
+    if not isinstance(bid_response, dict):
+        return 0
+    qs = [q for q in (bid_response.get("itt_question_responses") or []) if isinstance(q, dict)]
+    nums = [str(q.get("question_number") or "").strip().lower().rstrip(".") for q in qs]
+    moved = 0
+    for i, q in enumerate(qs[:-1]):
+        lines = str(q.get("response") or "").rstrip().splitlines()
+        j = len(lines) - 1
+        while j >= 0 and not lines[j].strip():
+            j -= 1
+        if j < 0:
+            continue
+        m = _Q_HEAD.match(lines[j])
+        if not m or len(lines[j]) > 120:
+            continue
+        tag = m.group(1).lower().rstrip(".")
+        if tag == nums[i] or tag not in nums[i + 1:]:
+            continue
+        head = lines[j].strip()
+        q["response"] = "\n".join(lines[:j]).rstrip()
+        nxt = qs[nums.index(tag, i + 1)]
+        body = str(nxt.get("response") or "").lstrip()
+        if not _Q_HEAD.match(body.splitlines()[0] if body else ""):
+            nxt["response"] = head + "\n\n" + body
+        moved += 1
+    return moved

@@ -12,7 +12,13 @@ from collections import Counter
 
 from tender_app.bid_style import _words, mark_reused_facts, normalise_outcome
 
-_HEAD = re.compile(r"^\s*(?:Q(?:uestion)?\s*\d+[A-Za-z.]*[.:)]?|\d{1,2}(?:\.\d{1,2})*[.)])\s+\S.{2,110}$", re.I)
+_SEP = r"[.):\-–—]"
+_HEAD = re.compile(
+    r"^\s*(?:#{1,4}\s*)?(?:\*\*)?(?:"
+    r"(?:Q(?:uestion)?\s*\d+[A-Za-z]{0,3}(?:\.\d+|\.[IVX]+)*\.?\s*" + _SEP + r"?)"
+    r"|(?:\d{1,2}(?:\.\d{1,2})*" + _SEP + r")|(?:[A-Z]\d{1,2}(?:\.\d{1,2})*" + _SEP + r"))"
+    r"(?:\*\*)?\s+\S.{2,110}$", re.I)
+_MD_HEAD = re.compile(r"^\s*#{1,3}\s+\S.{2,110}$")
 _FIGURE = re.compile(r"(?:GBP|£)\s?\d[\d,.]*|\b\d[\d,.]*\s?%|\b(?:19|20)\d{2}\b|\b\d[\d,]*\b")
 _SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\[])")
 
@@ -41,6 +47,16 @@ def split_answers(text):
         if len(body.split()) >= 60:
             answers.append({"label": lines[start].strip()[:120], "text": body})
     if len(answers) < 2:
+        # No numbered questions: split on Markdown headings, which is how a bid exported to Word and read back looks.
+        mds = [i for i, ln in enumerate(lines) if _MD_HEAD.match(ln)]
+        alt = []
+        for n, start in enumerate(mds):
+            end = mds[n + 1] if n + 1 < len(mds) else len(lines)
+            body = "\n".join(lines[start + 1:end]).strip()
+            if len(body.split()) >= 60:
+                alt.append({"label": lines[start].strip("# ").strip()[:120], "text": body})
+        if len(alt) >= 2:
+            return alt
         whole = (text or "").strip()
         return [{"label": "Whole document", "text": whole}] if len(whole.split()) >= 60 else []
     return answers

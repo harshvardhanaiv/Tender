@@ -87,4 +87,13 @@ done = {k: {"by": "a@b.c", "at": "2026-11-17"} for k in keys}
 r = readiness(b, S1, qa_gate(b), signoffs=done, today=TODAY)
 ok(r["ready"] and r["signoff_open"] == 0 and r["signoff"][0]["by"] == "a@b.c", "everything ticked and no P0: ready")
 ok(len(signoff_items({})) == 2, "the standard sign-off items exist without buyer documents")
+_r = {"itt_question_responses": [{"question_number": "1", "weighting": "20%", "response": "word " * 50},
+                                 {"question_number": "2", "weighting": "40%", "response": "word " * 400},
+                                 {"question_number": "3", "weighting": "40%", "response": "word " * 400}]}
+_res = readiness(_r, {"mandatory_requirements": ["Provide your EDRPOU registration number"]}, {})
+ok(any(i["check"] == "word_share" for i in _res["items"]), "a 20% question with 6% of the words is flagged")
+ok(any(i["check"] == "registration_id" for i in _res["items"]), "the overseas registration number the buyer asks for is flagged")
+_r["declarations"] = {"content": "Our EDRPOU number is 12345678."}
+ok(not any(i["check"] == "registration_id" for i in readiness(_r, {"mandatory_requirements": ["EDRPOU number"]}, {})["items"]), "supplied number clears it")
+
 print("readiness: %d checks passed" % n)

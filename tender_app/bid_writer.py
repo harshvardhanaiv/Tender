@@ -39,7 +39,8 @@ GROUNDING_RULES = """GROUNDING RULES (these override any other instruction):
 15. Percentages, values and dates the buyer published (evaluation weightings, contract value, deadlines) are the buyer's facts: write them plainly, never inside a placeholder.
 16. A date that has already passed is never written as something the bidder will still do ("we will send samples by 30 October" after that date). Say it has passed and write [CONFIRM: new date agreed with the buyer].
 17. Years of experience: the COMPANY DATA may quote the experience of its people. If the company itself is younger than the years claimed, write it as the team's experience ("our team has over 12 years' experience"), not the company's.
-18. Never mention how this document was produced: no "draft", "AI", "generated" or tool names in any text the buyer will read."""
+18. Never mention how this document was produced: no "draft", "AI", "generated" or tool names in any text the buyer will read.
+19. Do not repeat a sub-heading or its content in two sections: say it once where it belongs and point to it from the other ("see section 4"). Give each part of the contract words in proportion to its weighting or share of the work: a part worth 20% of the marks cannot get 7% of the words, and a compliance topic the buyer names (water hygiene, health and safety) is written into the section it belongs to."""
 
 ANSWER_STANDARD = """ANSWER STANDARD:
 - The first sentence answers the question directly, in the buyer's words. No preamble ("We are delighted...").

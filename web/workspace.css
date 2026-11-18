@@ -121,3 +121,26 @@ body.tf-shell #bidModal.ws-page > .modal > .bid-modal-footer {
 }
 body.tf-shell #bidModal.ws-page .bid-modal-footer__left { flex: 1 1 auto; min-width: 0; }
 body.tf-shell #bidModal.ws-page .bid-modal-footer .bid-btn-generate { padding: 11px 22px !important; font-size: 14px !important; }
+
+/* Extra blocks the three views add (Summary key facts, Clarifications "Ask the buyer", Deep analysis counts). */
+.ws-extra { background: var(--surface, #fff); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 14px 16px; margin: 0 0 14px; box-sizing: border-box; }
+.ws-extra__h { margin: 0 0 8px; font-size: 14px; }
+.ws-extra__p { margin: 0 0 8px; font-size: 13px; color: var(--muted, #64748b); }
+.ws-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 16px; }
+.ws-fact { display: flex; flex-direction: column; gap: 2px; }
+.ws-fact__k { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted, #64748b); }
+.ws-fact__v { font-weight: 600; overflow-wrap: anywhere; }
+.ws-ask__text { width: 100%; box-sizing: border-box; font: inherit; font-size: 13.5px; padding: 8px 10px; border: 1px solid var(--border, #e2e8f0); border-radius: 8px; background: var(--bg, #f5f6fa); color: inherit; resize: vertical; margin-bottom: 8px; }
+.ws-ask__done { font-size: 12.5px; color: var(--muted, #64748b); }
+.ws-extra--kpis { display: flex; gap: 12px; flex-wrap: wrap; background: none; border: 0; padding: 0; }
+.ws-kpi { flex: 1 1 120px; background: var(--surface, #fff); border: 1px solid var(--border, #e2e8f0); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; }
+.ws-kpi b { font-size: 24px; line-height: 1.1; }
+.ws-kpi span { font-size: 12.5px; color: var(--muted, #64748b); }
+
+/* The stage buttons (Stage 1 to 5) stick just under the page header instead of overlapping it (release 7 re-test). */
+body.tf-shell #bidModal.ws-page #bidModalBody .pills-container {
+  top: var(--ws-bar-h, 0px) !important;
+  margin-top: 0 !important;
+  padding-top: 10px !important;
+  z-index: 18 !important;
+}
