@@ -52,6 +52,16 @@ def rank_past_bids(library, tender_title, tender_text):
     return [b for s, b in scored]
 
 
+def topic_match(bid, tender_title):
+    """Share of the tender title's words found in the past bid, as a whole percent (shown as "topic match" on the bid page).
+    None when the title has no usable words."""
+    want = _words(tender_title)
+    if not want:
+        return None
+    have = _words((bid or {}).get("title", "")) | _words(((bid or {}).get("text") or "")[:20000])
+    return round(100 * len(want & have) / len(want))
+
+
 def choose_past_bids(mode, library, selected_ids, tender_title, tender_text, limit=3):
     """The bids to use for this one bid. 'library' keeps the user's ticks (up to 5); 'auto' picks the closest few."""
     mode = normalise_mode(mode, len(library or []))

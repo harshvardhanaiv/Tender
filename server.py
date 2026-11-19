@@ -7613,7 +7613,7 @@ Return ONLY this JSON structure:
     def api_bid_style_preview():
         """Release 8 (F2): what TenderFlow learns from the past bids chosen for this bid, and the answer plan.
         Free: reads the user's own library, no model call, no credits."""
-        from tender_app.bid_style import choose_past_bids
+        from tender_app.bid_style import choose_past_bids, topic_match
         from tender_app.bid_style_learn import learn_style, style_brief, answer_plan
         from tender_app.bid_writer import extract_questions
         username = session.get("username") or ""
@@ -7642,7 +7642,8 @@ Return ONLY this JSON structure:
         questions = extract_questions({"itt_questions": [q for q in (body.get("questions") or []) if isinstance(q, dict)][:60]})
         return jsonify({
             "ok": True, "mode": mode,
-            "bids": [{"title": b["title"], "buyer": b["buyer"], "year": b["year"], "outcome": b["outcome"]} for b in bids],
+            "bids": [{"id": b["id"], "title": b["title"], "buyer": b["buyer"], "year": b["year"], "outcome": b["outcome"],
+                      "match": topic_match(b, str(t.get("title") or ""))} for b in bids],
             "profile": profile, "style_brief": style_brief(profile),
             "plan": answer_plan(questions, profile, bids, ""),
         })

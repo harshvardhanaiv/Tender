@@ -53,4 +53,9 @@ ok(r["auto_off"] and r["buyer_template"], "a buyer template switches branding of
 r = bs.branding_rules({"structure": "sections 1-6"}, "Describe your approach to delivery.")
 ok(not r["auto_off"] and r["reason"] == "", "no format rule: branding stays on")
 ok(not bs.branding_rules(None, None)["auto_off"], "safe on empty input")
+# release 12: "topic match" on the bid page
+m = bs.topic_match({"title": "Live Well evaluation", "text": "We evaluated a community wellbeing service in Oldham."}, "Oldham Live Well Evaluation")
+ok(isinstance(m, int) and 50 <= m <= 100, "topic match is a whole percent of the title's words found: %s" % m)
+ok(bs.topic_match({"title": "Road gritting", "text": ""}, "Oldham Live Well Evaluation") == 0, "no shared words: 0%")
+ok(bs.topic_match({"title": "x"}, "") is None and bs.topic_match(None, "Oldham") == 0, "no title words: none; no bid: 0")
 print("bid style: %d checks passed" % n)

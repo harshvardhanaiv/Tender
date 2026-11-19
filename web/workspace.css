@@ -145,40 +145,152 @@ body.tf-shell #bidModal.ws-page #bidModalBody .pills-container {
   z-index: 18 !important;
 }
 
-/* Text reused from a past bid: a dashed box, and each old fact clickable to confirm (release 11). */
-#bidModalBody .reused-para { border: 1.5px dashed #b45309; border-radius: 6px; padding: 6px 10px; margin: 6px 0; background: #fffbeb; }
-#bidModalBody .reused-para__label { font-size: 11px; font-weight: 600; color: #b45309; margin-bottom: 2px; }
-#bidModalBody .past-fact { cursor: pointer; text-decoration: underline dotted; }
-#bidModalBody .past-fact:hover { outline: 2px solid #f59e0b; }
+/* Release 12: the bid page follows the per-bid branding prototype. Steps on the left with switches on the new steps (4 and 5),
+   a live preview on the right with three tabs (draft, what TenderFlow learned, answer plan); stacked on narrow screens. */
+#bidModal {
+  --bid-acc: #0C1A33; --bid-acc-ink: #fff; --bid-acc-soft: #E8EDF6;
+  --bid-ok: #12805C; --bid-ok-soft: #E2F2E7; --bid-warn: #9A4A07; --bid-warn-soft: #FBEADB;
+  --bid-pend-soft: #FDF1D0; --bid-line: var(--pg-line, #E3E7EF); --bid-mute: var(--text-muted, #5D6B66);
+}
+:root[data-theme="dark"] #bidModal {
+  --bid-acc: #F2B52E; --bid-acc-ink: #1A1304; --bid-acc-soft: #2A2410;
+  --bid-ok: #7FD29B; --bid-ok-soft: #18301F; --bid-warn: #F0A868; --bid-warn-soft: #33241A; --bid-pend-soft: #3A2D0B;
+}
 
-/* Release 11: steps on the left, a live preview of the draft on the right (wide screens); stacked under the steps otherwise. */
-#bidModal .bid-preview { border: 1px solid var(--border, #e2e8f0); border-radius: 10px; background: var(--surface, #fff); margin-top: 12px; }
-#bidModal .bid-preview__tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border, #e2e8f0); padding: 6px 8px 0; flex-wrap: wrap; }
-#bidModal .bid-preview__tab { border: 0; background: none; padding: 6px 10px; font-size: 12px; font-weight: 600; color: var(--text-muted, #64748b); border-bottom: 2px solid transparent; cursor: pointer; }
-#bidModal .bid-preview__tab.is-active { color: var(--text, #0f172a); border-bottom-color: var(--primary, #1e3a8a); }
-#bidModal .bid-preview__body { padding: 12px; font-size: 12px; max-height: 70vh; overflow: auto; }
-#bidModal .bid-preview__empty { color: var(--text-muted, #64748b); padding: 18px 4px; }
-#bidModal .bid-preview__page { background: #fff; color: #0f172a; border: 1px solid #e2e8f0; box-shadow: 0 2px 10px rgba(15, 23, 42, .08); padding: 22px 24px; font-size: 12px; line-height: 1.5; }
-#bidModal .bid-preview__head { display: flex; align-items: center; justify-content: space-between; font-size: 10px; color: #64748b; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 10px; }
-#bidModal .bid-preview__logo { border: 1px dashed #94a3b8; padding: 2px 8px; font-weight: 700; }
-#bidModal .bid-preview__q { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
-#bidModal .bid-preview__text h3, #bidModal .bid-preview__text h4 { color: var(--pv-heading) !important; }
-#bidModal .bid-preview__foot { border-top: 1px solid #e2e8f0; margin-top: 12px; padding-top: 6px; font-size: 10px; color: #64748b; }
-#bidModal .bid-preview__note { color: var(--text-muted, #64748b); margin-top: 8px; font-size: 11px; }
+/* new steps: always open, a ring to show they are new, a switch in the header */
+#bidModal .bid-step-card--new { border: 1px solid var(--bid-acc) !important; box-shadow: 0 0 0 3px var(--bid-acc-soft) !important; }
+#bidModal .bid-step-header--static { cursor: default !important; }
+#bidModal .bid-step-row-flex { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; flex-wrap: wrap; }
+#bidModal .bid-step-meta { color: var(--bid-mute); font-size: 12.5px; }
+#bidModal .bid-step-row-flex > .bid-step-meta { min-width: 0; }
+#bidModal .bid-new-body { display: grid; gap: 10px; padding-top: 10px !important; }
+#bidModal .bid-new-body[hidden], #bidModal .bid-choices[hidden], #bidModal .bid-choice-sub[hidden] { display: none !important; }
+#bidModal .bid-inline-check { display: flex; gap: 6px; align-items: center; cursor: pointer; flex-wrap: wrap; }
+#bidModal .bid-inline-check input[type="checkbox"] { accent-color: var(--bid-acc); }
+#bidModal .bid-notice { font-size: 12.5px; padding: 8px 10px; border-radius: 8px; background: var(--bid-warn-soft); color: var(--bid-warn); }
+#bidModal .bid-notice[hidden] { display: none; }
+
+/* switch */
+#bidModal .bid-switch { margin-left: auto; position: relative; display: inline-flex; width: 42px; height: 24px; flex: none; }
+#bidModal .bid-switch input { position: absolute; inset: 0; opacity: 0; margin: 0; width: 100%; height: 100%; cursor: pointer; z-index: 1; }
+#bidModal .bid-switch__track { position: absolute; inset: 0; background: var(--bid-line); border-radius: 999px; transition: background .15s; }
+#bidModal .bid-switch__track::after { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s; }
+#bidModal .bid-switch input:checked + .bid-switch__track { background: var(--bid-acc); }
+#bidModal .bid-switch input:checked + .bid-switch__track::after { transform: translateX(18px); }
+#bidModal .bid-switch input:focus-visible + .bid-switch__track { outline: 2px solid var(--pg-gold, #F2B52E); outline-offset: 2px; }
+#bidModal .bid-switch input:disabled { cursor: not-allowed; }
+#bidModal .bid-switch input:disabled + .bid-switch__track { opacity: .5; }
+@media (prefers-reduced-motion: reduce) { #bidModal .bid-switch__track, #bidModal .bid-switch__track::after { transition: none; } }
+
+/* brand kit card */
+#bidModal .bid-brandcard { display: flex; gap: 12px; align-items: center; padding: 10px; border-radius: 8px; background: var(--pg-card, #fff); border: 1px solid var(--bid-line); min-width: 0; }
+#bidModal .bid-brandcard:empty, #bidModal .bid-brandcard[hidden] { display: none; }
+#bidModal .bid-logo { flex: none; width: 44px; height: 44px; border-radius: 8px; background: var(--brand, #1E3A8A); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 13px; overflow: hidden; }
+#bidModal .bid-logo img { max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; }
+#bidModal .bid-swatches { display: flex; gap: 5px; margin-top: 4px; }
+#bidModal .bid-swatches i { width: 16px; height: 16px; border-radius: 4px; display: block; border: 1px solid var(--bid-line); }
+
+/* past-bid choices */
+#bidModal .bid-choices { display: grid; gap: 6px; }
+#bidModal .bid-choice { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--bid-line); border-radius: 8px; cursor: pointer; background: var(--pg-card, #fff); }
+#bidModal .bid-choice:has(input:checked) { border-color: var(--bid-acc); background: var(--bid-acc-soft); }
+#bidModal .bid-choice input { margin-top: 3px; accent-color: var(--bid-acc); }
+#bidModal .bid-choice b { display: block; font-weight: 600; font-size: 13px; }
+#bidModal .bid-choice small { color: var(--bid-mute); font-size: 12px; }
+#bidModal .bid-choice-sub { display: grid; gap: 6px; padding: 2px 0 4px; }
+#bidModal .bid-lib { display: grid; gap: 6px; }
+#bidModal .bid-libitem { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--bid-line); border-radius: 8px; font-size: 13px; background: var(--pg-card, #fff); }
+#bidModal .bid-libitem input { accent-color: var(--bid-acc); flex: none; }
+#bidModal .bid-libitem .t { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+#bidModal .bid-libitem .t span { display: block; color: var(--bid-mute); font-size: 12px; }
+#bidModal .bid-libitem .bid-lib-del { border: 0; background: none; cursor: pointer; padding: 2px 4px; font-size: 13px; }
+#bidModal .bid-badge { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; white-space: nowrap; flex: none; }
+#bidModal .bid-badge.won { background: var(--bid-ok-soft); color: var(--bid-ok); }
+#bidModal .bid-badge.pend { background: var(--bid-pend-soft); color: var(--bid-warn); }
+#bidModal .bid-badge.lost { background: var(--bid-line); color: var(--bid-mute); }
+#bidModal .bid-drop { display: block; border: 1.5px dashed var(--bid-line); border-radius: 8px; padding: 14px; text-align: center; color: var(--bid-mute); font-size: 13px; cursor: pointer; background: var(--pg-card, #fff); }
+#bidModal .bid-drop:hover, #bidModal .bid-drop.is-over { border-color: var(--bid-acc); }
+#bidModal .bid-drop.has { border-color: var(--bid-acc); color: var(--text, #18231F); }
+#bidModal .bid-bar { display: block; height: 6px; background: var(--bid-line); border-radius: 999px; overflow: hidden; margin-top: 8px; }
+#bidModal .bid-bar[hidden] { display: none; }
+#bidModal .bid-bar i { display: block; height: 100%; width: 0; background: var(--bid-acc); transition: width .25s; }
+
+/* preview panel */
+#bidModal .bid-preview { border: 1px solid var(--bid-line); border-radius: 12px; background: var(--pg-card, #fff); margin-top: 12px; min-width: 0; }
+#bidModal .bid-preview__tabs { display: flex; gap: 4px; padding: 10px 14px 0; flex-wrap: wrap; }
+#bidModal .bid-preview__tab { font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; border-radius: 8px 8px 0 0; padding: 8px 12px; border: 1px solid var(--bid-line); border-bottom: none; background: var(--pg-card, #fff); color: var(--text, #18231F); }
+#bidModal .bid-preview__tab.is-active { background: var(--bid-acc); color: var(--bid-acc-ink); border-color: var(--bid-acc); }
+#bidModal .bid-preview__tab:focus-visible { outline: 2px solid var(--pg-gold, #F2B52E); outline-offset: 2px; }
+#bidModal .bid-preview__body { padding: 16px; border-top: 1px solid var(--bid-line); font-size: 13px; max-height: calc(100vh - var(--ws-bar-h, 0px) - 90px); overflow: auto; }
+#bidModal .bid-preview__empty { color: var(--bid-mute); padding: 18px; text-align: center; }
+#bidModal .bid-pv-muted { color: var(--bid-mute); margin: 0 0 12px; }
+#bidModal .bid-pv-h { font-size: 15px; margin: 16px 0 6px; }
+
+/* the page itself: always white paper, like the Word file */
+#bidModal .bid-paperwrap { background: var(--pg-ground, #F5F6FA); border-radius: 10px; padding: 18px; overflow-x: auto; }
+#bidModal .bid-paper { --brand: #1B1F24; background: #fff; color: #1B1F24; max-width: 680px; margin: 0 auto; min-width: 0; box-shadow: 0 1px 3px rgba(0,0,0,.12), 0 8px 24px rgba(0,0,0,.06); font-size: 13.5px; line-height: 1.55; }
+#bidModal .bid-paper__head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 14px 34px; border-bottom: 1px solid #E4E6EA; font-size: 11.5px; color: #646A73; }
+#bidModal .bid-paper__head > span:last-child { text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#bidModal .bid-paper__lg { display: flex; gap: 8px; align-items: center; font-weight: 700; color: var(--brand); min-width: 0; }
+#bidModal .bid-paper__lg i { flex: none; width: 26px; height: 26px; border-radius: 5px; background: var(--brand); color: #fff; display: grid; place-items: center; font-style: normal; font-size: 9px; overflow: hidden; }
+#bidModal .bid-paper__lg img { flex: none; height: 26px; max-width: 90px; object-fit: contain; }
+#bidModal .bid-paper__body { padding: 22px 34px 26px; display: grid; gap: 10px; }
+#bidModal .bid-paper__body > * { margin: 0; }
+#bidModal .bid-paper h3 { font-family: inherit; font-size: 17px; color: #1B1F24; margin: 0; }
+#bidModal .bid-paper h4 { font-family: inherit; margin: 6px 0 0; font-size: 14px; color: #1B1F24; }
+#bidModal .bid-paper.branded h3, #bidModal .bid-paper.branded h4 { color: var(--brand); }
+#bidModal .bid-paper.branded h3 { border-left: 4px solid var(--brand); padding-left: 10px; }
+#bidModal .bid-paper p { margin: 0; }
+#bidModal .bid-paper ul, #bidModal .bid-paper ol { margin: 0; padding-left: 20px; }
+#bidModal .bid-paper table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+#bidModal .bid-paper th, #bidModal .bid-paper td { border: 1px solid #CFD3D9 !important; padding: 6px 8px !important; text-align: left; vertical-align: top; font-size: 12.5px; box-shadow: none !important; }
+#bidModal .bid-paper th { background: #F0F2F5 !important; color: #1B1F24 !important; font-weight: 700; }
+#bidModal .bid-paper.branded th { background: var(--brand) !important; color: #fff !important; border-color: var(--brand) !important; }
+#bidModal .bid-paper .placeholder-highlight { background: #FFF1C9; color: #6B4A00; border-radius: 3px; padding: 0 3px; }
+#bidModal .bid-paper__foot { display: flex; justify-content: space-between; gap: 10px; padding: 10px 34px; border-top: 1px solid #E4E6EA; font-size: 11px; color: #7A808A; }
+#bidModal .bid-paper__ghost { color: #7A808A; font-style: italic; }
+#bidModal .bid-paper__lines { display: grid; gap: 7px; }
+#bidModal .bid-paper__lines i { display: block; height: 8px; border-radius: 4px; background: #ECEEF2; }
+#bidModal .bid-paper td i { display: block; height: 7px; border-radius: 4px; background: #ECEEF2; margin: 4px 0; }
+@media (max-width: 640px) {
+  #bidModal .bid-paperwrap { padding: 8px; }
+  #bidModal .bid-paper__head, #bidModal .bid-paper__foot { padding-left: 16px; padding-right: 16px; }
+  #bidModal .bid-paper__body { padding: 16px; }
+}
+
+/* reused text: a dashed box with its source, each old fact a [CONFIRM] tag to click */
+#bidModal .bid-reuse, #bidModalBody .reused-para { border: 1px dashed #9FB0CC; background: #F4F7FC; border-radius: 6px; padding: 10px 12px; margin: 6px 0; color: #1B1F24; }
+#bidModal .bid-reuse { display: grid; gap: 6px; }
+#bidModal .bid-reuse__src, #bidModalBody .reused-para__label { font-size: 11.5px; color: #4A5A78; }
+#bidModalBody .reused-para__label { font-weight: 600; margin-bottom: 4px; }
+#bidModal .past-fact, #bidModalBody .past-fact { background: #FFF1C9; color: #6B4A00; border-radius: 3px; padding: 0 3px; font-weight: 600; cursor: pointer; }
+#bidModal .past-fact:hover, #bidModal .past-fact:focus-visible { outline: 2px solid #F2B52E; outline-offset: 1px; }
+#bidModal .bid-cf { background: #FFF1C9; color: #6B4A00; border-radius: 3px; padding: 0 3px; font-weight: 600; white-space: nowrap; }
+
+/* numbered notes under the page */
+#bidModal .bid-callouts { display: grid; gap: 8px; margin-top: 14px; }
+#bidModal .bid-callout { display: flex; gap: 10px; font-size: 13px; align-items: flex-start; }
+#bidModal .bid-callout b { flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--bid-acc); color: var(--bid-acc-ink); font-size: 11px; display: grid; place-items: center; margin-top: 1px; }
+
+/* what TenderFlow learned */
+#bidModal .bid-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+#bidModal .bid-stat { border: 1px solid var(--bid-line); border-radius: 10px; padding: 12px; }
+#bidModal .bid-stat strong { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+#bidModal .bid-stat span { color: var(--bid-mute); font-size: 12.5px; }
+
+/* answer plan */
+#bidModal .bid-tblwrap { overflow-x: auto; }
+#bidModal table.bid-plan { width: 100%; border-collapse: collapse; font-size: 13px; }
+#bidModal table.bid-plan th, #bidModal table.bid-plan td { text-align: left; padding: 8px !important; border-bottom: 1px solid var(--bid-line) !important; vertical-align: top; }
+#bidModal table.bid-plan th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--bid-mute) !important; font-weight: 600; background: transparent !important; box-shadow: none !important; }
+#bidModal table.bid-plan td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+#bidModal table.bid-plan small { display: block; color: var(--bid-mute); font-size: 11.5px; }
+
 /* The old collapsible panel is replaced by the preview tabs. */
 #bidModal #bidStyleCard { display: none !important; }
 
 @media (min-width: 1200px) {
-  body.tf-shell #bidModal.ws-page .bid-modal-content { display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(360px, 42%); column-gap: 20px; align-items: start; }
+  body.tf-shell #bidModal.ws-page .bid-modal-content { display: grid !important; grid-template-columns: minmax(400px, 0.9fr) minmax(0, 1.1fr); column-gap: 18px; align-items: start; }
   body.tf-shell #bidModal.ws-page .bid-modal-content > * { grid-column: 1; }
   body.tf-shell #bidModal.ws-page .bid-modal-content > .bid-preview { grid-column: 2; grid-row: 1 / span 40; position: sticky; top: calc(var(--ws-bar-h, 0px) + 8px); margin-top: 0; }
 }
-
-/* A switch in a step header (step 6, Use my branding). */
-#bidModal .bid-switch { position: relative; display: inline-flex; width: 36px; height: 20px; flex: none; }
-#bidModal .bid-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
-#bidModal .bid-switch__track { position: absolute; inset: 0; background: #cbd5e1; border-radius: 20px; transition: background .15s; cursor: pointer; }
-#bidModal .bid-switch__track::after { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: transform .15s; }
-#bidModal .bid-switch input:checked + .bid-switch__track { background: var(--primary, #1e3a8a); }
-#bidModal .bid-switch input:checked + .bid-switch__track::after { transform: translateX(16px); }
-#bidModal .bid-switch input:disabled + .bid-switch__track { opacity: .5; cursor: not-allowed; }

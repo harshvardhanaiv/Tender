@@ -46,7 +46,7 @@
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=20" />
   <link rel="stylesheet" href="/pages.css?v=33" />
-  <link rel="stylesheet" href="/workspace.css?v=7" />
+  <link rel="stylesheet" href="/workspace.css?v=8" />
   <link rel="stylesheet" href="/funding.css?v=25" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
@@ -1047,71 +1047,81 @@
           </div>
         </div>
 
-        <!-- Step 4: Previous winning bids (element ids use "5" so existing step ids stay stable) -->
-        <div class="bid-step-card is-collapsed" id="bidStepCard5">
-          <div class="bid-step-header" onclick="toggleBidStep(5)">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <input type="checkbox" id="bidStepCheck5" class="bid-step-checkbox" onclick="event.stopPropagation(); toggleBidStep(5, true);" />
+        <!-- Step 4: Use my branding. The kit is set once per company in Company profiles; this switch is for this bid only. -->
+        <div class="bid-step-card bid-step-card--new" id="bidBrandCard">
+          <div class="bid-step-header bid-step-header--static">
+            <div class="bid-step-row-flex">
               <span class="bid-step-badge">4</span>
-              <span class="bid-step-title">Previous winning bids</span>
-              <span class="bid-step-summary" id="bidStepSummary5" style="color: var(--text-muted); font-size: 12px; margin-left: 8px;">optional</span>
-            </div>
-            <svg class="bid-step-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="18 15 12 9 6 15"></polyline>
-            </svg>
-          </div>
-          <div class="bid-step-body" id="bidStepBody5">
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; font-size:12px;">
-              <label>Learn from past bids
-                <select id="bidPastBidsMode" class="select" title="Applies to this bid only">
-                  <option value="auto">Let TenderFlow choose (won bids count most)</option>
-                  <option value="library">Only the bids I tick below</option>
-                  <option value="off">Do not use past bids</option>
-                </select></label>
-              <label>Next upload was
-                <select id="bidPastBidOutcome" class="select">
-                  <option value="won">Won</option>
-                  <option value="unknown" selected>Submitted, outcome not known</option>
-                  <option value="lost">Lost</option>
-                </select></label>
-            </div>
-            <div id="bidWillUse" style="font-size:12px; margin:0 0 10px; color:var(--text-muted);"></div>
-            <div class="bid-dropzone bid-dropzone--company">
-              <label for="bidWinningBidFiles" class="bid-dropzone__label">
-                <div class="bid-dropzone__icon">
-                  <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path>
-                    <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path>
-                    <path d="M4 22h16"></path>
-                    <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"></path>
-                    <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"></path>
-                    <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"></path>
-                  </svg>
-                </div>
-                <div class="bid-dropzone__text">
-                  Drop a previous winning bid or <span class="bid-dropzone__link">browse</span>
-                </div>
-                <div class="bid-dropzone__subtext">PDF, DOCX or TXT. Used as a reference for structure, tone and win themes — never copied verbatim.</div>
+              <span class="bid-step-title">Use my branding</span>
+              <span class="bid-step-meta" id="bidBrandSummary"></span>
+              <label class="bid-switch" title="Use my branding for this bid">
+                <input type="checkbox" id="bidBrandingOn" checked aria-label="Use my branding for this bid" /><span class="bid-switch__track"></span>
               </label>
-              <input type="file" id="bidWinningBidFiles" multiple accept=".pdf,.docx,.txt,.md" class="visually-hidden" />
-              <div id="bidWinningBidStatus" class="file-list" style="margin-top: 8px;"></div>
+            </div>
+          </div>
+          <div class="bid-step-body bid-new-body" id="bidBrandBody">
+            <div class="bid-brandcard" id="bidBrandKitInfo"></div>
+            <div class="bid-step-meta">Set once in Company profiles → Brand kit. This switch applies to this bid only. <a href="#" id="bidBrandKitLink">Edit brand kit</a></div>
+            <div class="bid-notice" id="bidAnonNote" hidden>The buyer's instructions ask for anonymised answers. Branding is switched off in the answers; the cover page keeps your logo and company line.</div>
+            <label class="bid-step-meta bid-inline-check"><input type="checkbox" id="bidAnonymiseAnswers" /> The buyer asks for anonymised answers</label>
+          </div>
+        </div>
 
-              <div id="bidWinningBidsContainer" class="bid-user-docs-checklist-container hidden" style="margin-top: 10px; text-align: left;">
-                <div class="bid-user-docs-checklist-title" style="margin-bottom: 8px;">Select bids to reference (up to 5):</div>
-                <div id="bidWinningBidsChecklist" class="bid-user-docs-checklist">
-                  <!-- Dynamically populated checkboxes -->
+        <!-- Step 5: Learn from past winning bids (element ids use "5" so existing step ids stay stable) -->
+        <div class="bid-step-card bid-step-card--new" id="bidStepCard5">
+          <div class="bid-step-header bid-step-header--static">
+            <div class="bid-step-row-flex">
+              <span class="bid-step-badge">5</span>
+              <span class="bid-step-title">Learn from past winning bids</span>
+              <span class="bid-step-meta" id="bidStepSummary5">optional</span>
+              <label class="bid-switch" title="Learn from past winning bids for this bid">
+                <input type="checkbox" id="bidStepCheck5" class="bid-step-checkbox" aria-label="Learn from past winning bids" onchange="toggleBidStep(5, true);" /><span class="bid-switch__track"></span>
+              </label>
+            </div>
+          </div>
+          <div class="bid-step-body bid-new-body" id="bidStepBody5">
+            <!-- what the server reads; the radios below set it -->
+            <select id="bidPastBidsMode" hidden aria-hidden="true" tabindex="-1">
+              <option value="auto">auto</option>
+              <option value="library">library</option>
+              <option value="off">off</option>
+            </select>
+            <div class="bid-choices" id="bidPastBody">
+              <label class="bid-choice"><input type="radio" name="bidPastMode" value="auto" checked /><span><b>Let TenderFlow choose</b><small>Picks the closest bids from your library. Won bids count most.</small></span></label>
+              <div class="bid-choice-sub" id="bidWillUse"></div>
+              <label class="bid-choice"><input type="radio" name="bidPastMode" value="library" /><span><b>Choose from my uploaded bids</b><small>Tick the bids whose style this one should follow.</small></span></label>
+              <div class="bid-choice-sub" id="bidPastLibBox" hidden>
+                <div id="bidWinningBidsContainer" class="hidden">
+                  <div id="bidWinningBidsChecklist" class="bid-lib"><!-- filled by loadBidWinningBids --></div>
                 </div>
+                <div class="bid-step-meta" id="bidPastLibEmpty">No past bids in your library yet. Choose "Upload a new winning bid".</div>
+              </div>
+              <label class="bid-choice"><input type="radio" name="bidPastMode" value="upload" /><span><b>Upload a new winning bid</b><small>.docx, .pdf or .txt. It is added to your private library too.</small></span></label>
+              <div class="bid-choice-sub" id="bidPastUpBox" hidden>
+                <label class="bid-drop" for="bidWinningBidFiles" id="bidPastDrop">
+                  <span id="bidPastDropText">Drop a past bid here, or click to choose</span>
+                  <span class="bid-bar" id="bidPastBar" hidden><i></i></span>
+                </label>
+                <input type="file" id="bidWinningBidFiles" multiple accept=".pdf,.docx,.txt,.md" class="visually-hidden" />
+                <div id="bidWinningBidStatus" class="file-list"></div>
+                <label class="bid-step-meta bid-inline-check">Outcome
+                  <select id="bidPastBidOutcome" class="select">
+                    <option value="won">Won</option>
+                    <option value="unknown" selected>Submitted, outcome not known</option>
+                    <option value="lost">Lost</option>
+                  </select></label>
+                <div class="bid-step-meta">Used for structure, tone and layout. Facts from old bids come back as [CONFIRM] for you to check; a lost bid gives tone and layout only.</div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Step 5: Additional supporting documents -->
+        <!-- Step 6: Additional supporting documents -->
         <div class="bid-step-card is-collapsed" id="bidStepCard4">
           <div class="bid-step-header" onclick="toggleBidStep(4)">
             <div style="display: flex; align-items: center; gap: 8px;">
               <input type="checkbox" id="bidStepCheck4" class="bid-step-checkbox" onclick="event.stopPropagation(); toggleBidStep(4, true);" />
-              <span class="bid-step-badge">5</span>
+              <span class="bid-step-badge">6</span>
               <span class="bid-step-title">Additional supporting documents</span>
               <span class="bid-step-summary" id="bidStepSummary4" style="color: var(--text-muted); font-size: 12px; margin-left: 8px;"></span>
             </div>
@@ -1163,23 +1173,6 @@
           <div style="margin-top:10px; font-size:12px;">
             <button type="button" class="btn btn--small" id="btnRefreshStyle">Refresh</button>
             <div id="bidStyleOut" style="margin-top:8px;"></div>
-          </div>
-        </details>
-
-        <!-- Brand kit and anonymised answers: settings for this bid only -->
-        <details class="bid-step-card" id="bidBrandCard" style="padding:10px 14px;">
-          <summary style="cursor:pointer; font-weight:600; display:flex; align-items:center; gap:8px;">
-            <span class="bid-step-badge">6</span> Use my branding
-            <span id="bidBrandSummary" style="font-weight:400; color:var(--text-muted); font-size:12px;"></span>
-            <label class="bid-switch" style="margin-left:auto;" title="Apply my brand kit to the Word file for this bid" onclick="event.preventDefault(); event.stopPropagation(); const i = this.querySelector('input'); if (i && !i.disabled) { i.checked = !i.checked; i.dispatchEvent(new Event('change', { bubbles: true })); }">
-              <input type="checkbox" id="bidBrandingOn" checked /><span class="bid-switch__track"></span>
-            </label>
-          </summary>
-          <div style="margin-top:10px; font-size:12px; display:grid; gap:8px;">
-            <div style="color:var(--text-muted);">The switch above applies your brand kit to the Word file for this bid only.</div>
-            <label><input type="checkbox" id="bidAnonymiseAnswers" /> The buyer asks for anonymised answers (logo and company line only on the cover page)</label>
-            <div id="bidBrandKitInfo" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;"></div>
-            <div style="color:var(--text-muted);">Colour, font, footer and logo are set once per company in Company profiles. <a href="#" id="bidBrandKitLink">Edit in Company profiles</a></div>
           </div>
         </details>
 
@@ -3596,7 +3589,7 @@
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=2"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=310"></script>
+  <script src="/app.js?v=311"></script>
   <script src="/planning.js?v=23"></script>
   <script src="/funding.js?v=11"></script>
   <script src="/grants-board.js?v=1"></script>

@@ -1555,8 +1555,12 @@ def api_brand_kit_get():
         conn.close()
     if not kit:
         return jsonify({"ok": True, "exists": False, "kit": None})
-    return jsonify({"ok": True, "exists": kit_exists(kit),
-                    "kit": {"color": kit["color"], "font": kit["font"], "footer_text": kit["footer_text"], "has_logo": bool(kit["logo_b64"])}})
+    out = {"color": kit["color"], "font": kit["font"], "footer_text": kit["footer_text"], "has_logo": bool(kit["logo_b64"])}
+    # ?logo=1: the bid page's live preview shows the real logo (at most 400 KB, checked when it was saved)
+    if request.args.get("logo") == "1" and kit["logo_b64"]:
+        ext = "jpeg" if str(kit.get("logo_ext") or "").lower() in ("jpg", "jpeg") else "png"
+        out["logo"] = f"data:image/{ext};base64,{kit['logo_b64']}"
+    return jsonify({"ok": True, "exists": kit_exists(kit), "kit": out})
 
 
 @profiles_bp.put("/api/brand-kit")
