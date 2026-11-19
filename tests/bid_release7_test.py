@@ -154,4 +154,14 @@ _sp = {"itt_question_responses": [{"question_number": "D", "response": "Team tex
 ok(r7.fix_spilled_question_headings(_sp) == 1 and _sp["itt_question_responses"][1]["response"].startswith("## E. Mobilisation")
    and "Mobilisation" not in _sp["itt_question_responses"][0]["response"], "a heading spilled onto the previous question moves back: %s" % _sp)
 
+# ---- release 11: Cornwall regression guards ---------------------------------------------------------------------------------------------
+_txt = chr(10).join(["Section D1", "D1.1 Describe your method statement for delivering the digital print service", "D1.2 Explain how you will manage quality across the contract", "D1.3 Provide details of your staffing and supervision plans", "D1.4 Demonstrate how you will deliver social value in the contract", "1.1 The Contractor shall supply goods."])
+_rq = r7.recover_questions(_txt)
+ok([q["number"] for q in _rq] == ["D1.1", "D1.2", "D1.3", "D1.4"], "lettered question lines are recovered: %s" % _rq)
+ok(r7.recover_questions(chr(10).join(["1.1 The Contractor shall provide the services.", "1.2 The Contractor shall describe it."])) == [], "numbered clauses are not questions")
+_s1 = {"required_submission_documents": [{"name": "Technical offer - Lot 1: FE Prospectus"}, {"name": "Technical offer - Lot 2: Digital and Litho"}, {"name": "SSQ"}]}
+ok(r7.drop_other_lot_documents(_s1, "Cornwall College Lot 2 digital print") == 1 and len(_s1["required_submission_documents"]) == 2, "a Lot 1 document is dropped from a Lot 2 bid")
+from tender_app import bid_release4 as _r4
+ok(not _r4.find_ruling_conflicts([{"topic": "VAT", "ruling": "Prices exclude VAT."}], [("S", "Invoices must include VAT exemption grounds.")]), "VAT exemption grounds is not 'prices include VAT'")
+
 print("release 7: %d checks passed" % n)

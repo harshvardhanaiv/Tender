@@ -82,7 +82,7 @@ _VAT_EXCL = re.compile(
     r"|VAT\s+(?:is\s+|are\s+)?(?:not\s+included|excluded)|(?:must\s+be\s+)?(?:quoted\s+)?(?:ex|exclusive)\s*[- ]?\s*VAT", re.I)
 _VAT_INCL = re.compile(
     r"(?<!not )(?<!ex)(?:inclusive of|including|include[sd]?)\s+(?:all\s+)?(?:applicable\s+)?(?:local\s+)?(?:taxes?,?\s*)?"
-    r"(?:and\s+)?(?:VAT|duties)|VAT\s+(?:is\s+|are\s+)?included", re.I)
+    r"(?:and\s+)?(?:VAT(?!\s+(?:exempt\w*|registration|number|status|invoices?|certificat\w*))|duties)|VAT\s+(?:is\s+|are\s+)?included", re.I)
 
 
 def find_ruling_conflicts(rulings: list, texts: list) -> list:

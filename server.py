@@ -480,6 +480,19 @@ def init_db():
                 PRIMARY KEY (username, bid_key, item_key)
             );
         """)
+        # Release 11: the buyer documents uploaded at the bid's step, kept per tender on the server. Browser storage alone kept
+        # 2 of Cornwall College's 5 files (it fills up), so a reopened bid lost the rest.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS bid_uploads (
+                username VARCHAR(100) NOT NULL,
+                tender_key VARCHAR(300) NOT NULL,
+                filename VARCHAR(300) NOT NULL,
+                content TEXT NOT NULL,
+                size_bytes INTEGER DEFAULT 0,
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (username, tender_key, filename)
+            );
+        """)
         # Release 8 (F3): one brand kit per company profile (profile_id 0 = the account-wide kit).
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS brand_kits (
@@ -8349,6 +8362,14 @@ Return ONLY this JSON structure:
                 # template's generic sections are written only when the documents gave no questionnaire
                 # (fix plan G5); every writer gets the same grounding rules (fix plan M7).
                 questions = extract_questions(stage1_result)
+                if len(questions) < 2 and isinstance(stage1_result, dict):
+                    # Release 11: the dissection missed the questions; read lettered question lines (D1.1 ...) from the text.
+                    from tender_app.bid_release7 import recover_questions as _recover_qs, drop_other_lot_documents as _drop_lot
+                    _rq = _recover_qs(combined_tender_text[:200000])
+                    if _rq:
+                        stage1_result["itt_questions"] = _rq
+                        questions = extract_questions(stage1_result)
+                    _drop_lot(stage1_result, f"{title} {description}")
                 q_mode = questionnaire_mode(questions)
                 # Release 7: no scored questions but the buyer's own documents were read and list what to submit
                 # (Chemonics): structure the bid by those documents, never by the house template.
@@ -8906,6 +8927,63 @@ Return ONLY valid JSON with no markdown fences:
 
         from flask import stream_with_context
         return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
+
+    _BID_UPLOAD_MAX_FILES = 15
+    _BID_UPLOAD_MAX_CHARS = 28_000_000        # base64 text of one file (about 20 MB)
+    _BID_UPLOAD_MAX_TOTAL = 80_000_000        # all files of one tender
+
+    @app.get("/api/bid-uploads")
+    def api_bid_uploads_get():
+        """Release 11: the buyer documents attached to one tender's bid, so a reopened bid has all of them."""
+        username = session.get("username") or ""
+        key = str(request.args.get("tender_key") or "")[:300]
+        if not username or not key:
+            return jsonify({"ok": False, "error": "A tender is required."}), 400
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT filename, content FROM bid_uploads WHERE username = %s AND tender_key = %s ORDER BY uploaded_at, filename",
+                        (username, key))
+            files = [{"filename": r[0], "content": r[1]} for r in cur.fetchall()]
+            cur.close()
+        finally:
+            conn.close()
+        return jsonify({"ok": True, "files": files})
+
+    @app.put("/api/bid-uploads")
+    def api_bid_uploads_put():
+        """Replace the stored set for one tender with the files on screen (adds, keeps and removes in one call)."""
+        username = session.get("username") or ""
+        body = request.get_json(silent=True) or {}
+        key = str(body.get("tender_key") or "")[:300]
+        files = [f for f in (body.get("files") or []) if isinstance(f, dict) and str(f.get("filename") or "").strip()]
+        if not username or not key:
+            return jsonify({"ok": False, "error": "A tender is required."}), 400
+        if len(files) > _BID_UPLOAD_MAX_FILES:
+            return jsonify({"ok": False, "error": f"At most {_BID_UPLOAD_MAX_FILES} files per tender."}), 400
+        total = 0
+        clean = {}
+        for f in files:
+            content = str(f.get("content") or "")
+            if len(content) > _BID_UPLOAD_MAX_CHARS:
+                return jsonify({"ok": False, "error": f"{f['filename']} is too large to keep (over about 20 MB)."}), 400
+            total += len(content)
+            clean[str(f["filename"])[:300]] = content
+        if total > _BID_UPLOAD_MAX_TOTAL:
+            return jsonify({"ok": False, "error": "These files are too large to keep together (over about 60 MB)."}), 400
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM bid_uploads WHERE username = %s AND tender_key = %s", (username, key))
+            for name, content in clean.items():
+                if content:
+                    cur.execute("INSERT INTO bid_uploads (username, tender_key, filename, content, size_bytes) VALUES (%s,%s,%s,%s,%s)",
+                                (username, key, name, content, len(content) * 3 // 4))
+            conn.commit()
+            cur.close()
+        finally:
+            conn.close()
+        return jsonify({"ok": True, "kept": len([c for c in clean.values() if c])})
 
     @app.post("/api/proposals/save")
     def api_save_proposal():
@@ -9481,12 +9559,21 @@ Return ONLY valid JSON with no markdown fences:
                 is_bullet = trimmed.startswith(("* ", "- ", "• "))
                 bullet_text = trimmed[2:] if is_bullet else trimmed
                 
+                # Release 11: a paragraph holding a fact from a past bid sits in a dashed box with its label (draft only:
+                # a final export is refused while any [CONFIRM] remains).
+                _reused = "from a past bid]" in bullet_text
+                _bdr = ('<w:pBdr><w:top w:val="dashed" w:sz="8" w:space="4" w:color="B45309"/><w:left w:val="dashed" w:sz="8" w:space="4" w:color="B45309"/>'
+                        '<w:bottom w:val="dashed" w:sz="8" w:space="4" w:color="B45309"/><w:right w:val="dashed" w:sz="8" w:space="4" w:color="B45309"/></w:pBdr>'
+                        '<w:shd w:val="clear" w:color="auto" w:fill="FFFBEB"/>') if _reused else ""
+                if _reused:
+                    xml_content.append('    <w:p><w:pPr>' + _bdr + '<w:spacing w:after="0"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI"/>'
+                                       '<w:b/><w:color w:val="B45309"/><w:sz w:val="18"/></w:rPr><w:t>Reused from a past bid: check each [CONFIRM] fact</w:t></w:r></w:p>')
                 xml_content.append('    <w:p>')
                 if is_bullet:
-                    xml_content.append('      <w:pPr><w:ind w:left="360"/><w:spacing w:after="120"/></w:pPr>')
+                    xml_content.append('      <w:pPr>' + _bdr + '<w:ind w:left="360"/><w:spacing w:after="120"/></w:pPr>')
                     xml_content.append('      <w:r><w:rPr><w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI"/><w:sz w:val="22"/></w:rPr><w:t>• </w:t></w:r>')
                 else:
-                    xml_content.append('      <w:pPr><w:spacing w:after="120"/></w:pPr>')
+                    xml_content.append('      <w:pPr>' + _bdr + '<w:spacing w:after="120"/></w:pPr>')
                 
                 parts = bullet_text.split("**")
                 for idx, part in enumerate(parts):

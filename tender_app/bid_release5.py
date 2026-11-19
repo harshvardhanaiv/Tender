@@ -156,7 +156,7 @@ def flag_passed_dates_in_checklist(items: Any, today: _dt.date | None = None) ->
 _NUM_WORDS = {"five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
               "fifteen": 15, "twenty": 20, "twenty-five": 25, "thirty": 30}
 _YEARS = re.compile(r"((?:over|more than|nearly|almost|around|some)\s+)?(\d{1,2}|" + "|".join(_NUM_WORDS) + r")\+?\s+years(?:['’])?\s+"
-                    r"(?:of\s+)?(?:combined\s+|trading\s+|industry\s+|relevant\s+|hands-on\s+)?"
+                    r"(?:of\s+)?(?:[A-Za-z][\w&/-]*\s+){0,4}?"   # "12 years of hands-on plumbing and heating experience"
                     r"(?:experience|(?:in|within)\s+(?:the\s+)?(?:trade|industry|sector|business|field|plumbing|drainage|construction)|"
                     r"(?:of\s+)?(?:service|trading))", re.I)
 
@@ -193,6 +193,10 @@ def incorporation_date(*sources: Any) -> _dt.date | None:
     return None
 
 
+# A length that is not the company's history: the contract's term, a lease, a warranty.
+_NOT_COMPANY = re.compile(r"\b(?:contract|term|lease|agreement|period|runs?|duration|framework|warranty|guarantee|extension)\b[^.]{0,25}$", re.I)
+
+
 def reconcile_experience(text: str, incorporated: _dt.date | None, today: _dt.date | None = None) -> str:
     """"Priority Plumbing ... with over 12 years of experience" for a company incorporated in 2024 becomes the team's
     experience, with a [CONFIRM] so the bidder checks whose experience it is."""
@@ -206,7 +210,7 @@ def reconcile_experience(text: str, incorporated: _dt.date | None, today: _dt.da
             if _years_value(m.group(2)) < 8:
                 return m.group(0)
             before = text[max(0, m.start() - 40):m.start()]
-            if re.search(r"\b(?:team|staff|engineers?|founders?|directors?|people|personnel)\b[^.]{0,30}$", before, re.I):
+            if re.search(r"\b(?:team|staff|engineers?|founders?|directors?|people|personnel)\b[^.]{0,30}$", before, re.I) or _NOT_COMPANY.search(before):
                 return m.group(0)
             return m.group(0) + "\x00"
         marked = _YEARS.sub(_fallback, text)
@@ -227,7 +231,7 @@ def reconcile_experience(text: str, incorporated: _dt.date | None, today: _dt.da
         if years <= age:
             return m.group(0)
         before = text[max(0, m.start() - 40):m.start()]
-        if re.search(r"\b(?:team|staff|engineers?|founders?|directors?|people|personnel)\b[^.]{0,30}$", before, re.I):
+        if re.search(r"\b(?:team|staff|engineers?|founders?|directors?|people|personnel)\b[^.]{0,30}$", before, re.I) or _NOT_COMPANY.search(before):
             return m.group(0)  # already the team's
         phrase = m.group(0)
         mark = ""

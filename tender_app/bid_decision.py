@@ -180,6 +180,9 @@ Rules:
   "none" = nothing in the data.
 - mandatory status: "met" only with evidence in the data; "not evidenced" when the data is silent; "not met" when
   the data shows the company cannot meet it (wrong line of work, below a threshold).
+- Distance: where the company's base and the buyer's sites are both stated and the distance is over about 30 miles or
+  an hour, add a capability gap naming both places, the approximate distance and what it does to response times,
+  call-out cover and travel costs. Do not stay silent about it.
 - capability_gaps: the specific things the tender needs that the company does not evidence, in plain words
   (e.g. "owns no print production equipment"). They will be written into the bid as gaps, never invented.
 

@@ -127,6 +127,26 @@ def readiness(bid_response, stage1, qa, closed=False, gate=False, signoffs=None,
                         "Declarations", "registration_id")
     except Exception:  # noqa: BLE001
         pass
+    # Release 11: a long experience claim with no [CONFIRM] in its sentence (Herts plumbing: "over 12 years' experience" three
+    # times for a company formed in 2024). The draft pass marks the first one; this keeps any that slipped through on the list.
+    try:
+        from tender_app.bid_release5 import _YEARS, _years_value, _sentence_end, _NOT_COMPANY
+        for lbl, txt in bid_texts(r):
+            for m in _YEARS.finditer(txt or ""):
+                if _years_value(m.group(2)) < 8:
+                    continue
+                start = max(txt.rfind(".", 0, m.start()), txt.rfind("\n", 0, m.start())) + 1
+                # The [CONFIRM] note sits right after the sentence that makes the claim.
+                if "[CONFIRM" in txt[start:_sentence_end(txt, m.start()) + 60]:
+                    continue
+                if re.search(r"\b(?:team|staff|engineers?|founders?|directors?|people|personnel)\b[^.]{0,30}$", txt[max(0, m.start() - 40):m.start()], re.I) \
+                        or _NOT_COMPANY.search(txt[max(0, m.start() - 40):m.start()]):
+                    continue
+                add("P1", "\"%s\" is not marked [CONFIRM]. Check it against the company's records, or say it is the team's experience." % m.group(0).strip(),
+                    lbl, "experience_claim")
+                break
+    except Exception:  # noqa: BLE001
+        pass
     dl = _deadline_issue(s, closed, today)
     if dl and not (closed and any(i["check"] == "status" for i in items)):   # the QA gate already says it once
         add(dl[0], dl[1], dl[2], "deadline")

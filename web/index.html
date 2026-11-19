@@ -46,7 +46,7 @@
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=20" />
   <link rel="stylesheet" href="/pages.css?v=33" />
-  <link rel="stylesheet" href="/workspace.css?v=6" />
+  <link rel="stylesheet" href="/workspace.css?v=7" />
   <link rel="stylesheet" href="/funding.css?v=25" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
@@ -1075,6 +1075,7 @@
                   <option value="lost">Lost</option>
                 </select></label>
             </div>
+            <div id="bidWillUse" style="font-size:12px; margin:0 0 10px; color:var(--text-muted);"></div>
             <div class="bid-dropzone bid-dropzone--company">
               <label for="bidWinningBidFiles" class="bid-dropzone__label">
                 <div class="bid-dropzone__icon">
@@ -1167,13 +1168,30 @@
 
         <!-- Brand kit and anonymised answers: settings for this bid only -->
         <details class="bid-step-card" id="bidBrandCard" style="padding:10px 14px;">
-          <summary style="cursor:pointer; font-weight:600;">Use my branding <span id="bidBrandSummary" style="font-weight:400; color:var(--text-muted); font-size:12px; margin-left:8px;"></span></summary>
+          <summary style="cursor:pointer; font-weight:600; display:flex; align-items:center; gap:8px;">
+            <span class="bid-step-badge">6</span> Use my branding
+            <span id="bidBrandSummary" style="font-weight:400; color:var(--text-muted); font-size:12px;"></span>
+            <label class="bid-switch" style="margin-left:auto;" title="Apply my brand kit to the Word file for this bid" onclick="event.preventDefault(); event.stopPropagation(); const i = this.querySelector('input'); if (i && !i.disabled) { i.checked = !i.checked; i.dispatchEvent(new Event('change', { bubbles: true })); }">
+              <input type="checkbox" id="bidBrandingOn" checked /><span class="bid-switch__track"></span>
+            </label>
+          </summary>
           <div style="margin-top:10px; font-size:12px; display:grid; gap:8px;">
-            <label><input type="checkbox" id="bidBrandingOn" checked /> Apply my brand kit to the Word file for this bid</label>
+            <div style="color:var(--text-muted);">The switch above applies your brand kit to the Word file for this bid only.</div>
             <label><input type="checkbox" id="bidAnonymiseAnswers" /> The buyer asks for anonymised answers (logo and company line only on the cover page)</label>
-            <div style="color:var(--text-muted);">Colour, font, footer and logo are set once per company in Company profiles. <a href="#" id="bidBrandKitLink">Open Company profiles</a></div>
+            <div id="bidBrandKitInfo" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;"></div>
+            <div style="color:var(--text-muted);">Colour, font, footer and logo are set once per company in Company profiles. <a href="#" id="bidBrandKitLink">Edit in Company profiles</a></div>
           </div>
         </details>
+
+        <!-- Release 11: live preview of one page of the draft (no credits: it renders the draft already made) -->
+        <aside id="bidPreviewPane" class="bid-preview" aria-label="Draft preview">
+          <div class="bid-preview__tabs" role="tablist">
+            <button type="button" class="bid-preview__tab is-active" data-pv="draft" role="tab">Draft preview</button>
+            <button type="button" class="bid-preview__tab" data-pv="learned" role="tab">What TenderFlow learned</button>
+            <button type="button" class="bid-preview__tab" data-pv="plan" role="tab">Answer plan</button>
+          </div>
+          <div id="bidPreviewBody" class="bid-preview__body"></div>
+        </aside>
 
       </div>
 
@@ -3578,7 +3596,7 @@
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=2"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=308"></script>
+  <script src="/app.js?v=310"></script>
   <script src="/planning.js?v=23"></script>
   <script src="/funding.js?v=11"></script>
   <script src="/grants-board.js?v=1"></script>

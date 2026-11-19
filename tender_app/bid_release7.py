@@ -19,7 +19,9 @@ _KIND_GUIDE = {
     "technical": ("Write the technical offer for this requirement against the buyer's specification, in the buyer's own item "
                   "order. Answer each requirement the documents state (items, quantities, standards, delivery, warranty, "
                   "support). Where the specification lists line items, address each by name or reference. Prices go only in "
-                  "the commercial offer, so give no price, rate or total here."),
+                  "the commercial offer, so give no price, rate or total here. Where the scope involves them, give each its own "
+                  "sub-heading and real content: understanding of the requirement, team and roles, ethics and data protection "
+                  "(UK GDPR), accessibility (WCAG 2.2 AA) for digital work, and Welsh language provision when the buyer is a Welsh public body."),
     "commercial": ("Write the price statement the buyer asks for: the pricing basis, currency, VAT treatment exactly as the "
                    "buyer's clarification answers rule, what is included and excluded, validity period and payment terms as "
                    "the buyer states them. Give no figure that the bidder has not supplied: use [NEEDS INPUT: unit price] "
@@ -357,3 +359,42 @@ def fix_spilled_question_headings(bid_response: dict | None) -> int:
             nxt["response"] = head + "\n\n" + body
         moved += 1
     return moved
+
+
+# ---- Release 11: questions the dissection missed, and documents for another lot -----------------------------------------------------
+_LOT = re.compile(r"\blot\s*(\d+)\b", re.I)
+_Q_LINE = re.compile(r"^\s*(?:Question\s+)?([A-Z]\d{1,2}(?:\.\d{1,2})+)\s*[.:)–—-]?\s+(.{25,500})$")
+_Q_VERB = re.compile(r"\b(describe|explain|provide|detail|demonstrate|outline|state|confirm|how|what|please)\b", re.I)
+
+
+def recover_questions(buyer_text: str, minimum: int = 3) -> list[dict]:
+    """Cornwall College lost its D1.1 to D1.4 quality questions when the dissection returned none. Reads lettered, numbered
+    question lines (D1.1, D1.2 ...) straight from the buyer's text. Needs `minimum` of them, in one letter family."""
+    found: dict[str, str] = {}
+    for line in str(buyer_text or "").splitlines():
+        m = _Q_LINE.match(line)
+        if m and _Q_VERB.search(m.group(2)) and m.group(1) not in found:
+            found[m.group(1)] = m.group(2).strip()
+    fam: dict[str, list[str]] = {}
+    for num in found:
+        fam.setdefault(num[0], []).append(num)
+    best = max(fam.values(), key=len) if fam else []
+    if len(best) < minimum:
+        return []
+    return [{"number": n, "question_text": found[n], "weighting": None} for n in best]
+
+
+def drop_other_lot_documents(stage1: dict | None, title_text: str) -> int:
+    """A bid for Lot 2 must not be structured by "Technical offer - Lot 1" documents. Removes submission documents that name a
+    different lot from the one in the tender's title. Returns how many were removed."""
+    if not isinstance(stage1, dict):
+        return 0
+    mine = _LOT.search(str(title_text or ""))
+    docs = stage1.get("required_submission_documents")
+    if not mine or not isinstance(docs, list):
+        return 0
+    keep = [d for d in docs if not (isinstance(d, dict) and (lm := _LOT.search(str(d.get("name") or ""))) and lm.group(1) != mine.group(1))]
+    removed = len(docs) - len(keep)
+    if removed:
+        stage1["required_submission_documents"] = keep
+    return removed

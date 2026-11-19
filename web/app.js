@@ -12406,6 +12406,9 @@ function openBidModal(row) {
   // Reload server preferences before loading document checklist and step check states
   loadPrefsFromServer().then(() => {
     loadBidStepCheckStates();
+    applyPastBidPrefs();
+    restoreBidPanels();
+    refreshWillUse();
     loadBidUserDocsChecklist();
     loadBidWinningBids();
   });
@@ -12745,6 +12748,7 @@ window.stopTask = stopTask;
 
 function showProposalResultInModal(task) {
   _lastProposal = task.proposal;
+  setTimeout(() => { try { renderBidPreview(); } catch (e) { /* preview is optional */ } }, 0);
   try { applyBrandingRules(_lastProposal); if ($("bidReadinessCard")?.open) loadReadiness(false); } catch (e) { console.warn("branding rules:", e); }
   rememberDeadlineZone(_bidRow, _lastProposal);
   state.resolvedPlaceholders = {};
@@ -13021,9 +13025,59 @@ async function loadStylePreview() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) throw new Error(data.error || "Could not read your past bids.");
     out.innerHTML = renderStylePreview(data);
-  } catch (e) { out.textContent = e.message || "Could not read your past bids."; }
+    _lastStyleHtml = out.innerHTML;
+    if (_previewTab !== "draft") renderBidPreview();
+  } catch (e) { out.textContent = e.message || "Could not read your past bids."; _lastStyleHtml = out.innerHTML; }
 }
 $("bidStyleCard")?.addEventListener("toggle", e => { if (e.target.open) loadStylePreview(); });
+
+// Release 11: the preview beside the steps. "Draft preview" renders one page of the draft already made, in Word styling with
+// the brand kit as it will be applied, and updates as the branding settings change. No credits: nothing is generated.
+let _previewTab = "draft";
+let _lastStyleHtml = "";
+let _brandKitCache = null;
+function renderBidPreview() {
+  const body = $("bidPreviewBody");
+  if (!body) return;
+  document.querySelectorAll(".bid-preview__tab").forEach(b => b.classList.toggle("is-active", b.dataset.pv === _previewTab));
+  if (_previewTab !== "draft") {
+    if (!$("bidStepCheck5")?.checked) { body.innerHTML = `<div class="bid-preview__empty">Past bids are not used for this bid. Tick step 4 to learn from them.</div>`; return; }
+    if (!_lastStyleHtml) { body.innerHTML = `<div class="bid-preview__empty">Working it out...</div>`; loadStylePreview(); return; }
+    const cut = _lastStyleHtml.indexOf(">Answer plan</h4>");
+    const head = cut >= 0 ? _lastStyleHtml.lastIndexOf("<h4", cut) : -1;
+    body.innerHTML = _previewTab === "learned" ? (head >= 0 ? _lastStyleHtml.slice(0, head) : _lastStyleHtml)
+      : (head >= 0 ? _lastStyleHtml.slice(head) : `<div class="bid-preview__empty">Build the Bid plan first so TenderFlow has the buyer's questions.</div>`);
+    return;
+  }
+  const r = _lastProposal && _lastProposal.bid_response;
+  const first = r && ((r.itt_question_responses || []).find(q => q && String(q.response || "").trim())
+    || (r.cover_letter && r.cover_letter.content ? { question_number: "", question_text: "Covering letter", response: r.cover_letter.content } : null));
+  if (!first) {
+    body.innerHTML = `<div class="bid-preview__empty">Generate the bid to see a page of it here, styled as the Word file will be. The preview uses no credits.</div>`;
+    return;
+  }
+  const kit = _brandKitCache;
+  const brandOn = Boolean($("bidBrandingOn")?.checked) && Boolean(kit);
+  const anon = Boolean($("bidAnonymiseAnswers")?.checked);
+  const font = brandOn && kit.font ? kit.font : "Segoe UI";
+  const color = brandOn && kit.color ? "#" + kit.color : "#1E3A8A";
+  const company = (_lastProposal.bid_company || _lastProposal.company || "").trim();
+  const header = brandOn && !anon ? `<div class="bid-preview__head">${kit.has_logo ? `<span class="bid-preview__logo">LOGO</span>` : ""}<span>${esc(company)}</span></div>` : "";
+  const footer = brandOn && !anon && kit.footer_text ? `<div class="bid-preview__foot">${esc(kit.footer_text)}</div>` : "";
+  const words = String(first.response || "").split(/\s+/);
+  const text = words.length > 420 ? words.slice(0, 420).join(" ") + " ..." : first.response;
+  body.innerHTML = `<div class="bid-preview__page" style="font-family:'${esc(font)}', 'Segoe UI', sans-serif;">${header}
+      <div class="bid-preview__q" style="color:${esc(color)};">${first.question_number ? "Question " + esc(String(first.question_number)) + ": " : ""}${esc(String(first.question_text || "").slice(0, 200))}</div>
+      <div class="bid-preview__text" style="--pv-heading:${esc(color)};">${renderFormattedMarkdownHtml(text)}</div>${footer}</div>
+    <div class="bid-preview__note">${anon ? "Anonymised answers: the logo and company line appear on the cover page only." : brandOn ? "Your brand kit is applied." : kit ? "Branding is off for this bid." : "No brand kit yet: add one in Company profiles."} One page of the draft; the Word file has all of it.</div>`;
+}
+document.querySelectorAll(".bid-preview__tab").forEach(b => b.addEventListener("click", () => {
+  _previewTab = b.dataset.pv || "draft";
+  if (_previewTab !== "draft" && !_lastStyleHtml) loadStylePreview();
+  renderBidPreview();
+}));
+["bidBrandingOn", "bidAnonymiseAnswers"].forEach(id => $(id)?.addEventListener("change", renderBidPreview));
+["bidStepCheck5", "bidPastBidsMode"].forEach(id => $(id)?.addEventListener("change", () => { _lastStyleHtml = ""; if (_previewTab !== "draft") renderBidPreview(); }));
 $("btnRefreshStyle")?.addEventListener("click", loadStylePreview);
 
 async function runBidPlan() {
@@ -14362,9 +14416,17 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
   if (!hasClarFile && !confirmedRecently && !custom) {
     warnings.push("Clarification answers: buyers publish clarification answers, updates and deadline changes inside your portal account, where we cannot see them. If there are any, export them (or print to PDF) and add them too.");
   }
-  // R5: previous winning bids shape the draft and stay ticked between sessions, so say which are in use.
-  if (wbTitles && wbTitles.length) {
-    info.push(`Previous winning bids used as style examples: ${wbTitles.join(", ")}. Untick them under "Previous winning bids" to leave them out.`);
+  // Release 11: three lines on how this bid will be styled, before any credits are spent.
+  {
+    const el = id => (typeof document !== "undefined" ? document.getElementById(id) : null);
+    const brandOn = el("bidBrandingOn"), anon = el("bidAnonymiseAnswers");
+    const brandLine = anon && anon.checked ? "off in answers (the buyer asks for anonymised answers; logo on the cover only)"
+      : (brandOn && brandOn.checked && !brandOn.disabled ? "on (your brand kit)" : "off" + (brandOn && brandOn.disabled ? " (no brand kit yet: add one in Company profiles)" : ""));
+    const _c5 = el("bidStepCheck5");
+    const pastOn = (_c5 ? _c5.checked : Boolean(wbTitles && wbTitles.length)) && (el("bidPastBidsMode")?.value || "auto") !== "off";
+    const pastLine = !pastOn ? "off" : (wbTitles && wbTitles.length ? wbTitles.join(", ")
+      : ((el("bidPastBidsMode")?.value || "auto") === "auto" ? "TenderFlow will choose the closest bids (won ones count most)" : "none ticked, standard style"));
+    info.push(`Branding: ${brandLine}\n   Past bids: ${pastLine}${pastOn ? "\n   Reused wording: every old figure, date or name comes back as [CONFIRM: ... - from a past bid]" : ""}`);
   }
   // A custom tender always gets the box: it is the only place the credit cost is confirmed on that route.
   const show = warnings.length > 0 || ((wbTitles || []).length > 0) || (!confirmedRecently && info.length > 0)
@@ -14597,7 +14659,52 @@ function labelChargedDownloads() {
   });
 }
 
+// Release 11: text reused from a past bid sits in a dashed box, and each [CONFIRM: value - from a past bid] fact can be
+// clicked to confirm it. Confirming writes the value back into the draft, saves it and updates the readiness score.
+const _PAST_FACT = /^\[CONFIRM:\s*(.+?)\s*-\s*from a past bid\]$/i;
+function markReusedParagraphs() {
+  const body = $("bidModalBody");
+  if (!body) return;
+  body.querySelectorAll(".placeholder-highlight").forEach(sp => {
+    if (!_PAST_FACT.test((sp.textContent || "").trim())) return;
+    sp.classList.add("past-fact");
+    sp.title = "From a past bid. Click to confirm it is right for this bid.";
+    const block = sp.closest("p, li, td") || sp.parentElement;
+    if (block && block !== body && !block.classList.contains("reused-para")) {
+      block.classList.add("reused-para");
+      if (!block.querySelector(":scope > .reused-para__label")) {
+        const lab = document.createElement("div");
+        lab.className = "reused-para__label";
+        lab.textContent = "Reused from a past bid: check each highlighted fact";
+        block.prepend(lab);
+      }
+    }
+  });
+}
+function confirmPastFact(tag) {
+  const m = _PAST_FACT.exec(String(tag || "").trim());
+  const r = _lastProposal && _lastProposal.bid_response;
+  if (!m || !r) return 0;
+  let n = 0;
+  const swap = t => (typeof t === "string" && t.includes(tag)) ? (n++, t.split(tag).join(m[1])) : t;
+  Object.keys(r).forEach(k => { if (r[k] && typeof r[k] === "object" && typeof r[k].content === "string") r[k].content = swap(r[k].content); });
+  (r.itt_question_responses || []).forEach(q => { if (q) q.response = swap(q.response); });
+  return n;
+}
+document.addEventListener("click", async (e) => {
+  const sp = e.target && e.target.closest ? e.target.closest("#bidModalBody .past-fact") : null;
+  if (!sp) return;
+  const tag = (sp.textContent || "").trim();
+  if (!confirmPastFact(tag)) return;
+  $("bidModalBody").innerHTML = renderProposal(_lastProposal, _bidRow);
+  wireBidResultButtons(); wireTabNavigation();
+  try { if (_bidRow) await saveProposalToServer(_lastProposal, rowKey(_bidRow)); } catch (err) { /* kept on screen */ }
+  if ($("bidReadinessCard")?.open) loadReadiness(false);
+});
+
 function wireBidResultButtons() {
+  markReusedParagraphs();
+  try { renderBidPreview(); } catch (e) { /* preview is optional */ }
   $("btnCopyCoveringLetter")?.addEventListener("click", copyCoveringLetterToClipboard);
   $("btnDownloadCoveringLetter")?.addEventListener("click", downloadCoveringLetterDoc);
   $("btnDownloadFullProposal")?.addEventListener("click", downloadFullProposalDoc);
@@ -15653,10 +15760,55 @@ window.saveBidSupportingDocs = function() {
     lsSet("tf_bid_uploaded_files" + sfx, JSON.stringify(state.bidUploadedFiles || []));
     const textVal = $("bidTenderText")?.value || "";
     lsSet("tf_bid_tender_text" + sfx, textVal);
+    syncBidUploadsToServer();
   } catch (err) {
     console.error("Error saving supporting docs:", err);
   }
 };
+
+// Release 11: the buyer documents are kept on the server per tender (browser storage fills up: Cornwall College reopened with
+// 2 of its 5 files). Nothing is written until the server's list for this tender has been read, so a partial local copy can
+// never replace a fuller stored set.
+function _bidUploadsKey() { try { return _bidRow ? String(rowKey(_bidRow)) : ""; } catch (e) { return ""; } }
+function _bidUploadsSig(files) { return (files || []).map(f => `${f.filename}:${String(f.content || "").length}`).join("|"); }
+let _bidUploadsTimer = null;
+function syncBidUploadsToServer() {
+  const key = _bidUploadsKey();
+  if (!key || state._bidUploadsLoadedFor !== key) return;
+  const sig = _bidUploadsSig(state.bidUploadedFiles);
+  if (state._bidUploadsSyncedSig === sig) return;
+  clearTimeout(_bidUploadsTimer);
+  _bidUploadsTimer = setTimeout(async () => {
+    if (_bidUploadsKey() !== key) return;
+    const files = (state.bidUploadedFiles || []).filter(f => f && f.filename && f.content).map(f => ({ filename: f.filename, content: f.content }));
+    try {
+      const res = await fetch("/api/bid-uploads", { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tender_key: key, files }) });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) state._bidUploadsSyncedSig = sig;
+      else if (data && data.error) showToastError("Your files are attached but could not be kept for next time: " + data.error);
+    } catch (e) { /* kept in this browser; tried again on the next change */ }
+  }, 800);
+}
+async function loadBidUploadsFromServer() {
+  const key = _bidUploadsKey();
+  if (!key) return;
+  try {
+    const res = await fetch(`/api/bid-uploads?tender_key=${encodeURIComponent(key)}`);
+    const data = await res.json().catch(() => ({}));
+    if (_bidUploadsKey() !== key) return;
+    const stored = (res.ok && data.ok && Array.isArray(data.files)) ? data.files : null;
+    if (stored) {
+      // Merge: the stored set plus anything attached here that the server does not have yet.
+      const byName = new Map(stored.map(f => [f.filename, f]));
+      (state.bidUploadedFiles || []).forEach(f => { if (f && f.filename && !byName.has(f.filename)) byName.set(f.filename, f); });
+      state.bidUploadedFiles = [...byName.values()];
+      state._bidUploadsSyncedSig = _bidUploadsSig(stored);
+    }
+    state._bidUploadsLoadedFor = key;
+    renderBidUploadedFiles();
+  } catch (e) { /* stays with the browser copy */ }
+}
 
 window.loadBidSupportingDocs = function() {
   try {
@@ -15675,7 +15827,9 @@ window.loadBidSupportingDocs = function() {
       localStorage.removeItem(storageKey("tf_bid_uploaded_files"));
       localStorage.removeItem(storageKey("tf_bid_tender_text"));
     } catch {}
+    state._bidUploadsLoadedFor = null;
     renderBidUploadedFiles();
+    loadBidUploadsFromServer();
   } catch (err) {
     console.error("Error loading supporting docs:", err);
   }
@@ -15861,6 +16015,61 @@ $("bidWinningBidFiles")?.addEventListener("change", handleBidWinningBidUpload);
 
 // Release 8 (F3): brand kit for the selected company profile. The kit is saved once; the switch on this screen is per bid.
 let _brandLogoB64 = null;   // null = keep the saved logo
+// Release 11: a bid keeps its own past-bid choice (step 4 on/off and the mode). A new bid starts from the defaults.
+function _pastPrefKey() { try { return "tf_pastbids_" + String(rowKey(_bidRow)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 120); } catch (e) { return ""; } }
+function rememberPastBidPrefs() {
+  const k = _pastPrefKey(); if (!k || !_bidRow) return;
+  try { localStorage.setItem(k, JSON.stringify({ on: Boolean($("bidStepCheck5")?.checked), mode: $("bidPastBidsMode")?.value || "" })); } catch (e) { /* private window */ }
+}
+function applyPastBidPrefs() {
+  const k = _pastPrefKey(); if (!k || !_bidRow) return;
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { saved = null; }
+  if (!saved) return;
+  const chk = $("bidStepCheck5"), mode = $("bidPastBidsMode");
+  if (chk) chk.checked = Boolean(saved.on);
+  if (mode && saved.mode) mode.value = saved.mode;
+  if (typeof updateBidStepSummary === "function") updateBidStepSummary(5);
+}
+// Release 11: "Will use:" under the past-bid choice, with an outcome badge for each bid.
+async function refreshWillUse() {
+  const box = $("bidWillUse");
+  if (!box) return;
+  const mode = $("bidPastBidsMode")?.value || "auto";
+  if (!$("bidStepCheck5")?.checked || mode === "off") { box.textContent = "Past bids are not used for this bid."; return; }
+  const badge = o => o === "won" ? "Won" : o === "lost" ? "Lost: tone and layout only, no reusable text" : "Outcome pending";
+  try {
+    const ids = typeof getSelectedWinningBidIds === "function" ? getSelectedWinningBidIds() : [];
+    if (mode === "library" && !ids.length) { box.textContent = "Tick the bids to use in the list below."; return; }
+    const res = await fetch("/api/bid-style-preview", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tender: _bidRow || {}, profile_id: $("bidCompanyProfileSelect")?.value || "", past_bids_mode: mode, winning_bid_ids: ids, questions: [] }) });
+    const data = await res.json().catch(() => ({}));
+    const bids = (data && data.bids) || [];
+    box.innerHTML = bids.length
+      ? "<b>Will use:</b><ul style='margin:4px 0 0 18px;'>" + bids.map(b => `<li>${esc(b.title)}${b.year ? ", " + esc(b.year) : ""} <span style="padding:1px 6px;border-radius:8px;background:var(--surface-2,#f1f5f9);">${esc(badge(b.outcome))}</span></li>`).join("") + "</ul>"
+      : "No past bids in your library yet: the standard style is used. Upload one below.";
+  } catch (e) { box.textContent = ""; }
+}
+// Release 11: the bid page's panels (branding, what TenderFlow learned, readiness...) stay open or closed as the user left them.
+function restoreBidPanels() {
+  let open = {};
+  try { open = JSON.parse(localStorage.getItem("tf_bid_panels") || "{}") || {}; } catch (e) { open = {}; }
+  document.querySelectorAll("#bidModal details[id]").forEach(d => {
+    if (Object.prototype.hasOwnProperty.call(open, d.id) && d.open !== Boolean(open[d.id])) d.open = Boolean(open[d.id]);
+  });
+}
+document.querySelectorAll("#bidModal details[id]").forEach(d => d.addEventListener("toggle", () => {
+  let open = {};
+  try { open = JSON.parse(localStorage.getItem("tf_bid_panels") || "{}") || {}; } catch (e) { open = {}; }
+  open[d.id] = d.open;
+  try { localStorage.setItem("tf_bid_panels", JSON.stringify(open)); } catch (e) { /* private window */ }
+}));
+$("bidPastBidsMode")?.addEventListener("change", refreshWillUse);
+$("bidStepCheck5")?.addEventListener("change", refreshWillUse);
+$("bidStepCard5")?.addEventListener("click", () => setTimeout(refreshWillUse, 50));
+$("bidStepCheck5")?.addEventListener("change", rememberPastBidPrefs);
+$("bidPastBidsMode")?.addEventListener("change", rememberPastBidPrefs);
+
 // The bid screen only reads the kit (to enable the switch); the fields are edited in Company profiles.
 async function loadBrandKit() {
   const pid = $("bidCompanyProfileSelect")?.value || "";
@@ -15869,8 +16078,19 @@ async function loadBrandKit() {
     const res = await fetch(`/api/brand-kit?profile_id=${encodeURIComponent(pid)}`);
     const data = await res.json().catch(() => ({}));
     const kit = data && data.exists ? data.kit : null;
-    if (on) { on.disabled = !kit; on.checked = Boolean(kit); }
+    _brandKitCache = kit;
+    // A reopened bid keeps its own switch (saved per bid); a new bid starts on when the company has a kit.
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(_brandPrefKey()) || "null"); } catch (e) { saved = null; }
+    if (on) { on.disabled = !kit; on.checked = Boolean(kit) && (saved ? Boolean(saved.on) : true); }
     if (sum) sum.textContent = kit ? "brand kit set" : "No brand kit yet: add one in Company profiles";
+    renderBidPreview();
+    const info = $("bidBrandKitInfo");
+    if (info) info.innerHTML = kit
+      ? `<span title="Heading colour" style="display:inline-block;width:18px;height:18px;border-radius:4px;background:#${esc(kit.color)};border:1px solid #cbd5e1;"></span>`
+        + `<span style="font-family:${esc(kit.font)}, sans-serif;">${esc(kit.font)}</span>`
+        + `<span>${kit.footer_text ? "Footer: " + esc(kit.footer_text) : "No footer line"}</span><span>${kit.has_logo ? "Logo set" : "No logo"}</span>`
+      : "";
   } catch (e) { if (sum) sum.textContent = ""; }
 }
 // The fields live in Company profiles (step 4) and belong to the profile being edited.
@@ -18659,6 +18879,7 @@ async function loadHistoryItem(id) {
       try {
         state.bidUploadedFiles = [];
         if (typeof loadBidSupportingDocs === "function") loadBidSupportingDocs();
+        setTimeout(() => { try { applyPastBidPrefs(); } catch (e) { /* default stays */ } }, 600);
         if (typeof updateBidStepSummary === "function") updateBidStepSummary(4);
         if (typeof updateBidStepSummary === "function") updateBidStepSummary(3);
       } catch (e) { /* the steps keep their state */ }
@@ -18669,8 +18890,8 @@ async function loadHistoryItem(id) {
         const prof = (state.companyProfiles || []).find(p => (d.profile_id && String(p.id) === String(d.profile_id))
           || (want && String(p.name || "").trim().toLowerCase() === want));
         if (sel && prof) {
-          sel.value = String(prof.id);
-          if (typeof updateBidStepSummary === "function") updateBidStepSummary(1);
+          if (typeof setBidProfile === "function") setBidProfile(prof.id);
+          else { sel.value = String(prof.id); if (typeof updateBidStepSummary === "function") updateBidStepSummary(1); }
         }
       } catch (e) { /* the selector keeps its value */ }
 
@@ -18688,6 +18909,7 @@ async function loadHistoryItem(id) {
       $("bidModal").classList.remove("hidden");
       $("bidModalBody").innerHTML = renderProposal(d.analysis_json, _bidRow);
       wireBidResultButtons();
+      try { loadBrandKit(); renderBidPreview(); } catch (e) { /* preview is optional */ }
       wireTabNavigation();
     }
   } catch (err) {
@@ -25724,8 +25946,14 @@ async function handleBidWinningBidUpload(e) {
         stepCheck.disabled = false;
         stepCheck.checked = true;
       }
+      // Release 11: say what happens next, then show the bid in the list, selected for this bid, with what was learned.
+      if (status) status.innerHTML = `<div class="file-chip" style="background:#f1f5f9; color:#475569; display:block;">Learning style…
+        <div style="height:4px;background:#e2e8f0;border-radius:2px;margin-top:4px;overflow:hidden;"><div style="height:100%;width:70%;background:var(--primary,#1e3a8a);"></div></div></div>`;
       await loadBidWinningBids(uploadedIds);
       saveBidStepCheckStates();
+      if (typeof rememberPastBidPrefs === "function") rememberPastBidPrefs();
+      if (typeof refreshWillUse === "function") await refreshWillUse();
+      if ($("bidStyleCard")?.open && typeof loadStylePreview === "function") await loadStylePreview();
     }
   } finally {
     if (status) status.innerHTML = "";
@@ -28904,7 +29132,11 @@ window.updateBidStepSummary = function(stepNumber, summaryEl) {
     const modal = overlay.querySelector(":scope > .modal");
     if (!modal) return;
     let bar = modal.querySelector(":scope > .ws-bar");
-    const row = currentRow();
+    // The overlay's own tender first (a bid opened from History has no open details panel behind it).
+    const own = overlay.id === "bidModal" ? (typeof _bidRow !== "undefined" ? _bidRow : null)
+      : (typeof _analyseRow !== "undefined" && _analyseRow) || (typeof _deepRow !== "undefined" ? _deepRow : null);
+    const cur = currentRow();
+    const row = own && own.title ? { ...(cur && cur.title === own.title ? cur : {}), ...own } : cur;
     const view = activeView(overlay.id);
     if (!bar) {
       bar = document.createElement("div");
