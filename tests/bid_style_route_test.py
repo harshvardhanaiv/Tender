@@ -88,4 +88,27 @@ r = c.post("/api/bid-style-preview", headers=H, json={"past_bids_mode": "off", "
 d = r.get_json()
 ok(not d["profile"]["learned"] and d["bids"] == [] and d["plan"][0]["reusable"] is None, "off: nothing learned, nothing reused")
 ok(not any("insert" in s or "update" in s for s in SQL), "the preview writes nothing")
+# release 12: the sector beside topic match, and a plan of sections when there are no questions
+r = c.post("/api/bid-style-preview", headers=H, json={"tender": {"title": "Oldham Live Well Evaluation", "description": "Evaluation"}, "questions": []})
+d = r.get_json()
+ok("sector" in d["bids"][0] and isinstance(d["bids"][0]["sector"], str), "each bid carries a sector (empty when nothing fits): %s" % d["bids"][0])
+ok(d["plan_source"] == "sections" and d["plan"][0]["number"] == "S1", "no questions: the plan lists the sections to be written")
+# release 12: the bidder's own prices go into the commercial table (free, nothing stored)
+SCH = [{"sheet": "Volume 3 prices", "header": ["Item", "Description", "Qty", "Unit price", "Total"],
+        "rows": [["1", "Laptop 14in", "10", "", ""], ["2", "Docking station", "4", "", ""], ["3", "Training day", "2", "", ""]]}]
+NOTES = "Prices are fixed.\n\n## Commercial offer: price schedule\nold table\nCurrency: OANDA rate on the day [CONFIRM: rate]"
+SQL.clear()
+r = c.post("/api/bid-apply-prices", headers=H, json={"price_schedules": SCH, "pricing_notes": NOTES,
+                                                    "prices": {"0:0": "650"}, "price_text": "Docking station: £120.50"})
+d = r.get_json()
+ok(r.status_code == 200 and d["ok"] and d["priced"] == 2 and d["rows"] == 3, "two of three lines priced: %s" % r.data[:300])
+t = d["pricing_notes"]
+ok("GBP 650.00" in t and "GBP 6,500.00" in t and "GBP 482.00" in t, "unit prices and line totals: %s" % t)
+ok("**GBP 6,982.00**" in t and "1 line(s) still have no price" in t, "a total, and the unpriced line is said")
+ok(t.count("## Commercial offer: price schedule") == 1 and "old table" not in t and t.startswith("Prices are fixed."), "the old table is replaced in place")
+ok("Currency: OANDA" in t and "[NEEDS INPUT: unit price]" in t, "the currency rule and the open line are kept")
+ok(not any("insert" in s or "update" in s or "delete" in s for s in SQL), "applying prices writes nothing: %s" % SQL)
+r = c.post("/api/bid-apply-prices", headers=H, json={"price_schedules": SCH, "pricing_notes": NOTES, "prices": {}, "price_text": "Nothing here"})
+ok(r.status_code == 400 and "No price matched" in r.get_json()["error"], "no matching price: a clear message, nothing changed")
+ok(c.post("/api/bid-apply-prices", headers=H, json={"price_schedules": [], "prices": {"0:0": 1}}).status_code == 400, "no schedule: refused")
 print("bid style route: %d checks passed" % n)

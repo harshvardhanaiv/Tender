@@ -112,7 +112,9 @@ body.tf-shell #bidModal.ws-page > .modal > .bid-modal-footer {
   order: 99;
   position: sticky;
   bottom: 0;
-  z-index: 15;
+  /* above the sticky stage/download bar (18): where the two meet, the bottom bar wins, so a click meant for
+     Re-run never lands on Download PDF behind it (release 12, 3 credits lost) */
+  z-index: 20;
   background: var(--surface, #fff) !important;
   border-top: 1px solid var(--border, #e2e8f0) !important;
   box-shadow: 0 -8px 18px rgba(15, 23, 42, .08);
@@ -138,6 +140,8 @@ body.tf-shell #bidModal.ws-page .bid-modal-footer .bid-btn-generate { padding: 1
 .ws-kpi span { font-size: 12.5px; color: var(--muted, #64748b); }
 
 /* The stage buttons (Stage 1 to 5) stick just under the page header instead of overlapping it (release 7 re-test). */
+/* Release 12: the page keeps a gap above the bottom bar so the last buttons can always be scrolled clear of it. */
+body.tf-shell #bidModal.ws-page #bidModalBody { scroll-padding-bottom: 96px; padding-bottom: 24px !important; }
 body.tf-shell #bidModal.ws-page #bidModalBody .pills-container {
   top: var(--ws-bar-h, 0px) !important;
   margin-top: 0 !important;
@@ -294,3 +298,7 @@ body.tf-shell #bidModal.ws-page #bidModalBody .pills-container {
   body.tf-shell #bidModal.ws-page .bid-modal-content > * { grid-column: 1; }
   body.tf-shell #bidModal.ws-page .bid-modal-content > .bid-preview { grid-column: 2; grid-row: 1 / span 40; position: sticky; top: calc(var(--ws-bar-h, 0px) + 8px); margin-top: 0; }
 }
+
+/* Release 12: the "Your prices" card (bidder's own unit prices for the buyer's price schedule). */
+#bidModal .bid-prices td { vertical-align: middle; }
+#bidModal .bid-price-in { width: 120px; max-width: 100%; box-sizing: border-box; padding: 5px 8px; font: inherit; font-size: 13px; border: 1px solid var(--pg-line, #cbd5e1); border-radius: 6px; background: var(--pg-field, #fff); color: inherit; text-align: right; }

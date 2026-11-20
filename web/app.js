@@ -13009,12 +13009,14 @@ function renderPlanHtml(d) {
   const plan = (d && d.plan) || [];
   if (!plan.length) return `<div class="bid-preview__empty">Build the Bid plan first so TenderFlow has the buyer's questions, then open this tab again.</div>`;
   const learned = Boolean(d.profile && d.profile.learned);
+  // Release 12: a notice with no questions shows the sections TenderFlow will write, and says so.
+  const bySections = d.plan_source === "sections";
   const rows = plan.map(r => `<tr>
       <td class="n">${esc(r.number)}</td><td>${esc(r.question)}</td><td class="n">${r.weight_pct == null ? "" : esc(String(r.weight_pct)) + "%"}</td>
       <td class="n">${esc(String(r.words || ""))}</td><td>${esc(r.subheadings)}</td>
       <td>${r.reusable ? `<span class="bid-badge won">1 paragraph</span><small>From ${esc(r.reusable.source_bid)}, ${esc(r.reusable.source_question)}. ${esc(String(r.reusable.facts_to_confirm))} fact(s) to confirm.</small>` : `<span class="bid-pv-muted">-</span>`}</td></tr>`).join("");
-  return `<p class="bid-pv-muted">The buyer's questions and order stay exactly as issued. ${learned ? "Sub-headings follow the learned style." : "Standard sub-headings, because no past bid is in use."}</p>
-    <div class="bid-tblwrap"><table class="bid-plan"><thead><tr><th>Q</th><th>Question</th><th>Weight</th><th>Words</th><th>Sub-headings</th><th>Reusable text</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<p class="bid-pv-muted">${bySections ? "The buyer's documents list no questions, so this is the plan for the sections TenderFlow will write. Upload the questionnaire in step 6 if there is one." : "The buyer's questions and order stay exactly as issued."} ${learned ? "Sub-headings follow the learned style." : "Standard sub-headings, because no past bid is in use."}</p>
+    <div class="bid-tblwrap"><table class="bid-plan"><thead><tr><th>${bySections ? "#" : "Q"}</th><th>${bySections ? "Section" : "Question"}</th><th>Weight</th><th>Words</th><th>Sub-headings</th><th>Reusable text</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function renderStylePreview(d) { return renderLearnedHtml(d) + `<h4 style="margin:12px 0 4px;">Answer plan</h4>` + renderPlanHtml(d); }
 let _lastStyleData = null;
@@ -13031,8 +13033,10 @@ async function loadStylePreview() {
   if (_styleLoading) return;
   _styleLoading = true;
   const ids = typeof getSelectedWinningBidIds === "function" ? getSelectedWinningBidIds() : [];
+  const fromDraft = (_lastProposal?.bid_response?.itt_question_responses || [])
+    .filter(q => q && q.question_number).map(q => ({ number: String(q.question_number), question_text: String(q.question_text || "") }));
   const questions = _lastBidPlanQuestions.length ? _lastBidPlanQuestions
-    : (_lastProposal?.dissection?.itt_questions || []);
+    : ((_lastProposal?.dissection?.itt_questions || []).length ? _lastProposal.dissection.itt_questions : fromDraft);
   try {
     const res = await fetch("/api/bid-style-preview", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -13223,6 +13227,7 @@ async function runBidPlan() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) throw new Error(data.error || "The plan could not be built.");
     _lastBidPlanQuestions = Array.isArray(data.plan?.questions) ? data.plan.questions : [];
+    _lastStyleData = null;   // the Answer plan tab reads the new questions next time (release 12)
     if (body) body.innerHTML = renderBidPlan(data.plan);
     revealBidResults();
   } catch (e) {
@@ -13360,6 +13365,8 @@ async function _runBidAssistantInner(isRefresh = false) {
     }
     const roles = docFacts.roles;
     _bidFitDecision = (fitCheck && typeof fitCheck === "object" && fitCheck.fit_score != null) ? fitCheck : null;
+    // Release 12: the box says how many paragraphs will be reused; reading the plan is free (no credits).
+    if ($("bidStepCheck5")?.checked && !_lastStyleData) { try { await loadStylePreview(); } catch (e) { /* the box says less */ } }
     const pre = bidPreflight(_bidRow, uploads, pastedText, wbTitles, confirmedRecently,
                              { proposal: creditCostText("proposal"), download: creditCostText("download") },
                              isClosedTender(_bidRow), publicDocs, fitCheck, roles,
@@ -13404,6 +13411,7 @@ async function _runBidAssistantInner(isRefresh = false) {
   const past_bids_mode = !$("bidStepCheck5")?.checked ? "off"
     : (($("bidPastBidsMode")?.value) || (winning_bid_ids.length ? "library" : "auto"));
 
+  rememberBidStepsForBid();
   const taskId = "proposal-" + rowKey(_bidRow);
   if (state.tasks.find(t => t.id === taskId && t.status === "running")) {
     await showAlert("A bid proposal generation is already running for this tender.");
@@ -13499,7 +13507,7 @@ async function executeProposalTask(task) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal,
-      body: JSON.stringify({ tender: task.row, company: task.company, files: task.files, company_files: task.company_files, user_document_ids: task.user_document_ids, winning_bid_ids: task.winning_bid_ids || [], past_bids_mode: task.past_bids_mode || "", profile_id: task.profile_id, fit_check: task.fit_check || null, refresh: task.refresh || false }),
+      body: JSON.stringify({ tender: task.row, company: task.company, files: task.files, company_files: task.company_files, user_document_ids: task.user_document_ids, winning_bid_ids: task.winning_bid_ids || [], past_bids_mode: task.past_bids_mode || "", profile_id: task.profile_id, fit_check: task.fit_check || null, refresh: task.refresh || false, ...bidPricesPayload(task.row) }),
     });
 
     if (!res.ok) {
@@ -14546,7 +14554,15 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
     const pastOn = (_c5 ? _c5.checked : Boolean(wbTitles && wbTitles.length)) && (el("bidPastBidsMode")?.value || "auto") !== "off";
     const pastLine = !pastOn ? "off" : (wbTitles && wbTitles.length ? wbTitles.join(", ")
       : ((el("bidPastBidsMode")?.value || "auto") === "auto" ? "TenderFlow will choose the closest bids (won ones count most)" : "none ticked, standard style"));
-    info.push(`This bid will be written with:\n   Branding: ${brandLine}\n   Past bids: ${pastLine}${pastOn ? "\n   Reused wording: every old figure, date or name comes back as [CONFIRM: ... - from a past bid]" : ""}`);
+    // Release 12: "n paragraphs reused, m facts to confirm" from the answer plan, when it has been read.
+    const _sd = typeof _lastStyleData !== "undefined" ? _lastStyleData : null;
+    const _plan = (_sd && Array.isArray(_sd.plan)) ? _sd.plan : [];
+    const _reused = _plan.filter(r => r && r.reusable);
+    const _facts = _reused.reduce((n, r) => n + (Number(r.reusable.facts_to_confirm) || 0), 0);
+    const reuseLine = !pastOn || !_plan.length ? ""
+      : (_reused.length ? `\n   Reused: ${_reused.length} paragraph${_reused.length === 1 ? "" : "s"} (${_reused.map(r => String(r.number)).slice(0, 6).join(", ")}), ${_facts} fact${_facts === 1 ? "" : "s"} to confirm`
+        : "\n   Reused: no past answer matches these questions, so only the style is used");
+    info.push(`This bid will be written with:\n   Branding: ${brandLine}\n   Past bids: ${pastLine}${reuseLine}${pastOn ? "\n   Reused wording: every old figure, date or name comes back as [CONFIRM: ... - from a past bid]" : ""}`);
   }
   // A custom tender always gets the box: it is the only place the credit cost is confirmed on that route.
   const show = warnings.length > 0 || ((wbTitles || []).length > 0) || (!confirmedRecently && info.length > 0)
@@ -14683,6 +14699,7 @@ async function downloadSubmissionPack() {
         title, authority: _lastProposal.buyer_name || _bidRow.contracting_authority || "",
         company_name: _lastProposal.bid_company || _lastProposal.company || _bidRow.company || "",
         price_schedules: _lastProposal.price_schedules || [],
+        ...bidPricesPayload(),
         buyer_workbooks: _lastProposal.buyer_workbooks || [],
         buyer_templates: _lastProposal.buyer_templates || [],
         terms: { payment_terms: _lastProposal.dissection?.payment_terms || "", excluded_suppliers_or_products: _lastProposal.dissection?.excluded_suppliers_or_products || [] },
@@ -14848,9 +14865,88 @@ document.addEventListener("keydown", e => {
   if (sp) { e.preventDefault(); sp.click(); }
 });
 
+// Release 12: "Your prices". Chemonics' commercial section had 60 "[NEEDS INPUT: unit price]" rows and nowhere to give a
+// price. TenderFlow never invents one: the bidder types their unit prices (or pastes "item: price" lines) and the draft's
+// price table, its line totals and the commercial workbook are filled from them. Free; kept per bid.
+function _pricesKey(row) { try { return "tf_prices_" + String(rowKey(row || _bidRow)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 120); } catch (e) { return ""; } }
+function loadBidPrices(row) {
+  try { const v = JSON.parse(localStorage.getItem(_pricesKey(row)) || "null"); return v && typeof v === "object" ? v : { prices: {}, text: "" }; }
+  catch (e) { return { prices: {}, text: "" }; }
+}
+function saveBidPrices(v) { try { localStorage.setItem(_pricesKey(), JSON.stringify(v)); } catch (e) { /* private window */ } }
+function bidPricesPayload(row) { const v = loadBidPrices(row); return { prices: v.prices || {}, price_text: v.text || "" }; }
+const _PRICE_COL_RE = /unit\s*price|price|rate|total|amount/i;
+const _QTY_COL_RE = /\b(qty|quantity|units?)\b/i;
+function renderBidPricesCard() {
+  const old = $("bidPricesCard");
+  const sch = (_lastProposal && Array.isArray(_lastProposal.price_schedules)) ? _lastProposal.price_schedules.slice(0, 3) : [];
+  if (!sch.length || !$("bidModalBody")) { if (old) old.remove(); return; }
+  const saved = loadBidPrices();
+  const blocks = sch.map((s, si) => {
+    const header = (s.header || []).map(String);
+    const q = header.findIndex(h => _QTY_COL_RE.test(h));
+    const labelCols = header.map((h, i) => i).filter(i => !_PRICE_COL_RE.test(header[i])).slice(0, 3).filter(i => i !== q);
+    const rows = (s.rows || []).map((r, ri) => [r, ri]).filter(([r]) => (r || []).some(c => String(c || "").trim())).slice(0, 30);
+    const body = rows.map(([r, ri]) => {
+      const label = labelCols.map(i => String(r[i] || "").trim()).filter(Boolean).join(" - ");
+      const k = `${si}:${ri}`;
+      const v = saved.prices && saved.prices[k] != null ? saved.prices[k] : "";
+      return `<tr><td>${esc(label || "Line " + (ri + 1))}</td><td class="n">${q >= 0 ? esc(String(r[q] || "")) : ""}</td>
+        <td><input type="text" inputmode="decimal" class="bid-price-in" data-k="${k}" value="${esc(String(v))}" placeholder="0.00" aria-label="Unit price for ${esc(label || "line " + (ri + 1))}" /></td></tr>`;
+    }).join("");
+    return `<div class="bid-step-meta" style="margin-top:8px;font-weight:600;">${esc(s.sheet || "Price schedule")}</div>
+      <div class="bid-tblwrap"><table class="bid-plan bid-prices"><thead><tr><th>Line item</th><th>Qty</th><th>Your unit price (GBP)</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  }).join("");
+  const html = `<div style="font-weight:700;">Your prices</div>
+    <div class="bid-step-meta">The buyer's price schedule is in this draft with every unit price left for you. Type your prices, or paste lines such as "Laptop 14in: 650", then put them in the draft. TenderFlow never makes up a price. Free, and kept for this bid.</div>
+    ${blocks}
+    <textarea id="bidPriceText" rows="3" style="width:100%;box-sizing:border-box;margin-top:8px;font:inherit;font-size:13px;" placeholder="Or paste: item name: price (one per line)">${esc(saved.text || "")}</textarea>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+      <button type="button" id="btnApplyBidPrices" class="btn btn--small">Put prices in the draft</button>
+      <span id="bidPricesStatus" class="bid-step-meta" role="status"></span></div>`;
+  let card = old;
+  if (!card) {
+    card = document.createElement("div");
+    card.id = "bidPricesCard";
+    card.className = "bid-step-card bid-prices-card";
+    card.style.cssText = "padding:14px 16px;margin:12px 0;";
+    const anchor = $("bidReadinessCard");
+    if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(card, anchor.nextSibling);
+    else $("bidModalBody").appendChild(card);
+  }
+  card.innerHTML = html;
+  $("btnApplyBidPrices")?.addEventListener("click", applyBidPrices);
+}
+async function applyBidPrices() {
+  const btn = $("btnApplyBidPrices"), st = $("bidPricesStatus");
+  const prices = {};
+  document.querySelectorAll("#bidPricesCard .bid-price-in").forEach(inp => { const v = String(inp.value || "").trim(); if (v) prices[inp.dataset.k] = v; });
+  const text = $("bidPriceText")?.value || "";
+  saveBidPrices({ prices, text });
+  const r = _lastProposal && _lastProposal.bid_response;
+  if (!r) return;
+  if (btn) btn.disabled = true;
+  if (st) st.textContent = "Putting your prices in…";
+  try {
+    const res = await fetch("/api/bid-apply-prices", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ price_schedules: _lastProposal.price_schedules || [], pricing_notes: r.pricing_notes?.content || "", prices, price_text: text }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || "The prices could not be applied.");
+    r.pricing_notes = Object.assign({}, r.pricing_notes || {}, { content: data.pricing_notes });
+    try { if (_bidRow) await saveProposalToServer(_lastProposal, rowKey(_bidRow)); } catch (e) { /* kept on screen */ }
+    $("bidModalBody").innerHTML = renderProposal(_lastProposal, _bidRow);
+    wireBidResultButtons();
+    const st2 = $("bidPricesStatus");
+    if (st2) st2.textContent = `${data.priced} of ${data.rows} line items priced and in the draft${data.priced < data.rows ? "; the rest still show [NEEDS INPUT]" : ""}.`;
+  } catch (e) {
+    if (st) st.textContent = e.message || "The prices could not be applied.";
+  } finally { const b = $("btnApplyBidPrices"); if (b) b.disabled = false; }
+}
+
 function wireBidResultButtons() {
   markReusedParagraphs();
   try { renderBidPreview(); } catch (e) { /* preview is optional */ }
+  try { renderBidPricesCard(); } catch (e) { /* the prices card is optional */ }
   $("btnCopyCoveringLetter")?.addEventListener("click", copyCoveringLetterToClipboard);
   $("btnDownloadCoveringLetter")?.addEventListener("click", downloadCoveringLetterDoc);
   $("btnDownloadFullProposal")?.addEventListener("click", downloadFullProposalDoc);
@@ -15699,6 +15795,14 @@ function showFinalExportBanner(info) {
 // N6: PDF export with the page count of every section; a section over its page limit is named.
 async function downloadFullProposalPdf() {
   if (!_bidRow || !_lastProposal?.bid_response) return;
+  // Release 12: a click meant for "Re-run" landed here and charged 3 credits. A PDF download now asks first, like the
+  // Word download, so a stray click costs nothing.
+  const cost = Number((state.creditCosts || {}).download);
+  const ask = `Download this bid as a PDF${cost > 0 ? ` for ${cost} credit${cost === 1 ? "" : "s"}` : ""}? It shows the page count of each section.`;
+  const go = window.showConfirm
+    ? await window.showConfirm(ask, "Download PDF", { okText: cost > 0 ? `Download (${cost} credit${cost === 1 ? "" : "s"})` : "Download", cancelText: "Cancel", danger: false })
+    : window.confirm(ask);
+  if (!go) return;
   const btn = $("btnDownloadProposalPdf");
   const label = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "Building PDF..."; }
@@ -15953,6 +16057,9 @@ async function loadBidUploadsFromServer() {
     }
     state._bidUploadsLoadedFor = key;
     renderBidUploadedFiles();
+    // The merged set is fuller than the stored one (files added back from the History record): keep it.
+    if (stored && state.bidUploadedFiles.length > stored.length) syncBidUploadsToServer();
+    if (typeof updateBidStepSummary === "function") updateBidStepSummary(4);
   } catch (e) { /* stays with the browser copy */ }
 }
 
@@ -16163,6 +16270,29 @@ $("bidWinningBidFiles")?.addEventListener("change", handleBidWinningBidUpload);
 let _brandLogoB64 = null;   // null = keep the saved logo
 // Release 11: a bid keeps its own past-bid choice (step 5 on/off and the choice). A new bid starts from the defaults.
 function _pastPrefKey() { try { return "tf_pastbids_" + String(rowKey(_bidRow)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 120); } catch (e) { return ""; } }
+// Release 12: steps 1-3 (company, documents, Answer bank) are remembered per bid, so a bid reopened from History has
+// the ticks it was written with (Chemonics came back with the Answer bank unticked).
+function _bidStepsKey() { try { return "tf_bidsteps_" + String(rowKey(_bidRow)).replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 120); } catch (e) { return ""; } }
+function rememberBidStepsForBid() {
+  const k = _bidStepsKey(); if (!k || !_bidRow) return;
+  const out = {};
+  [2, 3, 4].forEach(i => { const c = $("bidStepCheck" + i); if (c) out[i] = Boolean(c.checked); });
+  try { localStorage.setItem(k, JSON.stringify(out)); } catch (e) { /* private window */ }
+}
+function restoreBidStepsForBid() {
+  const k = _bidStepsKey();
+  let saved = null;
+  if (k && _bidRow) { try { saved = JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { saved = null; } }
+  [2, 3, 4].forEach(i => {
+    const c = $("bidStepCheck" + i);
+    if (!c || c.disabled) return;
+    // No per-bid record (a bid written before release 12): the Answer bank is on unless the user switched it off.
+    const want = saved && typeof saved[i] === "boolean" ? saved[i] : (i === 3 ? bidStepSavedPref(3) !== false : null);
+    if (want === null || c.checked === want) return;
+    c.checked = want;
+    if (typeof updateBidStepSummary === "function") updateBidStepSummary(i);
+  });
+}
 function _pastChoice() {
   const r = typeof document !== "undefined" ? document.querySelector('input[name="bidPastMode"]:checked') : null;
   return r ? r.value : "auto";
@@ -16222,7 +16352,7 @@ async function refreshWillUse() {
     const bids = (data && data.bids) || [];
     if (mode === "auto") {
       box.innerHTML = bids.length
-        ? `<div class="bid-step-meta">Will use:</div>` + bids.map(b => `<div class="bid-libitem"><div class="t">${esc(b.title)}<span>${[b.buyer, b.year].filter(Boolean).map(x => esc(String(x))).join(" · ")}${b.match != null ? `${b.buyer || b.year ? " · " : ""}topic match ${esc(String(b.match))}%` : ""}${b.outcome === "lost" ? " · tone and layout only, no reusable text" : ""}</span></div>${_outcomeBadge(b.outcome)}</div>`).join("")
+        ? `<div class="bid-step-meta">Will use:</div>` + bids.map(b => `<div class="bid-libitem"><div class="t">${esc(b.title)}<span>${[b.buyer, b.sector, b.year].filter(Boolean).map(x => esc(String(x))).join(" · ")}${b.match != null ? `${b.buyer || b.sector || b.year ? " · " : ""}topic match ${esc(String(b.match))}%` : ""}${b.outcome === "lost" ? " · tone and layout only, no reusable text" : ""}</span></div>${_outcomeBadge(b.outcome)}</div>`).join("")
         : `<div class="bid-step-meta">No past bids in your library yet, so the standard style is used. Choose "Upload a new winning bid".</div>`;
     }
     try { renderBidPreview(); } catch (e) { /* preview is optional */ }
@@ -19059,7 +19189,16 @@ async function loadHistoryItem(id) {
       try {
         state.bidUploadedFiles = [];
         if (typeof loadBidSupportingDocs === "function") loadBidSupportingDocs();
-        setTimeout(() => { try { applyPastBidPrefs(); } catch (e) { /* default stays */ } }, 600);
+        // Release 12: Chemonics and Thetford came back with no documents and Cornwall College with 2 of 5, where the
+        // browser copy and the server copy were both short. The History record holds the files the bid was written
+        // from: any of those not on screen are added back (and kept on the server by the next sync).
+        const recFiles = (d.files_json && Array.isArray(d.files_json.files)) ? d.files_json.files : [];
+        const have = new Set((state.bidUploadedFiles || []).map(f => f && f.filename));
+        recFiles.forEach(f => {
+          if (f && f.filename && f.content && !have.has(f.filename)) { state.bidUploadedFiles.push({ filename: f.filename, content: f.content }); have.add(f.filename); }
+        });
+        if (recFiles.length) { renderBidUploadedFiles(); state._bidUploadsFromRecord = recFiles.length; }
+        setTimeout(() => { try { applyPastBidPrefs(); restoreBidStepsForBid(); } catch (e) { /* default stays */ } }, 600);
         if (typeof updateBidStepSummary === "function") updateBidStepSummary(4);
         if (typeof updateBidStepSummary === "function") updateBidStepSummary(3);
       } catch (e) { /* the steps keep their state */ }

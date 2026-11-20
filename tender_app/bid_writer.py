@@ -137,6 +137,7 @@ def extract_questions(stage1: dict | None) -> list[dict]:
             "word_limit": _as_int(q.get("word_limit")) or _limit_from_text(text),
             "page_limit": _as_int(q.get("page_limit")),
             "mandatory": bool(q.get("mandatory", True)),
+            "budget_hint": _as_int(q.get("budget_words")),
         })
 
     # Sub-parts that repeat their parent's weighting share it instead of each claiming all of it.
@@ -154,6 +155,10 @@ def extract_questions(stage1: dict | None) -> list[dict]:
     for q in out:
         if q["word_limit"]:
             q["budget_words"] = q["word_limit"]
+        elif q.get("budget_hint"):
+            # A submission document TenderFlow structured itself (release 12): the technical offer of a works contract
+            # needs room for its method statement, water safety, H&S and quality sections (Epsom fell to 5,207 words).
+            q["budget_words"] = int(min(MAX_BUDGET * 2, max(MIN_BUDGET, q["budget_hint"])))
         elif any_weight and q["weight_pct"] is not None:
             share = q.get("weight_share", q["weight_pct"])
             q["budget_words"] = int(min(MAX_BUDGET, max(MIN_BUDGET, round(TOTAL_WORD_BUDGET * share / 100))))
@@ -200,11 +205,27 @@ def ends_cleanly(text: str) -> bool:
     if re.search(r"\b(yours (faithfully|sincerely|truly)|kind regards|best regards|with regards)\b", t[-500:], re.I):
         return True
     last_line = t.splitlines()[-1]
+    # A short "label: value" line ends a summary or a total ("10-year surplus: GBP 67,160"), not a sentence.
+    if re.match(r"^\s*[^.:]{2,60}:\s*\S.{0,60}$", last_line) and len(last_line.split()) <= 12:
+        return True
     # A contact block (name, company, address, phone) ends on a postcode or a phone number, not a full stop.
     if re.search(r"\b[A-Za-z]{1,2}\d[A-Za-z\d]?\s*\d[A-Za-z]{2}\s*$", last_line) or re.search(r"\+?\d[\d\s()-]{8,}\s*$", last_line):
         return True
     # A bullet or heading may end without a full stop; a prose paragraph may not.
     return bool(_LIST_LINE.match(last_line) or last_line.lstrip().startswith("#"))
+
+
+def cut_place(text: str) -> str:
+    """Where an answer looks cut off, for the QA message: the last words, and whether it is in a table."""
+    lines = [ln for ln in (text or "").rstrip().splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    if "this answer was cut off" in lines[-1] and len(lines) > 1:
+        lines = lines[:-1]
+    last = lines[-1].strip()
+    where = " in the last table row" if last.startswith("|") else ""
+    tail = re.sub(r"\s+", " ", last.strip("| "))[-70:]
+    return f"{where}, at “...{tail}”" if tail else where
 
 
 def question_prompt(q: dict, *, title: str, authority: str, company: str, tender_dissection: str,
@@ -759,8 +780,11 @@ def qa_gate(bid_response: dict, closed: bool = False, rulings: list | None = Non
         limit = _as_int(q.get("word_limit"))
         if not text or status == "failed" or "could not be generated - regenerate" in text:
             add("coverage", "P0", sec, "No answer was written.")
-        elif status == "truncated" or "this answer was cut off" in text or not ends_cleanly(text):
-            add("truncation", "P0", sec, "The answer stops mid-sentence.")
+        elif "this answer was cut off" in text or not ends_cleanly(text):
+            # Release 12: name the place, so a cut inside a table cell can be found (Matthewsgreen Q4 was reported cut
+            # off although its Word text ended on a full sentence). A "truncated" status alone, from a first attempt
+            # that a later retry or a regenerate replaced, no longer counts once the text itself ends cleanly.
+            add("truncation", "P0", sec, "The answer stops mid-sentence" + cut_place(text) + ".")
         elif budget and words < 0.6 * budget and (limit or q.get("weighting")):
             # An unweighted question's budget is an even share, a ceiling not a target: no "short" warning.
             add("coverage", "P1", sec, f"Short: {words} words against a target of about {budget}.")
@@ -777,7 +801,7 @@ def qa_gate(bid_response: dict, closed: bool = False, rulings: list | None = Non
         if label.startswith("Question "):
             continue
         if text.strip() and not ends_cleanly(text):
-            add("truncation", "P0", label, "The section stops mid-sentence.")
+            add("truncation", "P0", label, "The section stops mid-sentence" + cut_place(text) + ".")
 
     all_text = "\n\n".join(t for _, t in bid_texts(r)) + "\n" + str(r.get("document_title") or "")
     for label, text in bid_texts(r):

@@ -7521,6 +7521,29 @@ Return ONLY this JSON structure:
                         signoffs=_load_signoffs(session.get("username") or "", str(body.get("bid_key") or "")))
         return jsonify({"ok": True, "readiness": out})
 
+    @app.post("/api/bid-apply-prices")
+    @rate_limit(60, 3600)
+    def api_bid_apply_prices():
+        """Release 12: put the bidder's own prices into the draft's commercial table. Free: no model call, no credits.
+        Body: {price_schedules, pricing_notes, prices: {"schedule:row": number}, price_text: "item: price" lines}."""
+        from tender_app.bid_prices import unit_prices, priced_count
+        from tender_app.bid_release7 import add_commercial_pack
+        if not session.get("username"):
+            return jsonify({"ok": False, "error": "Please sign in."}), 401
+        body = request.get_json(silent=True) or {}
+        schedules = [s for s in (body.get("price_schedules") or []) if isinstance(s, dict)][:6]
+        if not schedules:
+            return jsonify({"ok": False, "error": "This draft has no price schedule from the buyer to fill."}), 400
+        units = unit_prices(schedules, body.get("prices") if isinstance(body.get("prices"), dict) else {},
+                            str(body.get("price_text") or "")[:20000])
+        priced, total = priced_count(units)
+        if not priced:
+            return jsonify({"ok": False, "error": "No price matched a line item. Type a price in a box, or paste lines like \"Item name: 125.00\"."}), 400
+        bid = {"pricing_notes": {"content": str(body.get("pricing_notes") or "")}}
+        add_commercial_pack(bid, schedules, str(body.get("buyer_text") or "")[:200000], units)
+        return jsonify({"ok": True, "pricing_notes": bid["pricing_notes"]["content"], "priced": priced, "rows": total,
+                        "units": units})
+
     @app.post("/api/bid-regenerate-section")
     @rate_limit(20, 3600)
     def api_bid_regenerate_section():
@@ -7613,7 +7636,7 @@ Return ONLY this JSON structure:
     def api_bid_style_preview():
         """Release 8 (F2): what TenderFlow learns from the past bids chosen for this bid, and the answer plan.
         Free: reads the user's own library, no model call, no credits."""
-        from tender_app.bid_style import choose_past_bids, topic_match
+        from tender_app.bid_style import choose_past_bids, topic_match, sector_of
         from tender_app.bid_style_learn import learn_style, style_brief, answer_plan
         from tender_app.bid_writer import extract_questions
         username = session.get("username") or ""
@@ -7640,10 +7663,17 @@ Return ONLY this JSON structure:
         bids = choose_past_bids(mode, library, ids, str(t.get("title") or ""), "")
         profile = learn_style(bids)
         questions = extract_questions({"itt_questions": [q for q in (body.get("questions") or []) if isinstance(q, dict)][:60]})
+        plan_source = "questions"
+        if not questions:
+            # Release 12: Oldham's notice has no questions, so the plan stayed on "Build the Bid plan first" after the
+            # Bid plan was built. Show the plan for the sections TenderFlow will write instead, and say so.
+            from tender_app.bid_style_learn import section_plan_questions
+            questions = section_plan_questions(str(t.get("title") or ""), str(t.get("description") or ""))
+            plan_source = "sections"
         return jsonify({
-            "ok": True, "mode": mode,
+            "ok": True, "mode": mode, "plan_source": plan_source,
             "bids": [{"id": b["id"], "title": b["title"], "buyer": b["buyer"], "year": b["year"], "outcome": b["outcome"],
-                      "match": topic_match(b, str(t.get("title") or ""))} for b in bids],
+                      "match": topic_match(b, str(t.get("title") or "")), "sector": sector_of(b)} for b in bids],
             "profile": profile, "style_brief": style_brief(profile),
             "plan": answer_plan(questions, profile, bids, ""),
         })
@@ -8376,7 +8406,8 @@ Return ONLY this JSON structure:
                 # (Chemonics): structure the bid by those documents, never by the house template.
                 from tender_app.bid_release7 import use_submission_structure, with_submission_questions
                 if not q_mode and use_submission_structure(questions, stage1_result, combined_tender_text[:200000]):
-                    _sub_qs = extract_questions(with_submission_questions(stage1_result))
+                    _sub_qs = extract_questions(with_submission_questions(stage1_result, title, description,
+                                                                          combined_tender_text[:200000]))
                     if _sub_qs:
                         questions, q_mode = _sub_qs, True
                 if q_mode:
@@ -8640,12 +8671,19 @@ Return ONLY valid JSON with no markdown fences:
                     # Release 7: a heavily weighted financial question gets its own brief (Matthewsgreen Q4).
                     return ("\n" + _fin_q_block(q, stage1_result, bool(_fin_model))) if _heavy_fin(q) else ""
 
+                from tender_app.bid_style_learn import reuse_block as _reuse_block
+
                 def _run_question(q):
+                    # Release 12: the writer saw only the first 4,000 characters of each past bid, so the answer on the
+                    # same topic (Oldham: "Ethics and safeguarding" <- Matthewsgreen Q6) never reached it. The matched
+                    # paragraph now goes to that question's writer, its old facts already marked [CONFIRM].
+                    _reuse = _reuse_block(q.get("text", ""), winning_bids,
+                                          f"{company_structured_data}\n{answer_bank_short}\n{combined_tender_text[:60000]}")
                     prompt = question_prompt(
                         q, title=title, authority=authority_name, company=bid_company,
                         tender_dissection=dissection_for_writers, clarifications_block=published_clar,
                         company_data=company_structured_data, company_context=company_ctx_short,
-                        answer_bank=answer_bank_short, winning_bids=winning_bids_block(4000),
+                        answer_bank=answer_bank_short, winning_bids=winning_bids_block(4000) + _reuse,
                         other_questions=questions, closed_note=writer_notes + _fin_brief(q), lang_instruction=lang_instruction,
                     )
                     return write_question(_ai_call, q, prompt)
@@ -8747,7 +8785,12 @@ Return ONLY valid JSON with no markdown fences:
                 _strip_guides(stage3_result)
                 if isinstance(stage1_result, dict) and (stage1_result.get("separate_technical_commercial") or _price_schedules):
                     from tender_app.bid_release7 import add_commercial_pack as _add_comm
-                    _add_comm(stage3_result, _price_schedules, combined_tender_text[:200000])
+                    from tender_app.bid_prices import unit_prices as _unit_prices
+                    # Release 12: the bidder's own prices (the "Your prices" form, kept per bid) fill the table.
+                    _units = _unit_prices(_price_schedules, body.get("prices") if isinstance(body.get("prices"), dict) else {},
+                                          str(body.get("price_text") or "")[:20000])
+                    _add_comm(stage3_result, _price_schedules, combined_tender_text[:200000],
+                              _units if any(v is not None for c in _units for v in c) else None)
                 if winning_bids and _pb_mode != "off":
                     from tender_app.bid_style import mark_reused_facts as _mark_reused
                     _past_all = " ".join(w["text"] for w in winning_bids if w.get("outcome") != "lost")
@@ -9428,7 +9471,10 @@ Return ONLY valid JSON with no markdown fences:
         try:
             _tb, _ta = _brand_for(body)
             tech = build_technical_docx(title, company, authority, sections, brand=_tb, anonymise=_ta)
-            comm = build_commercial_xlsx(title, company, body.get("price_schedules") or [], vat_note, body.get("terms") or {})
+            from tender_app.bid_prices import unit_prices as _unit_prices
+            _sch = body.get("price_schedules") or []
+            _units = _unit_prices(_sch, body.get("prices") if isinstance(body.get("prices"), dict) else {}, str(body.get("price_text") or "")[:20000])
+            comm = build_commercial_xlsx(title, company, _sch, vat_note, body.get("terms") or {}, units=_units)
         except Exception as ex:  # noqa: BLE001
             print("[submission pack] failed:", ex)
             return jsonify({"error": "Could not build the submission pack. Download the full .docx instead."}), 500

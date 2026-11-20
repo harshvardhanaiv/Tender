@@ -29,11 +29,59 @@ def _paragraphs(text):
 
 def _is_subheading(line):
     s = line.strip()
+    if re.match(r"^#{2,5}\s+\S", s) and len(s) <= 100:
+        return True                     # a Word heading read back as Markdown (release 12)
+    if re.fullmatch(r"\*\*[^*]{3,80}\*\*:?", s):
+        return True
     if not s or len(s) > 80 or len(s.split()) > 10 or s.endswith((".", ",", ";")):
         return False
     if _HEAD.match(s) or "|" in s:
         return False
     return s.endswith(":") or s[0].isupper() and s.count(" ") <= 7 and not re.search(r"[a-z]\s+(?:is|are|was|were|will|has|have)\s", s)
+
+
+_INLINE_Q = re.compile(r"(?:(?<=[.!?:])\s+|^|\s{2,}|(?<=[a-z0-9)|])\s+)(Q(?:uestion)?\s*(\d{1,2})(?:\.[\dIVXivx]+)*)\s*[.:)\-–—]?\s+(?=[A-Z])")
+
+
+def _split_flat(text):
+    """A past bid stored as one long line (Word text read without paragraphs, before release 12): split it at inline
+    "Question 4 - ..." / "Q4." markers, taking each question number the first time it appears and in rising order, so
+    "see Question 2" later in the text is not a new answer."""
+    t = text or ""
+    lines = [ln for ln in t.splitlines() if ln.strip()]
+    if not lines or len(t.split()) / len(lines) < 150:
+        return []
+    marks, last = [], 0
+    for m in _INLINE_Q.finditer(t):
+        n = int(m.group(2))
+        if n <= last or n > last + 3:
+            continue
+        before = t[max(0, m.start() - 12):m.start(1)].lower()
+        if re.search(r"\b(?:see|in|to|under|and|at|our|of)\s*$", before):
+            continue
+        marks.append((m.start(1), m.end(), m.group(1)))
+        last = n
+    out = []
+    for i, (start, body_start, label) in enumerate(marks):
+        end = marks[i + 1][0] if i + 1 < len(marks) else len(t)
+        body = t[body_start:end].strip()
+        head = " ".join(body.split()[:8])
+        if len(body.split()) >= 60:
+            out.append({"label": f"{label} {head}"[:120], "text": body})
+    return out
+
+
+def _chunks(text, low=40, high=120):
+    """Sentence groups of about low-high words, for an answer with no blank-line paragraphs."""
+    out, cur = [], []
+    for s in _SENT.split(text or ""):
+        cur.append(s.strip())
+        if len(" ".join(cur).split()) >= low:
+            out.append(" ".join(cur))
+            cur = []
+    if cur and len(" ".join(cur).split()) >= 25:
+        out.append(" ".join(cur))
+    return [c for c in out if len(c.split()) <= high + 60]
 
 
 def split_answers(text):
@@ -57,6 +105,9 @@ def split_answers(text):
                 alt.append({"label": lines[start].strip("# ").strip()[:120], "text": body})
         if len(alt) >= 2:
             return alt
+        flat = _split_flat(text)
+        if len(flat) >= 2:
+            return flat
         whole = (text or "").strip()
         return [{"label": "Whole document", "text": whole}] if len(whole.split()) >= 60 else []
     return answers
@@ -67,7 +118,7 @@ def _answer_stats(body):
     sentences = [s for s in _SENT.split(body) if s.strip()] or [body]
     paras = _paragraphs(body)
     lines = [ln for ln in body.splitlines() if ln.strip()]
-    heads = [ln.strip().rstrip(":") for ln in lines[1:] if _is_subheading(ln)]
+    heads = [ln.strip().strip("#* ").rstrip(":") for ln in lines[1:] if _is_subheading(ln)]
     return {
         "words": len(words),
         "words_per_sentence": len(words) / max(1, len(sentences)),
@@ -135,7 +186,9 @@ def find_reusable(question_text, bids, evidence_text="", min_overlap=2):
                 continue
             head_hit = len(want & _words(a["label"]))
             body_hit = len(want & _words(a["text"][:3000]))
-            if head_hit < 1 or head_hit + body_hit < min_overlap + 1:
+            # A heading word in common plus one more anywhere in the answer (release 12: "Ethics, safeguarding and
+            # data protection" did not match a past "EDI and safeguarding" answer that was about exactly that).
+            if head_hit < 1 or head_hit + body_hit < min_overlap:
                 continue
             score = 3 * head_hit + body_hit
             if best is None or score > best[0]:
@@ -143,13 +196,54 @@ def find_reusable(question_text, bids, evidence_text="", min_overlap=2):
     if not best:
         return None
     score, b, a = best
-    paras = [p for p in _paragraphs(a["text"]) if 25 <= len(p.split()) <= 160]
+    paras = [p for p in _paragraphs(a["text"]) if 25 <= len(p.split()) <= 160 and "|" not in p]
+    if not paras:
+        paras = _chunks(a["text"])
     if not paras:
         return None
     para = max(paras, key=lambda p: len(want & _words(p)))
     marked, facts = mark_reused_facts(para, para, evidence_text, (b.get("buyer", ""),))
     return {"paragraph": marked, "facts_to_confirm": facts, "source_bid": b.get("title", ""),
             "source_question": a["label"], "match": score}
+
+
+def reuse_block(question_text, bids, evidence_text=""):
+    """The prompt lines handing one question's writer the matching paragraph from a past bid. Empty when none matches."""
+    if not bids:
+        return ""
+    try:
+        r = find_reusable(question_text, bids, evidence_text)
+    except Exception:  # noqa: BLE001 - reuse is optional
+        return ""
+    if not r:
+        return ""
+    return ("\n\nREUSABLE PARAGRAPH FOR THIS QUESTION (from past bid \"%s\", %s):\n%s\n"
+            "Use it as the basis of the matching part of this answer and adapt it to this buyer and site. Keep every "
+            "[CONFIRM: ... - from a past bid] marker exactly as written, and add the same marker to any other amount, "
+            "date, count or name you take from it.\n" % (r["source_bid"], r["source_question"], r["paragraph"]))
+
+
+_HOUSE_SECTIONS = [("Executive summary", 10), ("Understanding of the requirement", 15), ("Approach and methodology", 30),
+                   ("Team and resources", 15), ("Quality, risk and compliance", 15), ("Social value", 5), ("Pricing basis", 10)]
+
+
+def section_plan_questions(title, description=""):
+    """When the buyer gave no questions: the sections TenderFlow will write for this kind of contract, shaped like
+    extract_questions() rows (number, text, weight_pct=None, budget_words), so answer_plan can show them."""
+    from tender_app.bid_release5 import contract_type_note
+    kind, note = contract_type_note(title or "", description or "")
+    sections = []
+    m = re.search(r"in this order, giving each the share of the words shown: (.*?)\. Leave social_value", note or "", re.S)
+    if m:
+        for part in m.group(1).split("; "):
+            pm = re.match(r"\d+\.\s*(.*?)\s*\(about (\d+)% of the words\)$", part.strip())
+            if pm:
+                sections.append((pm.group(1), int(pm.group(2))))
+    if not sections:
+        sections = _HOUSE_SECTIONS
+    total = 6000
+    return [{"number": "S%d" % i, "text": name, "weight_pct": None,
+             "budget_words": max(150, round(total * pct / 100.0 / 10) * 10)} for i, (name, pct) in enumerate(sections, 1)]
 
 
 def answer_plan(questions, profile, bids, evidence_text=""):

@@ -19,41 +19,98 @@ p { margin: 0 0 6pt 0; }
 .ph { background-color: #fef08a; color: #854d0e; font-weight: bold; }
 .note { color: #b45309; font-weight: bold; }
 li { margin: 0 0 3pt 0; }
+h3 { font-size: 11.5pt; color: #1e3a8a; margin: 8pt 0 4pt 0; }
+h4 { font-size: 10.5pt; color: #1e3a8a; margin: 6pt 0 3pt 0; }
+table { border-collapse: collapse; margin: 0 0 8pt 0; width: 100%; }
+th, td { border: 0.5pt solid #94a3b8; padding: 3pt 4pt; font-size: 9.5pt; vertical-align: top; }
+th { background-color: #e2e8f0; font-weight: bold; text-align: left; }
 """
 
 _PH = re.compile(r"(\[(?:PLACEHOLDER|NEEDS INPUT|CONFIRM|Add|Insert|Verify|Status)[^\]]*\])", re.I)
 
 
+_HEAD = re.compile(r"^(#{1,6})\s+(.*?)\s*#*$")
+_OL = re.compile(r"^(\d{1,3})[.)]\s+(.*)$")
+_TABLE_SEP = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$")
+
+
+def _inline(body: str) -> str:
+    parts = []
+    for i, chunk in enumerate(body.split("**")):
+        seg = "".join(f'<span class="ph">{html.escape(c)}</span>' if _PH.fullmatch(c) else html.escape(c)
+                      for c in _PH.split(chunk) if c)
+        parts.append(f"<b>{seg}</b>" if i % 2 == 1 and seg else seg)
+    return "".join(parts)
+
+
+def _cells(line: str) -> list:
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
 def text_to_html(text: str) -> str:
+    """The same Markdown the Word file renders: '#' headings, pipe tables, bullet and numbered lists, **bold** and
+    highlighted placeholders. Release 12: the PDF showed '###' and '| --- |' as text (56 lines on one bid)."""
     out: list = []
-    in_list = False
+    lst = ""                       # "ul" / "ol" while a list is open
+    table: list = []
+
+    def close_list():
+        nonlocal lst
+        if lst:
+            out.append(f"</{lst}>")
+            lst = ""
+
+    def flush_table():
+        if not table:
+            return
+        rows = [r for r in table if not _TABLE_SEP.match(r.strip())]
+        head_done = len(table) > 1 and _TABLE_SEP.match(table[1].strip())
+        h = ["<table>"]
+        for n, r in enumerate(rows):
+            tag = "th" if n == 0 and head_done else "td"
+            h.append("<tr>" + "".join(f"<{tag}>{_inline(c)}</{tag}>" for c in _cells(r)) + "</tr>")
+        h.append("</table>")
+        out.append("".join(h))
+        table.clear()
+
     for raw in (text or "").split("\n"):
         line = raw.strip()
-        if not line:
-            if in_list:
-                out.append("</ul>")
-                in_list = False
+        if line.startswith("|") and line.count("|") >= 2:
+            close_list()
+            table.append(line)
             continue
+        flush_table()
+        if not line:
+            close_list()
+            continue
+        hm = _HEAD.match(line)
+        if hm:
+            close_list()
+            level = 3 if len(hm.group(1)) <= 3 else 4
+            out.append(f"<h{level}>{_inline(hm.group(2).strip('*'))}</h{level}>")
+            continue
+        if re.fullmatch(r"[-*_]{3,}", line):
+            close_list()
+            continue
+        om = _OL.match(line)
         bullet = line.startswith(("* ", "- ", "• "))
-        body = line[2:] if bullet else line
-        parts = []
-        for i, chunk in enumerate(body.split("**")):
-            seg = "".join(f'<span class="ph">{html.escape(c)}</span>' if _PH.fullmatch(c) else html.escape(c)
-                          for c in _PH.split(chunk) if c)
-            parts.append(f"<b>{seg}</b>" if i % 2 == 1 and seg else seg)
-        rendered = "".join(parts)
-        if bullet:
-            if not in_list:
-                out.append("<ul>")
-                in_list = True
-            out.append(f"<li>{rendered}</li>")
-        else:
-            if in_list:
-                out.append("</ul>")
-                in_list = False
-            out.append(f"<p>{rendered}</p>")
-    if in_list:
-        out.append("</ul>")
+        if bullet or om:
+            kind = "ol" if om and not bullet else "ul"
+            if lst != kind:
+                close_list()
+                out.append(f"<{kind}>")
+                lst = kind
+            out.append(f"<li>{_inline(om.group(2) if kind == 'ol' else line[2:])}</li>")
+            continue
+        close_list()
+        out.append(f"<p>{_inline(line)}</p>")
+    flush_table()
+    close_list()
     return "\n".join(out)
 
 
@@ -77,7 +134,7 @@ def _render(body_html: str):
 def _brand_css(kit):
     """Heading colour and font family from the brand kit (release 8). Serif fonts map to serif, the rest to sans-serif."""
     serif = kit["font"] in ("Georgia", "Times New Roman", "Cambria")
-    return "body { font-family: %s; } h1, h2 { color: #%s; } " % ("serif" if serif else "sans-serif", kit["color"])
+    return "body { font-family: %s; } h1, h2, h3, h4 { color: #%s; } th { background-color: #%s; color: #ffffff; } " % ("serif" if serif else "sans-serif", kit["color"], kit["color"])
 
 
 def build_pdf(title: str, sections: list, front_html: str = "", brand=None, anonymise: bool = False):

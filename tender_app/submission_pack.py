@@ -37,14 +37,16 @@ def _col(header: list, pattern: str):
     return None
 
 
-def build_commercial_xlsx(title: str, company: str, schedules: list, vat_note: str = "", terms: dict | None = None) -> bytes:
+def build_commercial_xlsx(title: str, company: str, schedules: list, vat_note: str = "", terms: dict | None = None,
+                          units: list | None = None) -> bytes:
+    """units: the bidder's own unit prices per schedule row (bid_prices.unit_prices); an empty cell stays yellow to fill."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
     wb = Workbook()
     wb.remove(wb.active)
     yellow = PatternFill("solid", fgColor="FEF08A")
     bold = Font(bold=True)
-    for sch in schedules or [{"sheet": "Price schedule", "header": ["Item", "Description", "Qty", "Unit price", "Total"], "rows": []}]:
+    for si, sch in enumerate(schedules or [{"sheet": "Price schedule", "header": ["Item", "Description", "Qty", "Unit price", "Total"], "rows": []}]):
         ws = wb.create_sheet(re.sub(r"[\\/*?:\[\]]", " ", sch["sheet"])[:31] or "Prices")
         header = list(sch["header"])
         qty_i = _col(header, r"\b(qty|quantity|units?)\b")
@@ -69,11 +71,12 @@ def build_commercial_xlsx(title: str, company: str, schedules: list, vat_note: s
         for c in ws[hr]:
             c.font = bold
         first = hr + 1
-        for r in sch["rows"]:
+        col = (units[si] if units and si < len(units) else None) or []
+        for ri, r in enumerate(sch["rows"]):
             row = list(r) + [""] * (len(header) - len(r))
             n = ws.max_row + 1
             if unit_i is not None:
-                row[unit_i] = None
+                row[unit_i] = col[ri] if ri < len(col) and col[ri] is not None else None
             if qty_i is not None and tot_i is not None and unit_i is not None:
                 q = chr(65 + qty_i)
                 u = chr(65 + unit_i)

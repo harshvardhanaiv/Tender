@@ -1472,8 +1472,15 @@ def api_winning_bids_upload():
 
     extracted_text = ""
     try:
-        from tender_app.doc_date_extractor import extract_text_from_file
-        extracted_text = extract_text_from_file(temp_path, max_chars=50000)
+        from tender_app.doc_date_extractor import extract_text_from_file, docx_structured_text
+        if temp_path.lower().endswith(".docx"):
+            # Keep paragraphs, headings and tables so the bid can be split by question and its style measured (release 12).
+            try:
+                extracted_text = docx_structured_text(temp_path, max_chars=200000)
+            except Exception as e:
+                print("Structured Word read failed, falling back:", e)
+        if not (extracted_text or "").strip():
+            extracted_text = extract_text_from_file(temp_path, max_chars=50000)
     except Exception as e:
         print("Failed to extract winning bid text:", e)
     finally:

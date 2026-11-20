@@ -19,9 +19,8 @@ _KIND_GUIDE = {
     "technical": ("Write the technical offer for this requirement against the buyer's specification, in the buyer's own item "
                   "order. Answer each requirement the documents state (items, quantities, standards, delivery, warranty, "
                   "support). Where the specification lists line items, address each by name or reference. Prices go only in "
-                  "the commercial offer, so give no price, rate or total here. Where the scope involves them, give each its own "
-                  "sub-heading and real content: understanding of the requirement, team and roles, ethics and data protection "
-                  "(UK GDPR), accessibility (WCAG 2.2 AA) for digital work, and Welsh language provision when the buyer is a Welsh public body."),
+                  "the commercial offer, so give no price, rate or total here. Give understanding of the requirement and the "
+                  "team and roles their own sub-headings."),
     "commercial": ("Write the price statement the buyer asks for: the pricing basis, currency, VAT treatment exactly as the "
                    "buyer's clarification answers rule, what is included and excluded, validity period and payment terms as "
                    "the buyer states them. Give no figure that the bidder has not supplied: use [NEEDS INPUT: unit price] "
@@ -61,10 +60,42 @@ def _number(doc: dict, index: int) -> str:
     return str(index)
 
 
-def submission_doc_questions(stage1: dict | None, fallback: bool = False) -> list[dict]:
+def technical_sections(title: str = "", description: str = "", buyer_text: str = "") -> tuple:
+    """(kind, guide text) naming the sub-headings a technical offer of this kind of contract needs. Release 12: one
+    guide for every tender put "Ethics and data protection", "Accessibility (WCAG 2.2 AA)" and "Welsh language" into
+    Epsom's WC refurbishment (Surrey) and dropped its method statement, water safety, health and safety and quality
+    sections. Sections now follow the contract type (works / digital / consultancy) and the buyer's country."""
+    from tender_app.bid_release5 import contract_type_note, buyer_in_wales
+    kind, note = contract_type_note(title, description, buyer_text)
+    if not kind:
+        return ("", "")
+    m = re.search(r"in this order, giving each the share of the words shown: (.*?)\. Leave social_value", note, re.S)
+    listing = m.group(1) if m else ""
+    items = [re.sub(r"^\d+\.\s*", "", x).strip() for x in listing.split("; ") if x.strip()]
+    # Price goes in the commercial part, not the technical offer.
+    items = [x for x in items if not re.match(r"(?:pricing|price)\b", x, re.I)]
+    never = []
+    if kind != "digital":
+        never.append("accessibility (WCAG)")
+    if kind != "consultancy":
+        never.append("research ethics")
+    if not buyer_in_wales(title, description, buyer_text[:6000]):
+        never.append("Welsh language (the buyer is not a Welsh public body)")
+    guide = ("Use these sub-headings, in this order, where the buyer's documents do not set their own: " + "; ".join(items) + ". "
+             + ("Do NOT add sections for " + ", ".join(never) + ". " if never else ""))
+    return (kind, guide)
+
+
+_PRICE_DOC = {"name": "Price and commercial basis", "kind": "commercial"}
+
+
+def submission_doc_questions(stage1: dict | None, fallback: bool = False, title: str = "", description: str = "",
+                             buyer_text: str = "") -> list[dict]:
     """One pseudo-question per narrative submission document, in the order the buyer lists them, shaped like
     stage 1's itt_questions so the per-question writer, word budget and QA gate run unchanged. A price workbook the
-    bidder fills in (Volume 3) is not written as prose, and a commercial offer submitted as its own file is skipped."""
+    bidder fills in (Volume 3) is not written as prose, and a commercial offer submitted as its own file is skipped.
+    With the title and buyer text, the technical offer names the sections this kind of contract needs (release 12), and
+    a bid with no price document at all gets a price section, so the price is never silently dropped (Epsom)."""
     s1 = stage1 or {}
     docs = [d for d in (s1.get("required_submission_documents") or []) if isinstance(d, dict) and str(d.get("name") or "").strip()]
     if not docs and fallback:
@@ -74,6 +105,9 @@ def submission_doc_questions(stage1: dict | None, fallback: bool = False) -> lis
         if s1.get("forms_to_sign") or s1.get("certificates_required"):
             docs.append({"name": "Forms, declarations and certificates", "kind": "form"})
     separate = bool(s1.get("separate_technical_commercial"))
+    ctype, tech_extra = technical_sections(title, description, buyer_text) if (title or description or buyer_text) else ("", "")
+    if ctype and docs and not separate and not any(_kind(d) == "commercial" for d in docs):
+        docs = list(docs) + [_PRICE_DOC]
     out: list[dict] = []
     seen: set[str] = set()
     for i, d in enumerate(docs, 1):
@@ -86,7 +120,14 @@ def submission_doc_questions(stage1: dict | None, fallback: bool = False) -> lis
         if kind == "commercial" and (separate or d.get("separate_file") or _FILL_ONLY.search(name)):
             continue  # the buyer's own price workbook, filled in the commercial file
         guide = _KIND_GUIDE.get(kind, _DEFAULT_GUIDE)
+        budget = None
+        if kind == "technical" and tech_extra:
+            guide = guide + " " + tech_extra
+            budget = 2800
+        elif ctype:
+            budget = {"commercial": 700, "form": 600, "registration": 400}.get(kind)
         out.append({
+            "budget_words": budget,
             "number": _number(d, i),
             "question_text": f"{name}. {guide}",
             "word_limit": None,
@@ -107,10 +148,11 @@ def use_submission_structure(questions: list, stage1: dict | None, buyer_text: s
     return bool(submission_doc_questions(stage1, fallback=True))
 
 
-def with_submission_questions(stage1: dict | None) -> dict:
+def with_submission_questions(stage1: dict | None, title: str = "", description: str = "", buyer_text: str = "") -> dict:
     """A copy of stage 1 whose itt_questions are the submission documents, for extract_questions()."""
     out = dict(stage1 or {})
-    out["itt_questions"] = submission_doc_questions(stage1, fallback=True)
+    out["itt_questions"] = submission_doc_questions(stage1, fallback=True, title=title, description=description,
+                                                    buyer_text=buyer_text)
     return out
 
 
@@ -144,7 +186,13 @@ def drop_irrelevant_trade_gaps(decision: dict | None, scope_text: str) -> int:
 
 _CERTS = r"(ISO\s?27001|ISO\s?9001|ISO\s?14001|ISO\s?45001|Cyber Essentials(?: Plus)?|CHAS|SafeContractor|Constructionline)"
 _CERT_CLAIM = re.compile(r"[^.!?\n]*?\b" + _CERTS + r"\b[^.!?\n]*[.!?]?", re.I)
-_CERT_HELD = re.compile(r"\b(certified|accredited|holds?|held|achieved|registered|compliant|certification|certificate|accreditation)\b", re.I)
+_CERT_HELD = re.compile(r"\b(certified|accredited|holds?|held|achieved|registered|compliant|certification|certificate|accreditation|"
+                        # release 12: NHS Wales said "our ISO 27001-aligned ISMS" and "we meet Cyber Essentials Plus"
+                        r"meets?|aligned|maintain\w*|operat\w*|in place|standards?|our|we have|yes)\b|✓", re.I)
+# A certificate on file names its number, issuer or dates; a policy saying "we are working towards certification" does not.
+_CERT_PROOF = r"(?:certificate (?:number|no\.?|of registration)|certified by|registration (?:number|no\.?)|valid (?:until|to|from)|expir\w+|issued (?:by|on)|UKAS|IASME)"
+_REQUIRE = re.compile(r"(?:required|requires?|require[sd]?|requirement)", re.I)
+_WE = re.compile(r"\b(?:we|our|us)\b", re.I)
 _CERT_NEG = re.compile(r"\b(not held|not hold|do not hold|does not hold|no (?:current )?(?:iso|certif)|not certified|working towards|will obtain|"
                        r"must hold|required|require[sd]?|if you|partner|equivalent)\b|\[CONFIRM|\[NEEDS INPUT", re.I)
 
@@ -159,14 +207,22 @@ def confirm_certifications(text: str, evidence: str) -> tuple[str, int]:
     def mark(m: re.Match) -> str:
         nonlocal count
         s = m.group(0)
-        if not _CERT_HELD.search(s) or _CERT_NEG.search(s):
+        neg = _CERT_NEG.search(s)
+        # "The Trust requires ISO 27001, which we hold" is still a claim (the bare word "requires" used to skip it).
+        if neg and _REQUIRE.fullmatch(neg.group(0)) and _WE.search(s):
+            neg = None
+        if not _CERT_HELD.search(s) or neg:
             return s
         cert = re.search(_CERTS, s, re.I).group(1)
         ev = re.escape(cert).replace(r"\ ", r"\s?")
-        if re.search(rf"{ev}.{{0,100}}certificat|certificat.{{0,100}}{ev}", evidence or "", re.I | re.S):
+        # The proof must sit in the same sentence as the certificate's name, not anywhere within a few lines.
+        if re.search(rf"{ev}[^.\n]{{0,80}}{_CERT_PROOF}|{_CERT_PROOF}[^.\n]{{0,80}}{ev}", evidence or "", re.I | re.S):
             return s
         count += 1
-        return s.rstrip() + f" [CONFIRM: {cert} - only a policy is on file, not a certificate; check you hold it]"
+        tag = f" [CONFIRM: {cert} - only a policy or nothing is on file, not a certificate; check you hold it]"
+        if s.strip().startswith("|") and s.rstrip().endswith("|"):
+            return s.rstrip()[:-1].rstrip() + tag + " |"     # inside the last cell, so the table still renders
+        return s.rstrip() + tag
 
     return _CERT_CLAIM.sub(mark, text), count
 
@@ -245,26 +301,51 @@ def strip_drafting_guides(bid_response: dict | None) -> int:
 _OANDA = re.compile(r"[^.\n]*\b(?:OANDA|exchange rate|currency conver\w+|converted to (?:GBP|USD|EUR))[^.\n]*[.\n]", re.I)
 
 
-def commercial_pack_text(schedules, buyer_text: str = "", max_rows: int = 30) -> str:
-    """Markdown for the commercial part: the buyer's line items with a unit-price cell left as [NEEDS INPUT], and any currency
-    conversion rule the buyer states (Chemonics: OANDA rate). Nothing is priced here; the figures come from the bidder."""
+def commercial_pack_text(schedules, buyer_text: str = "", max_rows: int = 30, units: list | None = None) -> str:
+    """Markdown for the commercial part: the buyer's line items, and any currency conversion rule the buyer states
+    (Chemonics: OANDA rate). Nothing is priced by TenderFlow: a unit price comes only from the bidder (`units`, one list of
+    prices per schedule from bid_prices.unit_prices); a row without one stays [NEEDS INPUT]. With a quantity, each priced
+    row gets a line total and the schedule a total (release 12: Chemonics had 60 empty rows and nowhere to give prices)."""
+    from tender_app.bid_prices import fmt_gbp, to_number
     lines = []
-    for sch in (schedules or [])[:3]:
+    for si, sch in enumerate((schedules or [])[:3]):
         header = [str(h) for h in (sch.get("header") or [])]
-        rows = [r for r in (sch.get("rows") or []) if any(str(c).strip() for c in r)]
+        all_rows = sch.get("rows") or []
+        rows = [(ri, r) for ri, r in enumerate(all_rows) if any(str(c).strip() for c in r)]
         if not header or not rows:
             continue
+        col = (units[si] if units and si < len(units) else None) or []
         qty_i = next((i for i, h in enumerate(header) if re.search(r"\b(qty|quantity|units?)\b", h, re.I)), None)
         keep = [i for i in range(len(header)) if not re.search(r"unit\s*price|price|rate|total|amount", header[i], re.I)][:3]
         if qty_i is not None and qty_i not in keep:
             keep.append(qty_i)
-        cols = [header[i] or "Item" for i in keep] + ["Unit price (GBP)"]
+        priced_any = any(v is not None for v in col)
+        with_total = priced_any and qty_i is not None
+        cols = [header[i] or "Item" for i in keep] + ["Unit price (GBP)"] + (["Line total (GBP)"] if with_total else [])
         lines.append(f"**{sch.get('sheet') or 'Price schedule'}**")
         lines.append("| " + " | ".join(c.replace("|", "/") for c in cols) + " |")
         lines.append("|" + "---|" * len(cols))
-        for r in rows[:max_rows]:
+        total, missing = 0.0, 0
+        for ri, r in rows[:max_rows]:
             cells = [(str(r[i]) if i < len(r) else "").replace("|", "/")[:80] for i in keep]
-            lines.append("| " + " | ".join(cells) + " | [NEEDS INPUT: unit price] |")
+            price = col[ri] if ri < len(col) else None
+            qty = to_number(r[qty_i]) if qty_i is not None and qty_i < len(r) else None
+            if price is None:
+                missing += 1
+                cells.append("[NEEDS INPUT: unit price]")
+                if with_total:
+                    cells.append("")
+            else:
+                cells.append(fmt_gbp(price))
+                if with_total:
+                    line = price * (qty if qty is not None else 1)
+                    total += line
+                    cells.append(fmt_gbp(line))
+            lines.append("| " + " | ".join(cells) + " |")
+        if with_total:
+            lines.append("| " + " | ".join(["**Total (excluding VAT)**"] + [""] * (len(cols) - 2) + [f"**{fmt_gbp(total)}**"]) + " |")
+            if missing:
+                lines.append(f"\n{missing} line(s) still have no price, so the total is not complete yet.")
         if len(rows) > max_rows:
             lines.append(f"\n{len(rows) - max_rows} more line(s) are in the buyer's workbook: complete them there.")
         lines.append("")
@@ -277,18 +358,33 @@ def commercial_pack_text(schedules, buyer_text: str = "", max_rows: int = 30) ->
     return "\n".join(lines).strip()
 
 
-def add_commercial_pack(bid_response: dict, schedules, buyer_text: str) -> bool:
-    """Append the commercial part to the pricing section when the buyer wants prices in a separate file."""
+_COMM_HEAD = "## Commercial offer: price schedule"
+
+
+def add_commercial_pack(bid_response: dict, schedules, buyer_text: str, units: list | None = None) -> bool:
+    """Append the commercial part to the pricing section when the buyer wants prices in a separate file. With the
+    bidder's prices (`units`) an existing commercial block is rebuilt in place, so prices can be given after the draft."""
     if not isinstance(bid_response, dict):
         return False
-    block = commercial_pack_text(schedules, buyer_text)
+    block = commercial_pack_text(schedules, buyer_text, units=units)
     obj = bid_response.get("pricing_notes")
     if not isinstance(obj, dict):
         obj = bid_response["pricing_notes"] = {"content": ""}
     cur = str(obj.get("content") or "")
-    if "[NEEDS INPUT: unit price" in cur:
+    if _COMM_HEAD in cur:
+        if not units:
+            return False
+        start = cur.index(_COMM_HEAD)
+        end = cur.find("\n## ", start + len(_COMM_HEAD))
+        old_block = cur[start:end if end >= 0 else len(cur)]
+        keep = re.search(r"^Currency: .*$", old_block, re.M)
+        if keep and "Currency: " not in block:
+            block += "\n" + keep.group(0)          # the buyer's currency rule, read when the draft was written
+        obj["content"] = (cur[:start].rstrip() + "\n\n" + _COMM_HEAD + "\n" + block + ("\n\n" + cur[end + 1:] if end >= 0 else "")).strip()
+        return True
+    elif "[NEEDS INPUT: unit price" in cur and not units:
         return False
-    obj["content"] = (cur + "\n\n## Commercial offer: price schedule\n" + block).strip()
+    obj["content"] = (cur + "\n\n" + _COMM_HEAD + "\n" + block).strip()
     return True
 
 

@@ -52,6 +52,32 @@ def rank_past_bids(library, tender_title, tender_text):
     return [b for s, b in scored]
 
 
+_SECTORS = (
+    ("Community venue", r"community (?:centre|center|hall|hub)|village hall|leisure centre|lease|venue|youth centre"),
+    ("Health and care", r"\b(nhs|health|care home|hospital|clinical|gp|wellbeing|social care|patients?)\b"),
+    ("Building works and maintenance", r"\b(plumb\w*|drain\w*|refurbish\w*|repairs?|maintenance|construction|roof\w*|electrical|heating|toilets?|wc)\b"),
+    ("Digital and IT", r"\b(software|digital|platform|saas|app|website|data|cloud|it services?|cyber|dashboard|ai)\b"),
+    ("Research and evaluation", r"\b(evaluat\w*|research|consultan\w*|review|study|appraisal|interpretation plan|feasibility)\b"),
+    ("Education and training", r"\b(school|education|training|college|university|learning|pupils?|students?)\b"),
+    ("Supplies and equipment", r"\b(supply|supplies|equipment|goods|laptops?|furniture|printing|signage|vehicles?)\b"),
+)
+
+
+def sector_of(bid):
+    """A short sector label for a past bid from its title (then the start of its text), for the "Will use" list.
+    Empty when nothing fits. Release 12: the re-test asked for the sector beside topic match and year."""
+    b = bid or {}
+    for source in (str(b.get("title") or ""), str(b.get("text") or "")[:3000]):
+        best, hits = "", 0
+        for name, pat in _SECTORS:
+            n = len(re.findall(pat, source, re.I))
+            if n > hits:
+                best, hits = name, n
+        if best:
+            return best
+    return ""
+
+
 def topic_match(bid, tender_title):
     """Share of the tender title's words found in the past bid, as a whole percent (shown as "topic match" on the bid page).
     None when the title has no usable words."""

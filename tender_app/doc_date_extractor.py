@@ -5,6 +5,73 @@ import zipfile
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def _para_text(p) -> str:
+    out = []
+    for el in p.iter():
+        if el.tag == _W + "t" and el.text:
+            out.append(el.text)
+        elif el.tag in (_W + "tab",):
+            out.append(" ")
+        elif el.tag in (_W + "br", _W + "cr"):
+            out.append(" ")
+    return "".join(out).strip()
+
+
+def docx_structured_text(file_path_or_bytes, max_chars: int = 200000) -> str:
+    """Word text that keeps its shape: one paragraph per line with a blank line between, Heading N styles as Markdown
+    '#' headings, list paragraphs as '- ' bullets and tables as '| a | b |' rows. Release 12: a past bid read as one
+    long line (every run joined by spaces) counted as 1 answer with 0 tables and 0 sub-headings."""
+    src = io.BytesIO(file_path_or_bytes) if isinstance(file_path_or_bytes, (bytes, bytearray)) else file_path_or_bytes
+    with zipfile.ZipFile(src) as z:
+        with z.open("word/document.xml") as doc:
+            tree = ET.parse(doc)
+    body = tree.getroot().find(_W + "body")
+    if body is None:
+        return ""
+    lines: list = []
+    size = 0
+    for child in body:
+        if child.tag == _W + "p":
+            text = _para_text(child)
+            if not text:
+                continue
+            ppr = child.find(_W + "pPr")
+            style = ""
+            if ppr is not None:
+                st = ppr.find(_W + "pStyle")
+                style = (st.get(_W + "val") or "") if st is not None else ""
+                is_list = ppr.find(_W + "numPr") is not None
+            else:
+                is_list = False
+            m = re.match(r"(?i)heading\s*(\d)|title$", style)
+            if m:
+                level = int(m.group(1)) if m.group(1) else 1
+                lines.append("#" * min(4, max(1, level)) + " " + text)
+            elif is_list or re.match(r"(?i)list", style):
+                lines.append("- " + text)
+            else:
+                lines.append(text)
+            lines.append("")
+        elif child.tag == _W + "tbl":
+            rows = []
+            for tr in child.iter(_W + "tr"):
+                cells = [" ".join(_para_text(p) for p in tc.iter(_W + "p")).strip().replace("|", "/") for tc in tr.findall(_W + "tc")]
+                if any(cells):
+                    rows.append("| " + " | ".join(cells) + " |")
+            if rows:
+                lines.append(rows[0])
+                lines.append("|" + "---|" * max(1, rows[0].count("|") - 1))
+                lines.extend(rows[1:])
+                lines.append("")
+        size += len(lines[-1]) if lines else 0
+        if size > max_chars:
+            break
+    return "\n".join(lines).strip()[:max_chars]
+
+
 def extract_text_from_file(file_path: str, max_chars: int = 50000) -> str:
     """Extracts plain text from PDF, DOCX, TXT, or generic document files."""
     if not os.path.exists(file_path):

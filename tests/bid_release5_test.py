@@ -66,7 +66,7 @@ out = r5.reconcile_experience(s, inc, TODAY)
 ok("whose team has over 12 years of experience in the plumbing sector" in out and "incorporated on 10/07/2024" in out, "company years become the team's: %s" % out)
 s2 = "Priority Plumbing Services Limited has over 12 years of experience. It has over 12 years of experience in repairs."
 out2 = r5.reconcile_experience(s2, inc, TODAY)
-ok(out2.count("has a team with over 12 years of experience") == 2 and out2.count("[CONFIRM") == 1, "one [CONFIRM] per section: %s" % out2)
+ok(out2.count("has a team with over 12 years of experience") == 2 and out2.count("[CONFIRM") == 2, "release 12: every mention carries the [CONFIRM]: %s" % out2)
 ok(r5.reconcile_experience("Our team has over 12 years of experience.", inc, TODAY) == "Our team has over 12 years of experience.", "already the team's experience")
 ok(r5.reconcile_experience("We have 2 years of experience.", inc, TODAY) == "We have 2 years of experience.", "years within the company's age are left alone")
 ok("[CONFIRM: the company's records do not show how long it has traded" in r5.reconcile_experience(s, None, TODAY), "no incorporation date, long claim flagged")

@@ -214,14 +214,11 @@ def reconcile_experience(text: str, incorporated: _dt.date | None, today: _dt.da
                 return m.group(0)
             return m.group(0) + "\x00"
         marked = _YEARS.sub(_fallback, text)
-        at = marked.find("\x00")
-        if at < 0:
+        if "\x00" not in marked:
             return text
         yrs = _years_value(_YEARS.search(text).group(2)) if _YEARS.search(text) else 0
-        marked = marked.replace("\x00", "")
-        end = _sentence_end(marked, at)
-        return marked[:end] + (f" [CONFIRM: the company's records do not show how long it has traded; check that {yrs}+ years "
-                               f"is the company's own history or say it is the team's experience]") + marked[end:]
+        return _note_each(marked, f" [CONFIRM: the company's records do not show how long it has traded; check that {yrs}+ years "
+                                  f"is the company's own history or say it is the team's experience]")
     age = max(0, (today - incorporated).days // 365)
     flagged = False
 
@@ -234,12 +231,11 @@ def reconcile_experience(text: str, incorporated: _dt.date | None, today: _dt.da
         if re.search(r"\b(?:team|staff|engineers?|founders?|directors?|people|personnel)\b[^.]{0,30}$", before, re.I) or _NOT_COMPANY.search(before):
             return m.group(0)  # already the team's
         phrase = m.group(0)
-        mark = ""
         if not flagged:
             flagged = True
             notes.append(f" [CONFIRM: {years} years is the team's experience - the company was incorporated on "
                          f"{incorporated.strftime('%d/%m/%Y')}; say whose experience this is]")
-            mark = "\x00"                               # where the first rewritten claim sits; the note follows its sentence
+        mark = "\x00"                                   # release 12: every mention gets the note after its sentence
         if re.search(r"\b(?:with|has|have|brings?|offers?|holds?|and)\s+$", before, re.I):
             return "a team with " + phrase + mark      # "has a team with over 12 years of experience"
         if re.search(r"\b(?:our|its|their)\s+$", before, re.I):
@@ -249,12 +245,24 @@ def reconcile_experience(text: str, incorporated: _dt.date | None, today: _dt.da
     notes: list = []
     # "..., with a team with over 12 years" reads badly: "..., whose team has over 12 years".
     out = re.sub(r"\bwith a team with\b", "whose team has", _YEARS.sub(fix, text))
-    at = out.find("\x00")
-    if at >= 0:
-        out = out.replace("\x00", "")
-        end = _sentence_end(out, at)
-        out = out[:end] + notes[0] + out[end:]
-    return out
+    return _note_each(out, notes[0]) if notes else out
+
+
+def _note_each(marked: str, note: str) -> str:
+    """Put `note` after the sentence of every \\x00 mark (once per sentence) and drop the marks. Herts plumbing had the
+    "12 years" [CONFIRM] on 2 of its 7 mentions; every mention now carries it."""
+    ends: list = []
+    pos = marked.find("\x00")
+    while pos >= 0:
+        ends.append(pos)
+        pos = marked.find("\x00", pos + 1)
+    clean = marked.replace("\x00", "")
+    cut = sorted({_sentence_end(clean, p - i) for i, p in enumerate(ends)}, reverse=True)
+    for end in cut:
+        if note.strip() in clean[end:end + len(note) + 2]:
+            continue
+        clean = clean[:end] + note + clean[end:]
+    return clean
 
 
 # ---- Pilot: the draft contradicts itself ------------------------------------------------------------------------------
@@ -678,6 +686,16 @@ _WORKS_RE = re.compile(r"\b(plumb\w*|drain\w*|repair\w*|maintenance|refurbish\w*
 _DIGITAL_RE = re.compile(r"\b(platform|software|digital|saas|app(?:lication)?|portal|website|it\s+system|e-?learning|coaching platform|"
                          r"data\s+system|cloud|licen[cs]e|managed service)\b", re.I)
 _WELSH_RE = re.compile(r"\b(wales|welsh|cymru|nwssp|sell2wales)\b", re.I)
+# "Registered in England and Wales" is on every UK company's paperwork; it does not make the buyer Welsh (release 12:
+# Epsom, in Surrey, and Oldham got a "Welsh language" section).
+_NOT_WELSH_BUYER = re.compile(r"england\s*(?:and|&)\s*wales|wales\s*(?:and|&)\s*england|(?:new south|south) wales", re.I)
+
+
+def buyer_in_wales(*texts) -> bool:
+    """True when the buyer is a Welsh public body: Wales / Welsh / Cymru / NWSSP / Sell2Wales in the title, buyer name
+    or notice, not counting "England and Wales" or New South Wales."""
+    blob = _NOT_WELSH_BUYER.sub(" ", " ".join(str(t or "") for t in texts))
+    return bool(_WELSH_RE.search(blob))
 
 
 _CONSULT_RE = re.compile(r"\b(evaluat\w*|consultan\w*|research|review|study|strategy|advisory|appraisal|assessment|"
@@ -704,7 +722,7 @@ def contract_type_note(title: str, description: str = "", tender_text: str = "")
                     ("Accessibility (WCAG 2.2 AA) and usability", 10),
                     ("Support, service levels and account management", 15),
                     ("Pricing and licensing model", 15)]
-        if _WELSH_RE.search(blob):
+        if buyer_in_wales(head, str(tender_text or "")[:6000]):
             sections.insert(3, ("Welsh language provision (the Welsh Language Standards apply to Welsh public bodies)", 8))
         kind = "digital"
     elif works:
@@ -715,7 +733,8 @@ def contract_type_note(title: str, description: str = "", tender_text: str = "")
         if _DRAIN_RE.search(blob):
             sections.append(("Drainage service delivery: CCTV surveys, jetting, tankering, waste carriers licence and disposal records", 15))
         if _WATER_RE.search(blob):
-            sections.append(("Water safety and plumbing compliance (Legionella and L8 risk management, TMVs, water hygiene, WRAS-approved materials; only qualifications the company data shows)", 10))
+            htm = "HTM 04-01 for NHS sites, " if re.search(r"\b(nhs|hospital|trust|healthcare|htm\s*04)\b", blob, re.I) else ""
+            sections.append((f"Water safety and plumbing compliance ({htm}Legionella and L8 risk management, TMVs, water hygiene, WRAS-approved materials; only qualifications the company data shows)", 10))
         sections += [("Health and safety (risk assessments, method statements, CDM, RIDDOR)", 10),
                      ("Staff, supervision, vetting and DBS/site access", 8),
                      ("Quality control, compliance and the qualifications actually held", 5),
@@ -778,16 +797,51 @@ def flag_unevidenced_claims(bid_response: dict, decision: dict | None) -> int:
         text = obj.get(key)
         if not isinstance(text, str) or "[CONFIRM: no public-sector" in text:
             continue
-
-        def mark(m):
-            nonlocal n
-            s = m.group(0)
-            if "[CONFIRM" in s:
-                return s
+        # Release 12: the tag went after sentences about the buyer ("the Council's partnership...") and inside an
+        # e-mail address ("...@wales.nhs.[CONFIRM...]uk"), 7-8 times a draft. It now goes once per section, after the
+        # first sentence in which the bidder claims public-sector work, never inside a link, address or number.
+        for start, end in _sentences(text):
+            s = text[start:end]
+            if "[CONFIRM" in s or not _PUBLIC_CLAIM.search(_strip_links(s)) or not _BIDDER_CLAIM.search(s):
+                continue
+            obj[key] = text[:end].rstrip() + " [CONFIRM: no public-sector work is evidenced in your profile - check this claim]" + text[end:]
             n += 1
-            return s.rstrip() + " [CONFIRM: no public-sector work is evidenced in your profile - check this claim]"
-        obj[key] = _PUBLIC_CLAIM.sub(mark, text)
+            break
     return n
+
+
+_LINKISH = re.compile(r"\S+@\S+|https?://\S+|www\.\S+|\b[\w-]+(?:\.[\w-]+){2,}\b")
+# The bidder is the subject: "we have worked with councils", "our NHS clients", "Priority Plumbing has delivered ..."
+_BIDDER_CLAIM = re.compile(r"\b(?:we|we've|our|us)\b[^.]{0,80}\b(?:work\w*|deliver\w*|experience\w*|track record|clients?|"
+                           r"customers?|contracts?|served|support\w*|provid\w*|completed|projects?|history|trusted)\b|"
+                           r"\b(?:has|have)\s+(?:worked|delivered|served|completed|supported|provided|a track record)\b", re.I)
+
+
+def _strip_links(s: str) -> str:
+    return _LINKISH.sub(" ", s)
+
+
+def _sentences(text: str):
+    """(start, end) of each sentence. A full stop inside an e-mail address, a web address or a number ("£2.5m",
+    "nhs.uk") does not end a sentence, and nor does one inside a [bracketed tag]."""
+    spans, start, depth, i, n = [], 0, 0, 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth = max(0, depth - 1)
+        elif c == "\n" and depth == 0:
+            if text[start:i].strip():
+                spans.append((start, i))
+            start = i + 1
+        elif c in ".!?" and depth == 0 and (i + 1 >= n or text[i + 1] in " \n\t\"')"):
+            spans.append((start, i + 1))
+            start = i + 1
+        i += 1
+    if text[start:].strip():
+        spans.append((start, n))
+    return spans
 
 
 def export_block_payload(bid_response: dict, blockers: list) -> dict:

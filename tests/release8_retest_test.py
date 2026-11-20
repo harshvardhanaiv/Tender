@@ -73,8 +73,10 @@ for want in ("Team", "Ethics", "data protection", "Price"):
 k, note = r5.contract_type_note("NHS Wales coaching platform RFQ", "Digital coaching platform for NWSSP, NHS Wales")
 for want in ("Data protection", "WCAG", "Welsh"):
     ok(want.lower() in note.lower(), "NHS Wales structure has %s" % want)
-ok(all(w in r7._KIND_GUIDE["technical"] for w in ("understanding", "data protection", "WCAG", "Welsh")),
-   "a technical offer built from the buyer's documents is asked for the same sections")
+_k7, _g7 = r7.technical_sections("NHS Wales coaching platform RFQ", "Digital coaching platform for NWSSP, NHS Wales")
+ok(all(w.lower() in (r7._KIND_GUIDE["technical"] + _g7).lower() for w in ("understanding", "data protection", "WCAG", "Welsh")),
+   "a Welsh digital technical offer built from the buyer's documents is asked for the same sections")
+ok("Welsh" not in r7._KIND_GUIDE["technical"] and "WCAG" not in r7._KIND_GUIDE["technical"], "release 12: the shared guide names no Welsh or WCAG section")
 
 # Chemonics commercial offer: line items with [NEEDS INPUT: unit price] rows and the OANDA/GBP rule.
 sch = [{"sheet": "Volume 3", "header": ["Item", "Description", "Qty", "Unit price", "Total"],
