@@ -12361,6 +12361,10 @@ function openBidModal(row) {
   }
   _bidRow = row;
   _lastProposal = null;
+  // Opening another tender must not show the last tender's Answer plan, learned style or Bid plan questions.
+  _lastStyleData = null;
+  _willUseData = null;
+  _lastBidPlanQuestions = [];
   _methodologyData = null;
   _activeMethodologyStyle = null;
   _activeVisualStyle = 'corporate';
@@ -13084,7 +13088,7 @@ function _sourceForQuestion(num) {
 // Paragraphs, headings, lists and tables for the preview page (the draft view shows the text as written; the page should
 // look like the Word file). Inline bold, italics and [placeholders] go through renderFormattedMarkdownHtml.
 function _previewMarkdown(text) {
-  const inline = t => renderFormattedMarkdownHtml(String(t || "").trim());
+  const inline = t => _inlineMarkdown(String(t || "").trim());
   const cells = l => l.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
   const out = [];
   String(text || "").replace(/\r\n?/g, "\n").split(/\n\s*\n/).forEach(block => {
@@ -13876,6 +13880,15 @@ function applyPlaceholders(text) {
 
 function renderFormattedMarkdownHtml(text) {
   if (!text) return "";
+  // Preview check 20 Nov: the cover letter / summary / methodology / social value / pricing boxes showed raw "|---|"
+  // tables and "####" headings, because this renderer only knew bold, ## and ###. Text with a table or a deeper heading
+  // goes through the block renderer (which uses _inlineMarkdown for each line, so this cannot loop).
+  if (/^\s*\|.*\|\s*$/m.test(String(text)) || /^\s*#{4,6}\s/m.test(String(text))) return _previewMarkdown(text);
+  return _inlineMarkdown(text);
+}
+
+function _inlineMarkdown(text) {
+  if (!text) return "";
   let s = String(text);
   
   // Escape raw special characters except HTML markup we generate
@@ -14357,6 +14370,15 @@ function renderProposal(p, row) {
                 </div>
               </div>
               <div class="draft-box text-block-draft" data-section-key="social_value" data-original-text="${esc(r.social_value.content)}" style="max-height: 200px; margin-bottom: 20px; font-size: 12px; line-height: 1.5; background: #fafaf9; white-space: pre-wrap;">${renderFormattedMarkdownHtml(applyPlaceholders(r.social_value.content))}</div>
+            ` : ""}
+
+            ${r.pricing_notes?.content ? `
+              <!-- Shown on screen too (preview check 20 Nov): "Put prices in the draft" changed only the Word/PDF, so the
+                   priced table and its total could not be seen before downloading. -->
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px; margin-bottom: 6px;">
+                <h4 style="margin: 0; font-size: 13px; color: var(--primary);">💷 Pricing and commercial offer</h4>
+              </div>
+              <div class="draft-box text-block-draft" id="bidPricingDraft" data-section-key="pricing_notes" data-original-text="${esc(r.pricing_notes.content)}" style="max-height: 360px; margin-bottom: 20px; font-size: 12px; line-height: 1.5; background: #fafaf9;">${renderFormattedMarkdownHtml(applyPlaceholders(r.pricing_notes.content))}</div>
             ` : ""}
           </div>
         </div>

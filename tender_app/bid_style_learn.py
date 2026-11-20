@@ -115,13 +115,17 @@ def split_answers(text):
 
 def _answer_stats(body):
     words = body.split()
-    sentences = [s for s in _SENT.split(body) if s.strip()] or [body]
     paras = _paragraphs(body)
     lines = [ln for ln in body.splitlines() if ln.strip()]
+    # Sentence length from prose only: Word bids are now read with their headings and table rows kept, and those lines
+    # have no full stop, so counting them merged them into the next sentence (a 3-line table read as one 40-word sentence).
+    prose = " ".join(ln for ln in lines if "|" not in ln and not ln.lstrip().startswith("#") and not _is_subheading(ln))
+    sentences = [s for s in _SENT.split(prose) if s.strip()] or [prose or body]
+    prose_words = len(prose.split()) or len(words)
     heads = [ln.strip().strip("#* ").rstrip(":") for ln in lines[1:] if _is_subheading(ln)]
     return {
         "words": len(words),
-        "words_per_sentence": len(words) / max(1, len(sentences)),
+        "words_per_sentence": prose_words / max(1, len(sentences)),
         "figures_per_100": 100.0 * len(_FIGURE.findall(body)) / max(1, len(words)),
         "has_table": any(ln.count("|") >= 2 or "\t" in ln for ln in lines),
         "subheadings": len(heads),
@@ -164,7 +168,8 @@ def style_brief(profile):
     if profile["opens_direct"]:
         parts.append("Open each answer with a one-paragraph direct answer")
     if profile["subheadings"] >= 1:
-        parts.append("then about %d sub-heading%s" % (max(1, round(profile["subheadings"])), "" if round(profile["subheadings"]) <= 1 else "s"))
+        n_heads = max(1, round(profile["subheadings"]))
+        parts.append("%s about %d sub-heading%s" % ("then" if parts else "Use", n_heads, "" if n_heads <= 1 else "s"))
     out = (", ".join(parts) + ". ") if parts else ""
     out += "Keep sentences near %d words. " % profile["words_per_sentence"]
     if profile["figures_per_100"] >= 1:

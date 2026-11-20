@@ -209,4 +209,19 @@ except ImportError:
     print("  (openpyxl not installed: workbook check skipped)")
 ok("...bidPricesPayload(task.row)" in app and "renderBidPricesCard()" in app, "prices go with a re-run and the card shows on the draft")
 
+# Found in the signed-in preview (20 Nov): headings and table rows from a Word bid counted as one long sentence,
+# the style brief began "then about 1 sub-heading", and a new tender kept the last tender's Answer plan.
+from tender_app.bid_style_learn import style_brief  # noqa: E402
+_md = ("# Question 1. Method\n\n" + "We run the site every day with a trained team. " * 8 + "\n\n## How we schedule\n\n"
+       "| Task | Frequency | Standard |\n|---|---|---|\n| Water temperature checks | Monthly | HTM 04-01 |\n\n"
+       "# Question 2. Safety\n\n" + "Every job has a risk assessment and a method statement. " * 8)
+_p = learn_style([{"title": "t", "text": _md, "outcome": "won"}])
+ok(_p["answers"] == 2 and _p["tables"] == 1 and _p["words_per_sentence"] <= 12, "sentence length from prose only: %s" % _p)
+ok(style_brief(dict(_p, opens_direct=False, subheadings=1.0)).startswith("Use about 1 sub-heading"), "the brief is a whole sentence without an opening summary")
+_ob = app[app.index("function openBidModal(row)"):app.index("function openBidModal(row)") + 900]
+ok("_lastStyleData = null" in _ob and "_lastBidPlanQuestions = []" in _ob, "opening a tender clears the last tender's plan and questions")
+_rf = app[app.index("function renderFormattedMarkdownHtml("):app.index("function _inlineMarkdown(")]
+ok("return _previewMarkdown(text)" in _rf and "const inline = t => _inlineMarkdown(" in app, "draft boxes render tables and #### headings, not raw Markdown")
+ok('data-section-key="pricing_notes"' in app and "bidPricingDraft" in app, "the priced table is shown on the draft page, not only in the download")
+
 print("release 9 re-test: %d checks passed" % n)
