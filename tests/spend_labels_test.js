@@ -30,7 +30,7 @@ test("the old unlabelled 'Total Spend' wording is gone from the buyer views", ()
 });
 
 test("the supplier list says what its 'won (value)' figure is", () => {
-  assert.ok(/Wins and published value of direct contracts/.test(app));
+  assert.ok(/class="sp-won" title="Wins of direct contracts./.test(app) && /class="sp-val" title="Published value of direct contracts/.test(app));
 });
 
 (async () => {

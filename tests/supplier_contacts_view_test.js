@@ -40,11 +40,11 @@ test("when the notice has nothing, what the server found is shown and marked 'fr
   assert.equal(r.linkedinExact, true);
 });
 
-test("before the lookup has run the panel says it is looking up, not 'Unlisted'", () => {
-  const r = show({ name: "Acme", email: "", phone: "", website: "" });
+test("before the lookup has run the panel offers to find details, not 'Unlisted'", () => {
+  const r = show({ id: 7, name: "Acme", email: "", phone: "", website: "" });
   assert.equal(r.lookingUp, true);
-  assert.match(r.email, /Looking up/);
-  assert.match(r.website, /Looking up/);
+  assert.match(r.email, /Find contact details/);
+  assert.match(r.website, /Find contact details/);
   assert.ok(!/Unlisted/.test(r.email + r.phone + r.website));
 });
 

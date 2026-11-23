@@ -181,6 +181,9 @@ def readiness(bid_response, stage1, qa, closed=False, gate=False, signoffs=None,
         sec = _S(it["section"])
         m = re.match(r"question\s+(.+)$", sec, re.I)
         it["goto"] = sec
+        if it["check"] in ("placeholders", "reused_facts"):
+            it["goto"] = "Things to confirm"       # the page's one list of open gaps (Release 13)
+            continue
         if it["check"] in ("truncation", "coverage", "questions_answered", "placeholders") and m and it["check"] != "questions_answered":
             it["fix"] = {"question_number": m.group(1).strip()}
         elif it["check"] in ("truncation", "coverage") and sec.lower() in by_label and by_label[sec.lower()] not in ("declarations",):

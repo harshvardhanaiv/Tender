@@ -43,7 +43,7 @@ test("a shared link says which portals it means, and they win over the reader's 
   assert.equal(SearchUrl.fromSearch("?q=bi&portals=all", PORTALS).portals, null);
   const fn = app.slice(app.indexOf("function loadPortalPrefs()"), app.indexOf("function reconcilePortalCatalogue()"));
   assert.ok(fn.indexOf("SearchUrl.fromSearch(location.search") > 0 && fn.indexOf("SearchUrl.fromSearch(location.search") < fn.indexOf("lsGet(LS_PORTAL"), "the address must be read before the saved portals");
-  assert.ok(app.includes("!/[?&]portals=/.test(location.search)"), "the catalogue reconcile must not rewrite a portals= link");
+  assert.ok(app.includes('!(typeof location !== "undefined" && /[?&]portals=/.test(location.search))'),"the catalogue reconcile must not rewrite a portals= link");
 });
 console.log(`\n${passed} of ${passed + failed} passed`);
 process.exit(failed ? 1 : 0);

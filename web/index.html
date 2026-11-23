@@ -46,7 +46,7 @@
   <link rel="stylesheet" href="/responsive-fixes.css?v=11" />
   <link rel="stylesheet" href="/growth-studio.css?v=20" />
   <link rel="stylesheet" href="/pages.css?v=33" />
-  <link rel="stylesheet" href="/workspace.css?v=10" />
+  <link rel="stylesheet" href="/workspace.css?v=11" />
   <link rel="stylesheet" href="/funding.css?v=25" />
   <link rel="stylesheet" href="/tooltips.css?v=1" />
   <link rel="stylesheet" href="/connections.css?v=10" />
@@ -1179,9 +1179,9 @@
         <!-- Release 11: live preview of one page of the draft (no credits: it renders the draft already made) -->
         <aside id="bidPreviewPane" class="bid-preview" aria-label="Draft preview">
           <div class="bid-preview__tabs" role="tablist">
-            <button type="button" class="bid-preview__tab is-active" data-pv="draft" role="tab">Draft preview</button>
-            <button type="button" class="bid-preview__tab" data-pv="learned" role="tab">What TenderFlow learned</button>
-            <button type="button" class="bid-preview__tab" data-pv="plan" role="tab">Answer plan</button>
+            <button type="button" class="bid-preview__tab is-active" data-pv="draft" role="tab" data-tip="Show the draft as it will look, with your branding.">Draft preview</button>
+            <button type="button" class="bid-preview__tab" data-pv="learned" role="tab" data-tip="Show what was learned from your past bids.">What TenderFlow learned</button>
+            <button type="button" class="bid-preview__tab" data-pv="plan" role="tab" data-tip="Show the sections the answer will be built from.">Answer plan</button>
           </div>
           <div id="bidPreviewBody" class="bid-preview__body"></div>
         </aside>
@@ -1640,7 +1640,7 @@
                 </select></label>
               <label>Footer line <input type="text" id="brandFooter" maxlength="160" placeholder="Company name | Company no. 12345678" style="min-width:240px;" /></label>
               <label>Logo (PNG or JPEG, under 400 KB) <input type="file" id="brandLogo" accept="image/png,image/jpeg" /></label>
-              <button type="button" class="btn btn--small" id="btnSaveBrandKit">Save brand kit</button>
+              <button type="button" class="btn btn--small" id="btnSaveBrandKit" data-tip="Save your logo, colour, font and footer for your bids.">Save brand kit</button>
             </div>
             <div id="brandKitStatus" style="color:var(--text-muted);"></div>
           </div>
@@ -2419,9 +2419,9 @@
         <h1 class="pg-title" id="ctHeading">Bid on a tender that is not in search</h1>
         <p class="pg-lead">Found a tender elsewhere, or got an invitation? Add it here and use the same bid tools.</p>
         <ol class="ct-steps" aria-label="Steps">
-          <li><button type="button" class="ct-step is-active" data-ct-step="1"><span>1</span>Details</button></li>
-          <li><button type="button" class="ct-step" data-ct-step="2"><span>2</span>Documents</button></li>
-          <li><button type="button" class="ct-step" data-ct-step="3"><span>3</span>Review</button></li>
+          <li><button type="button" class="ct-step is-active" data-ct-step="1" data-tip="Go to step 1: the tender details."><span>1</span>Details</button></li>
+          <li><button type="button" class="ct-step" data-ct-step="2" data-tip="Go to step 2: the tender documents."><span>2</span>Documents</button></li>
+          <li><button type="button" class="ct-step" data-ct-step="3" data-tip="Go to step 3: review before you start."><span>3</span>Review</button></li>
         </ol>
         <div class="ct-grid">
           <div class="ct-main">
@@ -2450,14 +2450,14 @@
               </label>
               <ul class="ct-files" id="ctFileList"></ul>
               <label class="pg-field"><span>Or paste tender details (optional)</span><textarea id="ctInText" rows="5" placeholder="Paste the requirements, scope or invitation text"></textarea></label>
-              <div class="pg-actions pg-actions--split"><button type="button" class="pg-btn" data-ct-next="1">Back</button><button type="button" class="pg-btn pg-btn--gold" data-ct-next="3">Continue</button></div>
+              <div class="pg-actions pg-actions--split"><button type="button" class="pg-btn" data-ct-next="1" data-tip="Go back to the previous step.">Back</button><button type="button" class="pg-btn pg-btn--gold" data-ct-next="3">Continue</button></div>
             </section>
 
             <section class="pg-card ct-panel" data-ct-panel="3">
               <h2>Review</h2>
               <dl class="ct-review" id="ctReview"></dl>
               <label class="ct-check"><input type="checkbox" id="ctInPipeline" checked> Add this tender to Pipeline (with its deadline)</label>
-              <div class="pg-actions pg-actions--split"><button type="button" class="pg-btn" data-ct-next="2">Back</button><button type="button" class="pg-btn pg-btn--gold" id="ctStart">Open bid assistant</button></div>
+              <div class="pg-actions pg-actions--split"><button type="button" class="pg-btn" data-ct-next="2" data-tip="Go back to the previous step.">Back</button><button type="button" class="pg-btn pg-btn--gold" id="ctStart" data-tip="Open the bid assistant for this tender.">Open bid assistant</button></div>
             </section>
           </div>
           <aside class="pg-card ct-aside">
@@ -3427,7 +3427,7 @@
           <h2 class="profile-header__title" id="userDocumentsModalTitle">Documents</h2>
           <span class="profile-header__sub">Certificates, policies and evidence attached to your bids.</span>
         </div>
-        <button type="button" id="btnDocsUploadTop" class="pg-btn pg-btn--gold dc-upload">Upload document</button>
+        <button type="button" id="btnDocsUploadTop" class="pg-btn pg-btn--gold dc-upload" data-tip="Upload a document to your library.">Upload document</button>
         <button type="button" id="userDocumentsClose" class="profile-header__close" aria-label="Close">×</button>
       </div>
 
@@ -3589,7 +3589,7 @@
   <script src="/recent-views.js?v=1"></script>
   <script src="/answer-bank-assist.js?v=2"></script>
   <script src="/location-pin.js?v=4"></script>
-  <script src="/app.js?v=316"></script>
+  <script src="/app.js?v=319"></script>
   <script src="/planning.js?v=23"></script>
   <script src="/funding.js?v=11"></script>
   <script src="/grants-board.js?v=1"></script>

@@ -480,6 +480,17 @@ def init_db():
                 PRIMARY KEY (username, bid_key, item_key)
             );
         """)
+        # Release 13: the bid page's own choices (prices typed, values typed in "Things to confirm"), per bid on the server so they
+        # follow the user to another browser or PC instead of living in one browser's storage.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS bid_ui_state (
+                username VARCHAR(100) NOT NULL,
+                bid_key VARCHAR(300) NOT NULL,
+                state_json TEXT NOT NULL DEFAULT '{}',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (username, bid_key)
+            );
+        """)
         # Release 11: the buyer documents uploaded at the bid's step, kept per tender on the server. Browser storage alone kept
         # 2 of Cornwall College's 5 files (it fills up), so a reopened bid lost the rest.
         cursor.execute("""
@@ -7630,6 +7641,36 @@ Return ONLY this JSON structure:
         finally:
             conn.close()
         return jsonify({"ok": True})
+
+    @app.get("/api/bid-ui-state")
+    @rate_limit(300, 3600)
+    def api_bid_ui_state_get():
+        """Release 13: what the user typed on this bid's page (prices, values for "Things to confirm"). Free."""
+        from tender_app.bid_ui_state import load_state
+        username = session.get("username") or ""
+        bid_key = str(request.args.get("bid_key") or "")[:300]
+        if not username or not bid_key:
+            return jsonify({"ok": False, "error": "Sign in and name the bid."}), 400
+        conn = get_db_connection()
+        try:
+            return jsonify({"ok": True, "state": load_state(conn, username, bid_key)})
+        finally:
+            conn.close()
+
+    @app.post("/api/bid-ui-state")
+    @rate_limit(600, 3600)
+    def api_bid_ui_state_save():
+        from tender_app.bid_ui_state import save_state
+        username = session.get("username") or ""
+        body = request.get_json(silent=True) or {}
+        bid_key = str(body.get("bid_key") or "")[:300]
+        if not username or not bid_key or not isinstance(body.get("state"), dict):
+            return jsonify({"ok": False, "error": "Sign in, name the bid and send its state."}), 400
+        conn = get_db_connection()
+        try:
+            return jsonify({"ok": True, "state": save_state(conn, username, bid_key, body["state"])})
+        finally:
+            conn.close()
 
     @app.post("/api/bid-style-preview")
     @rate_limit(60, 3600)

@@ -12922,6 +12922,7 @@ function renderReadiness(d) {
 function gotoBidSection(label) {
   const body = $("bidModalBody");
   if (!body || !label) return;
+  if (/^things to confirm$/i.test(String(label).trim())) { _scrollToTodoCard(); return; }
   const q = /^question\s+(.+)$/i.exec(label);
   const wants = [label.toLowerCase()].concat(q ? ["q" + q[1].toLowerCase(), "question " + q[1].toLowerCase()] : []);
   const heads = [...body.querySelectorAll("h1,h2,h3,h4,h5,summary,.bid-section-title,.proposal-section-title,strong")];
@@ -13969,6 +13970,7 @@ function renderProposal(p, row) {
         <button type="button" class="pill bid-tab-btn" data-tab="tab-checklist" style="padding: 6px 12px; font-weight: 600; border-radius: 6px;">📋 Stage 2: Checklist</button>
         <button type="button" class="pill bid-tab-btn" data-tab="tab-response" style="padding: 6px 12px; font-weight: 600; border-radius: 6px;">📝 Stage 3: Bid Draft</button>
         <button type="button" class="pill bid-tab-btn" data-tab="tab-clarifications" style="padding: 6px 12px; font-weight: 600; border-radius: 6px;">❓ Stage 4: Clarifications</button>
+        <button type="button" id="bidTodoPill" class="pill" style="padding: 6px 12px; font-weight: 600; border-radius: 6px;" title="Jump to the list of things to confirm">${_todoPillText(collectBidTodos(p).length)}</button>
       </div>
       ${(p.dissection && p.dissection.separate_technical_commercial) ? `<button id="btnDownloadSubmissionPack" class="btn btn--small" title="Technical offer with no prices, and the buyer's price schedule as a separate Excel file" style="background-color: #fff; color: #1e3a8a; border: 1px solid #1e3a8a; padding: 7px 14px; font-size: 12px; border-radius: 6px; font-weight: 700; cursor: pointer; white-space: nowrap; flex: 0 0 auto;">Technical + commercial (zip)</button>` : ""}
       <button id="btnDownloadProposalPdf" class="btn btn--small" title="PDF with a page count for each section" style="background-color: #fff; color: #1e3a8a; border: 1px solid #1e3a8a; padding: 7px 14px; font-size: 12px; border-radius: 6px; font-weight: 700; cursor: pointer; white-space: nowrap; flex: 0 0 auto;">Download PDF</button>
@@ -14895,7 +14897,10 @@ function loadBidPrices(row) {
   try { const v = JSON.parse(localStorage.getItem(_pricesKey(row)) || "null"); return v && typeof v === "object" ? v : { prices: {}, text: "" }; }
   catch (e) { return { prices: {}, text: "" }; }
 }
-function saveBidPrices(v) { try { localStorage.setItem(_pricesKey(), JSON.stringify(v)); } catch (e) { /* private window */ } }
+function saveBidPrices(v, fromServer) {
+  try { localStorage.setItem(_pricesKey(), JSON.stringify(v)); } catch (e) { /* private window */ }
+  if (!fromServer) pushBidUiState({ prices: v });
+}
 function bidPricesPayload(row) { const v = loadBidPrices(row); return { prices: v.prices || {}, price_text: v.text || "" }; }
 const _PRICE_COL_RE = /unit\s*price|price|rate|total|amount/i;
 const _QTY_COL_RE = /\b(qty|quantity|units?)\b/i;
@@ -14939,6 +14944,168 @@ function renderBidPricesCard() {
   card.innerHTML = html;
   $("btnApplyBidPrices")?.addEventListener("click", applyBidPrices);
 }
+// Release 13: "Things to confirm". Every [NEEDS INPUT], [CONFIRM] and other bracketed gap in the draft, in one list. Each row
+// has a box to type (or correct) the value, a button that puts it in the draft, and a button that jumps to it. Resolved
+// items drop off the list, so what is left is what stands between the draft and the buyer. The same pattern as the
+// server's QA gate and Appendix C, so the count matches the document.
+const _TODO_RE = /\[(?!\d+\])(?![xX ]\])[^\[\]\n]{2,240}\](?!\()/g;
+function _todoSections(r) {
+  const out = [];
+  if (!r || typeof r !== "object") return out;
+  Object.keys(r).forEach(k => {
+    const v = r[k];
+    if (v && typeof v === "object" && typeof v.content === "string") out.push({ label: k.replace(/_/g, " ").replace(/^./, c => c.toUpperCase()), text: v.content });
+  });
+  (r.itt_question_responses || []).forEach(q => {
+    if (q && typeof q.response === "string") out.push({ label: `Question ${q.question_number || ""}`.trim(), text: q.response });
+  });
+  return out;
+}
+function collectBidTodos(p) {
+  const r = p && p.bid_response;
+  const byTag = new Map();
+  _todoSections(r).forEach(sec => {
+    (String(sec.text).match(_TODO_RE) || []).forEach(tag => {
+      let it = byTag.get(tag);
+      if (!it) {
+        const past = /^\[CONFIRM:\s*(.+?)\s*-\s*from a past bid\]$/i.exec(tag);
+        const conf = /^\[CONFIRM\s*:?\s*(.*?)\]$/i.exec(tag);
+        const need = /^\[NEEDS INPUT\s*:?\s*(.*?)\]$/i.exec(tag);
+        const kind = past ? "past" : conf ? "confirm" : need ? "input" : "other";
+        const value = past ? past[1] : conf ? conf[1] : "";
+        const hint = past ? past[1] : conf ? conf[1] : need ? need[1] : tag.replace(/^\[|\]$/g, "");
+        it = { tag, kind, value, hint: hint || tag.replace(/^\[|\]$/g, ""), sections: [], count: 0 };
+        byTag.set(tag, it);
+      }
+      it.count++;
+      if (!it.sections.includes(sec.label)) it.sections.push(sec.label);
+    });
+  });
+  const order = { input: 0, confirm: 1, past: 2, other: 3 };
+  return [...byTag.values()].sort((a, b) => order[a.kind] - order[b.kind]);
+}
+function resolveBidTodoText(p, tag, value) {
+  const r = p && p.bid_response;
+  const v = String(value == null ? "" : value).replace(/\s*\n\s*/g, " ").replace(/\|/g, "/").trim();
+  if (!r || !tag || !v) return 0;
+  let n = 0;
+  const swap = t => (typeof t === "string" && t.includes(tag)) ? (n += t.split(tag).length - 1, t.split(tag).join(v)) : t;
+  Object.keys(r).forEach(k => { if (r[k] && typeof r[k] === "object" && typeof r[k].content === "string") r[k].content = swap(r[k].content); });
+  (r.itt_question_responses || []).forEach(q => { if (q) q.response = swap(q.response); });
+  return n;
+}
+const _TODO_KIND = { input: "Needs input", confirm: "Confirm", past: "From a past bid", other: "Check" };
+function _todoPillText(n) { return n ? `⚠ ${n} to confirm` : "✓ Nothing to confirm"; }
+function _scrollToTodoCard() {
+  const c = $("bidTodoCard");
+  if (!c) return;
+  c.scrollIntoView({ behavior: "smooth", block: "start" });
+  const old = c.style.boxShadow; c.style.boxShadow = "0 0 0 3px #f59e0b";
+  setTimeout(() => { c.style.boxShadow = old; }, 2200);
+}
+// What the user typed on this bid's page (prices, values in the list) is kept on the server per bid, so it follows them to
+// another browser. Browser storage stays as the fast copy. The server copy is read once per bid; a write is debounced.
+let _todoDrafts = {}, _uiStateFor = "", _uiPushTimer = null;
+function _uiKey() { try { return _bidRow ? String(rowKey(_bidRow)) : ""; } catch (e) { return ""; } }
+let _uiPending = {};
+function pushBidUiState(part) {
+  const key = _uiKey();
+  if (!key) return;
+  clearTimeout(_uiPushTimer);
+  _uiPending = Object.assign(_uiPending, part);   // parts sent close together are merged, none is dropped
+  _uiPushTimer = setTimeout(() => {
+    const send = _uiPending; _uiPending = {};
+    fetch("/api/bid-ui-state", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bid_key: key, state: send }) }).catch(() => { /* the browser copy still holds it */ });
+  }, 600);
+}
+async function ensureBidUiState() {
+  const key = _uiKey();
+  if (!key || _uiStateFor === key) return;
+  _uiStateFor = key;
+  _todoDrafts = {};
+  try {
+    const res = await fetch("/api/bid-ui-state?bid_key=" + encodeURIComponent(key));
+    const data = await res.json().catch(() => ({}));
+    const st = (res.ok && data.ok && data.state) || {};
+    let changed = false;
+    if (st.prices && Object.keys(st.prices.prices || {}).length + String(st.prices.text || "").length > 0) {
+      saveBidPrices({ prices: st.prices.prices || {}, text: st.prices.text || "" }, true);
+      changed = true;
+    } else {
+      const local = loadBidPrices();
+      if (Object.keys(local.prices || {}).length || (local.text || "").trim()) pushBidUiState({ prices: local });
+    }
+    if (st.todo_drafts && Object.keys(st.todo_drafts).length) { _todoDrafts = Object.assign({}, st.todo_drafts); changed = true; }
+    if (changed && _uiKey() === key) { renderBidPricesCard(); renderBidTodosCard(); }
+  } catch (e) { /* the page works from this browser's copy */ }
+}
+function renderBidTodosCard() {
+  const old = $("bidTodoCard");
+  const items = _lastProposal ? collectBidTodos(_lastProposal) : [];
+  if (!_lastProposal || !_lastProposal.bid_response || !$("bidModalBody")) { if (old) old.remove(); return; }
+  const rows = items.map((it, i) => `<li class="bid-todo" data-i="${i}">
+      <div class="bid-todo__head"><span class="bid-todo__kind bid-todo__kind--${it.kind}">${_TODO_KIND[it.kind]}</span>
+        <span class="bid-todo__hint">${esc(it.hint)}</span></div>
+      <div class="bid-todo__meta">In: ${esc(it.sections.join(", "))}${it.count > 1 ? ` · ${it.count} places` : ""}</div>
+      <div class="bid-todo__act">
+        <input type="text" class="bid-todo__in" value="${esc(_todoDrafts[it.tag] != null ? _todoDrafts[it.tag] : it.value)}" placeholder="${it.kind === "input" ? "Type the value" : "Correct it here if needed"}" aria-label="Value for ${esc(it.hint)}" />
+        <button type="button" class="btn btn--small bid-todo__put">${it.value ? "Confirm" : "Put in draft"}</button>
+        <button type="button" class="btn btn--small bid-todo__go">Show in draft</button>
+      </div></li>`).join("");
+  const html = `<div style="font-weight:700;">Things to confirm <span class="bid-todo__count" id="bidTodoCount">${items.length ? `${items.length} left` : "all done"}</span></div>
+    <div class="bid-step-meta">${items.length ? "Each gap in the draft is listed once. Type or check the value and put it in the draft, and it drops off this list. Free, nothing is charged." : "No gaps are left in the draft. Re-check the readiness score before you submit."}</div>
+    ${items.length ? `<ul class="bid-todo-list">${rows}</ul>` : ""}`;
+  let card = old;
+  if (!card) {
+    card = document.createElement("div");
+    card.id = "bidTodoCard";
+    card.className = "bid-step-card bid-todo-card";
+    card.style.cssText = "padding:14px 16px;margin:12px 0;";
+    const anchor = $("bidReadinessCard");
+    if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(card, anchor.nextSibling);
+    else $("bidModalBody").appendChild(card);
+  }
+  card.innerHTML = html;
+  card._items = items;
+  const pill = $("bidTodoPill");
+  if (pill) pill.textContent = _todoPillText(items.length);
+}
+function _showTodoInDraft(tag) {
+  document.querySelector('.bid-tab-btn[data-tab="tab-response"]')?.click();
+  const body = $("bidModalBody");
+  const hit = body && [...body.querySelectorAll(".placeholder-highlight")].find(s => ((s.dataset && s.dataset.tag) || s.textContent || "").trim() === tag || (s.textContent || "").trim() === tag);
+  if (!hit) return false;
+  hit.scrollIntoView({ block: "center", behavior: "smooth" });
+  hit.classList.add("bid-todo-flash");
+  setTimeout(() => hit.classList.remove("bid-todo-flash"), 2200);
+  return true;
+}
+document.addEventListener("input", (e) => {
+  const inp = e.target && e.target.closest ? e.target.closest("#bidTodoCard .bid-todo__in") : null;
+  const li = inp && inp.closest(".bid-todo"), card = $("bidTodoCard");
+  const it = li && card && card._items && card._items[Number(li.dataset.i)];
+  if (!it) return;
+  if (inp.value.trim() && inp.value.trim() !== it.value) _todoDrafts[it.tag] = inp.value; else delete _todoDrafts[it.tag];
+  pushBidUiState({ todo_drafts: _todoDrafts });
+});
+document.addEventListener("click", (e) => { if (e.target && e.target.closest && e.target.closest("#bidTodoPill")) _scrollToTodoCard(); });
+document.addEventListener("click", async (e) => {
+  const btn = e.target && e.target.closest ? e.target.closest("#bidTodoCard .bid-todo__put, #bidTodoCard .bid-todo__go") : null;
+  if (!btn) return;
+  const li = btn.closest(".bid-todo"), card = $("bidTodoCard");
+  const it = card && card._items && card._items[Number(li && li.dataset.i)];
+  if (!it) return;
+  if (btn.classList.contains("bid-todo__go")) { _showTodoInDraft(it.tag); return; }
+  const val = (li.querySelector(".bid-todo__in")?.value || "").trim();
+  if (!val) { li.querySelector(".bid-todo__in")?.focus(); return; }
+  if (!resolveBidTodoText(_lastProposal, it.tag, val)) return;
+  delete _todoDrafts[it.tag]; pushBidUiState({ todo_drafts: _todoDrafts });
+  $("bidModalBody").innerHTML = renderProposal(_lastProposal, _bidRow);
+  wireBidResultButtons(); wireTabNavigation();
+  try { if (_bidRow) await saveProposalToServer(_lastProposal, rowKey(_bidRow)); } catch (err) { /* kept on screen */ }
+  if ($("bidReadinessCard")?.open) loadReadiness(false);
+});
 async function applyBidPrices() {
   const btn = $("btnApplyBidPrices"), st = $("bidPricesStatus");
   const prices = {};
@@ -14968,7 +15135,9 @@ async function applyBidPrices() {
 function wireBidResultButtons() {
   markReusedParagraphs();
   try { renderBidPreview(); } catch (e) { /* preview is optional */ }
+  ensureBidUiState();   // resets this bid's typed values at once, then reads the server copy
   try { renderBidPricesCard(); } catch (e) { /* the prices card is optional */ }
+  try { renderBidTodosCard(); } catch (e) { /* the to-do list is optional */ }
   $("btnCopyCoveringLetter")?.addEventListener("click", copyCoveringLetterToClipboard);
   $("btnDownloadCoveringLetter")?.addEventListener("click", downloadCoveringLetterDoc);
   $("btnDownloadFullProposal")?.addEventListener("click", downloadFullProposalDoc);
