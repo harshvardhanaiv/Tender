@@ -195,6 +195,34 @@ def api_me():
     })
 
 
+_STATS_CACHE: dict = {"at": 0.0, "n": None}
+
+
+@auth_bp.get("/api/public/stats")
+@rate_limit(60, 60)
+def api_public_stats():
+    """Re-test 23 Nov: the home page showed a hard-coded tender count. This is the real number of tenders held, cached for
+    an hour so a busy home page cannot load the database. Nothing else is published; a database problem gives null."""
+    import time
+    now = time.time()
+    if _STATS_CACHE["n"] is None or now - _STATS_CACHE["at"] > 3600:
+        n = None
+        try:
+            conn = _get_db()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM tenders_master")
+                n = int(cur.fetchone()[0])
+                cur.close()
+            finally:
+                conn.close()
+        except Exception as ex:  # noqa: BLE001
+            print("[public stats] not read:", ex)
+        if n is not None:
+            _STATS_CACHE["n"], _STATS_CACHE["at"] = n, now
+    return jsonify({"ok": True, "tenders": _STATS_CACHE["n"]})
+
+
 @auth_bp.get("/api/config/public")
 def api_public_config():
     import os

@@ -50,6 +50,7 @@ def load_env():
 
 load_env()
 
+from tender_app.docx_styles import apply_heading_styles as _apply_heading_styles, STYLES_XML as _STYLES_XML, STYLES_RELS_XML as _STYLES_RELS_XML  # noqa: E402
 from tender_app.db import get_db_connection
 from tender_app.db_ext import run_saas_migrations
 from tender_app.firebase_auth import init_firebase
@@ -2800,6 +2801,9 @@ def _parse_deadline_date(deadline_str: str):
 
 def _send_smtp_email(to_addr: str, subject: str, html_body: str, error_container: list = None, list_unsubscribe_url: str = None):
     """Send an HTML email via SMTP. Reads credentials from environment."""
+    if os.environ.get("EMAIL_DRY_RUN", "").strip().lower() in ("1", "true", "yes"):
+        print(f"[Email dry-run] not sent. To: {to_addr} | Subject: {subject}")   # development: never send real mail
+        return True
     smtp_host = os.environ.get("SMTP_HOST", "")
     smtp_port = int(os.environ.get("SMTP_PORT", "587"))
     smtp_user = os.environ.get("SMTP_USER", "")
@@ -3439,6 +3443,21 @@ def _parse_json_robust(text):
 
     return {}
 
+def _clarification_gap_note(stage1, bid_response) -> str:
+    """Re-test 23 Nov (Chemonics): the buyer's published clarification corrected the VAT treatment and the bid never said so. A line
+    for the writer's note, listing each correction the draft does not cite, so the bidder checks it. Empty when all are cited."""
+    try:
+        from tender_app.bid_writer import uncited_clarification_changes
+        gaps = uncited_clarification_changes(stage1 if isinstance(stage1, dict) else {}, bid_response)
+    except Exception as ex:  # noqa: BLE001 - a note must never stop a draft
+        print("[clarification gap] not checked:", ex)
+        return ""
+    if not gaps:
+        return ""
+    return ("The buyer's published clarifications change the documents, and this draft does not cite them. Check each against the "
+            "relevant answer: " + " | ".join((g["answer"] or g["question"])[:160] for g in gaps[:4]))
+
+
 def verify_and_clean_bid_claims(bid_response: dict, ground_truth_str: str, checklist_items: list = None,
                                 tender_facts: str = "") -> dict:
     """
@@ -3560,25 +3579,36 @@ def verify_and_clean_bid_claims(bid_response: dict, ground_truth_str: str, check
             return text
         res = text
 
+        # Re-test 23 Nov (item 5): a figure inside a tag that is already there ("[NEEDS INPUT: year 1 income at 80%]") is part
+        # of that tag. Replacing it nested one placeholder inside another, so these passes only touch text outside tags.
+        from tender_app.bid_release5 import sub_outside_tags, is_statutory_figure, is_sensitivity_pct, flatten_nested_placeholders
+
         # P3a-1: Percentage claims
         def _replace_pct(m):
             pct_val = m.group(1)
             if not _pct_in_source(pct_val):
+                if is_sensitivity_pct(res_ref[0], m.start()):
+                    # A "what if costs rise 10%" figure is the bidder's assumption, not a claim about the company: confirm it.
+                    return m.group(0) + " [CONFIRM: assumption]"
                 return f"[PLACEHOLDER: insert verified percentage — '{pct_val}%' not found in company data]"
             return m.group(0)
+        res_ref = [res]
         if strict_numbers or is_thin_profile or not any(c.isdigit() for c in gt_lower):
-            res = _pct_re.sub(_replace_pct, res)
+            res = sub_outside_tags(_pct_re, _replace_pct, res, res_ref)
 
         # P3a-2: Monetary figures
         def _replace_money(m):
             raw = m.group(0)
             core_raw = raw.rstrip().rstrip(".,;:").rstrip()
+            if is_statutory_figure(core_raw):
+                return raw          # a public legal threshold (Modern Slavery Act £36m), not a claim about the bidder
             if not _money_in_source(core_raw):
                 # keep the space / full stop the pattern swallowed, or the next word runs into the tag ("]and")
                 return f"[PLACEHOLDER: insert verified figure — '{core_raw}' not found in company data]" + raw[len(core_raw):]
             return raw
         if strict_numbers or is_thin_profile:
-            res = _money_re.sub(_replace_money, res)
+            res_ref = [res]
+            res = sub_outside_tags(_money_re, _replace_money, res, res_ref)
 
         # P3a-2b: "ISO 27001 certified" when the company only holds a policy (fix plan D3)
         from tender_app.bid_writer import flag_unverified_certifications
@@ -3591,7 +3621,7 @@ def verify_and_clean_bid_claims(bid_response: dict, ground_truth_str: str, check
             if raw.lower().strip() not in gt_lower and raw.lower().strip() not in facts_lower:
                 return "[PLACEHOLDER: insert a real client example from Answer Bank or remove]"
             return raw
-        res = _named_org_re.sub(_replace_named_org, res)
+        res = sub_outside_tags(_named_org_re, _replace_named_org, res)
 
         # P3a-4: Pre-existing suspicious claim patterns
         for pattern, req_keywords, placeholder in suspicious_claims:
@@ -3608,6 +3638,7 @@ def verify_and_clean_bid_claims(bid_response: dict, ground_truth_str: str, check
         # P3a-6: "break-even by Year 3" with no model behind it (fix plan M8) -> a [CONFIRM] item.
         from tender_app.financial_model import flag_unsupported_outcomes
         res = flag_unsupported_outcomes(res)
+        res = flatten_nested_placeholders(res)
 
         return res
 
@@ -3628,6 +3659,11 @@ def verify_and_clean_bid_claims(bid_response: dict, ground_truth_str: str, check
 
     return bid_response
 
+
+
+# The stored-notice, index and CPV reads of one search, kept briefly so the many polls of one search do not repeat them (item 12).
+_SEARCH_DB_PART: dict = {}
+SEARCH_DB_PART_TTL_SEC = float(os.environ.get("SEARCH_DB_PART_TTL_SEC", "90"))
 
 
 def create_app() -> Flask:
@@ -4240,7 +4276,7 @@ def create_app() -> Flask:
             # Linked from emails and opened (or POSTed by mail clients' one-click unsubscribe)
             # without a session; the handlers do their own checks.
             "/api/alerts/preference", "/api/alerts/feedback", "/api/funding/alerts/unsubscribe",
-            "/api/health", "/api/config/public", "/api/stripe/webhook",
+            "/api/health", "/api/config/public", "/api/public/stats", "/api/stripe/webhook",
             "/api/billing/catalog", "/translations.js", "/api/auth/bypass",
             "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png",
             # pricing.html is public, so the stylesheet/scripts it loads must be too —
@@ -4983,35 +5019,66 @@ def create_app() -> Flask:
             else:
                 upsert_tenders(rows)
 
-        # Query database master store for stored tenders matching query q
-        db_rows = search_tenders_db(q, limit=500)
-        if db_rows:
-            db_rows = translate_row_list(db_rows)
-            db_rows = [r for r in db_rows if not _is_invalid_tender_row(r, q)]
-        # The scheduled index of the slow scraped portals (Public Contracts Scotland): its stored notices are in the first page of results,
-        # and the live search tops them up (docs/PORTAL_INDEX_DESIGN.md step 3). SEARCH_USE_INDEX=0 returns to live-only.
-        index_rows: list = []
-        index_fresh: dict = {}
-        if os.environ.get("SEARCH_USE_INDEX", "1") != "0":
-            try:
-                from tender_app import tender_index as _ti
-                _ic = get_db_connection()
+        # Re-test 23 Nov (item 12), measured on the live site: a poll of a search that had already finished still took 2.8 to 3.6 s, all of
+        # it these stored-notice, index and CPV reads, repeated on every poll of the same search. They do not change while a search runs,
+        # so they are read once per search and kept for SEARCH_DB_PART_TTL_SEC (the live portal rows and the saved fallback are not cached).
+        import time as _time_mod
+        _part_key = (q.lower(), scope, lang)
+        # a poll of a running search (it names its job) reuses the reads; a new search reads them afresh
+        _part = _SEARCH_DB_PART.get(_part_key) if (request.args.get("jobId") or "").strip() else None
+        _use_index = os.environ.get("SEARCH_USE_INDEX", "1") != "0"
+        if _part is not None and _time_mod.time() - _part["at"] < SEARCH_DB_PART_TTL_SEC:
+            db_rows, index_rows, index_fresh, _cpv_rows = list(_part["db"]), list(_part["index"]), dict(_part["fresh"]), list(_part["cpv"])
+        else:
+            # Query database master store for stored tenders matching query q
+            db_rows = search_tenders_db(q, limit=500)
+            if db_rows:
+                db_rows = translate_row_list(db_rows)
+                db_rows = [r for r in db_rows if not _is_invalid_tender_row(r, q)]
+            # The scheduled index of the slow scraped portals (Public Contracts Scotland): its stored notices are in the first page of results,
+            # and the live search tops them up (docs/PORTAL_INDEX_DESIGN.md step 3). SEARCH_USE_INDEX=0 returns to live-only.
+            index_rows = []
+            index_fresh = {}
+            if _use_index:
                 try:
-                    _icur = _ic.cursor()
-                    index_rows = _ti.search_notices(_icur, split_terms(q), None if scope == "all" else [s.strip() for s in scope.split(",")])
-                    index_fresh = _ti.freshness(_icur) if index_rows else {}
-                finally:
-                    _ic.close()
-                index_rows = [r for r in translate_row_list(index_rows) if not _is_invalid_tender_row(r, q)]
-            except Exception as exc:  # the index is a shortcut: a failure must never cost the search its rows
-                print(f"[Search] index read skipped: {exc}", flush=True)
-                index_rows, index_fresh = [], {}
+                    from tender_app import tender_index as _ti
+                    _ic = get_db_connection()
+                    try:
+                        _icur = _ic.cursor()
+                        index_rows = _ti.search_notices(_icur, split_terms(q), None if scope == "all" else [s.strip() for s in scope.split(",")])
+                        index_fresh = _ti.freshness(_icur) if index_rows else {}
+                    finally:
+                        _ic.close()
+                    index_rows = [r for r in translate_row_list(index_rows) if not _is_invalid_tender_row(r, q)]
+                except Exception as exc:  # the index is a shortcut: a failure must never cost the search its rows
+                    print(f"[Search] index read skipped: {exc}", flush=True)
+                    index_rows, index_fresh = [], {}
+            # Notices filed under the CPV codes of the trade searched ("plumbing" -> 4533...) are added even when the word is
+            # not in their title or description, and a one-letter typo of the trade ("lumbing") still finds them.
+            _cpv_rows = []
+            if _use_index:
+                try:
+                    from tender_app import tender_index as _ti
+                    _cc = get_db_connection()
+                    try:
+                        _cpv_rows = _ti.cpv_notices(_cc.cursor(), split_terms(q), None if scope == "all" else [s.strip() for s in scope.split(",")])
+                    finally:
+                        _cc.close()
+                    _cpv_rows = [r for r in translate_row_list(_cpv_rows) if not _is_invalid_tender_row(r, q)]
+                except Exception as exc:  # CPV matching is a top-up: a failure must never cost the search its rows
+                    print(f"[Search] CPV match skipped: {exc}", flush=True)
+                    _cpv_rows = []
+            _SEARCH_DB_PART[_part_key] = {"at": _time_mod.time(), "db": list(db_rows or []), "index": list(index_rows),
+                                          "fresh": dict(index_fresh), "cpv": list(_cpv_rows)}
+            if len(_SEARCH_DB_PART) > 60:
+                for _k in sorted(_SEARCH_DB_PART, key=lambda k: _SEARCH_DB_PART[k]["at"])[:20]:
+                    _SEARCH_DB_PART.pop(_k, None)
         # A portal that could not answer this search (Find a Tender answers HTTP 429 under load) is served from its saved notices instead of
         # leaving the table without it (Re-test 5 TN4). The saved copy is filled by the scheduled index.
         # The same copy fills the table while the live call is still running and has returned nothing yet, so the first poll shows rows at
         # once instead of waiting for a slow or throttled portal; the live rows replace it as they arrive.
         failed_ocds = _ocds_portals_needing_saved(meta, rows, scope)
-        if failed_ocds and os.environ.get("SEARCH_USE_INDEX", "1") != "0":
+        if failed_ocds and _use_index:
             try:
                 from tender_app import tender_index as _ti
                 _fc = get_db_connection()
@@ -5024,22 +5091,9 @@ def create_app() -> Flask:
                 meta["served_from_saved"] = {src: sum(1 for r in saved if r.get("source") == src) for src in failed_ocds}
             except Exception as exc:
                 print(f"[Search] saved fallback skipped: {exc}", flush=True)
-        # Notices filed under the CPV codes of the trade searched ("plumbing" -> 4533...) are added even when the word is
-        # not in their title or description, and a one-letter typo of the trade ("lumbing") still finds them.
-        if os.environ.get("SEARCH_USE_INDEX", "1") != "0":
-            try:
-                from tender_app import tender_index as _ti
-                _cc = get_db_connection()
-                try:
-                    _cpv_rows = _ti.cpv_notices(_cc.cursor(), split_terms(q), None if scope == "all" else [s.strip() for s in scope.split(",")])
-                finally:
-                    _cc.close()
-                _cpv_rows = [r for r in translate_row_list(_cpv_rows) if not _is_invalid_tender_row(r, q)]
-                if _cpv_rows:
-                    meta["matched_by_cpv"] = len(_cpv_rows)
-                    index_rows = list(index_rows) + _cpv_rows
-            except Exception as exc:  # CPV matching is a top-up: a failure must never cost the search its rows
-                print(f"[Search] CPV match skipped: {exc}", flush=True)
+        if _cpv_rows:
+            meta["matched_by_cpv"] = len(_cpv_rows)
+            index_rows = list(index_rows) + _cpv_rows
         db_rows = list(index_rows) + list(db_rows or [])
         _d = count_by_source(db_rows or [])
 
@@ -6039,6 +6093,7 @@ Include every question, in the form's order."""
                 '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
                 '  <Default Extension="xml" ContentType="application/xml"/>\n'
                 '  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>\n'
+                '  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>\n'
                 '</Types>',
             )
             z.writestr(
@@ -6048,7 +6103,9 @@ Include every question, in the form's order."""
                 '  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>\n'
                 '</Relationships>',
             )
-            z.writestr("word/document.xml", doc_xml)
+            z.writestr("word/document.xml", _apply_heading_styles(doc_xml))
+            z.writestr("word/_rels/document.xml.rels", _STYLES_RELS_XML)
+            z.writestr("word/styles.xml", _STYLES_XML)
 
         out.seek(0)
         return send_file(
@@ -7677,7 +7734,7 @@ Return ONLY this JSON structure:
     def api_bid_style_preview():
         """Release 8 (F2): what TenderFlow learns from the past bids chosen for this bid, and the answer plan.
         Free: reads the user's own library, no model call, no credits."""
-        from tender_app.bid_style import choose_past_bids, topic_match, sector_of
+        from tender_app.bid_style import choose_past_bids, topic_match, sector_of, past_bid_advice
         from tender_app.bid_style_learn import learn_style, style_brief, answer_plan
         from tender_app.bid_writer import extract_questions
         username = session.get("username") or ""
@@ -7716,6 +7773,7 @@ Return ONLY this JSON structure:
             "bids": [{"id": b["id"], "title": b["title"], "buyer": b["buyer"], "year": b["year"], "outcome": b["outcome"],
                       "match": topic_match(b, str(t.get("title") or "")), "sector": sector_of(b)} for b in bids],
             "profile": profile, "style_brief": style_brief(profile),
+            "advice": past_bid_advice(bids, {b["id"]: topic_match(b, str(t.get("title") or "")) for b in bids}),
             "plan": answer_plan(questions, profile, bids, ""),
         })
 
@@ -8941,7 +8999,8 @@ Return ONLY valid JSON with no markdown fences:
                     "buyer_name": authority_name,
                     "writer_note": "\n".join(x for x in (
                         _provisional_note(q_mode, stage1_result if isinstance(stage1_result, dict) else {}),
-                        _writer_note(bid_decision, passed_stages, stage1_result, tender_closed)) if x),
+                        _writer_note(bid_decision, passed_stages, stage1_result, tender_closed),
+                        _clarification_gap_note(stage1_result, stage3_result)) if x),
                     "provisional_structure": not q_mode,
                     "needs_financial_upload": _needs_financials,
                     "price_schedules": _price_schedules,
@@ -9320,6 +9379,7 @@ Return ONLY valid JSON with no markdown fences:
                 '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
                 '  <Default Extension="xml" ContentType="application/xml"/>\n'
                 '  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>\n'
+                '  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>\n'
                 '</Types>',
             )
             z.writestr(
@@ -9329,7 +9389,9 @@ Return ONLY valid JSON with no markdown fences:
                 '  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>\n'
                 '</Relationships>',
             )
-            z.writestr("word/document.xml", doc_xml)
+            z.writestr("word/document.xml", _apply_heading_styles(doc_xml))
+            z.writestr("word/_rels/document.xml.rels", _STYLES_RELS_XML)
+            z.writestr("word/styles.xml", _STYLES_XML)
 
         out.seek(0)
         return send_file(
@@ -9613,9 +9675,10 @@ Return ONLY valid JSON with no markdown fences:
         xml_content.append('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">')
         xml_content.append('  <w:body>')
 
-        def add_heading(text, size=28, color="1E3A8A", space_before=240, space_after=120):
+        def add_heading(text, size=28, color="1E3A8A", space_before=240, space_after=120, style=None):
+            from tender_app.docx_styles import heading_style_for
             xml_content.append('    <w:p>')
-            xml_content.append(f'      <w:pPr><w:spacing w:before="{space_before}" w:after="{space_after}"/></w:pPr>')
+            xml_content.append(f'      <w:pPr><w:pStyle w:val="{heading_style_for(size, style)}"/><w:spacing w:before="{space_before}" w:after="{space_after}"/></w:pPr>')
             xml_content.append('      <w:r>')
             xml_content.append('        <w:rPr>')
             xml_content.append('          <w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI"/>')
@@ -9633,7 +9696,7 @@ Return ONLY valid JSON with no markdown fences:
             from tender_app.docx_markup import parse_blocks, table_xml, HEADING_SIZE
             for _blk in parse_blocks(text):
                 if _blk[0] == "heading":
-                    add_heading(_blk[2].replace("**", ""), size=HEADING_SIZE.get(_blk[1], 22), space_before=200, space_after=80)
+                    add_heading(_blk[2].replace("**", ""), size=HEADING_SIZE.get(_blk[1], 22), space_before=200, space_after=80, style="Heading3")
                     continue
                 if _blk[0] == "table":
                     xml_content.extend(table_xml(_blk[1]))
@@ -9923,7 +9986,7 @@ Return ONLY valid JSON with no markdown fences:
                 response_text = q_item.get("response") or ""
 
                 xml_content.append('    <w:p>')
-                xml_content.append('      <w:pPr><w:spacing w:before="180" w:after="60"/></w:pPr>')
+                xml_content.append('      <w:pPr><w:pStyle w:val="Heading2"/><w:spacing w:before="180" w:after="60"/></w:pPr>')
                 xml_content.append('      <w:r>')
                 xml_content.append('        <w:rPr>')
                 xml_content.append('          <w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI"/>')
@@ -10746,6 +10809,10 @@ Return ONLY valid JSON with no markdown fences:
                 '  <Relationship Id="rIdHdr1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>',
                 '  <Relationship Id="rIdFtr1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>',
             ]
+            from tender_app.docx_styles import STYLES_XML, STYLES_CONTENT_TYPE, STYLES_REL
+            content_types_entries.append(STYLES_CONTENT_TYPE)     # Heading 1-3 styles (Re-test 23 Nov, item 11)
+            doc_rels_entries.append(STYLES_REL)
+            z.writestr("word/styles.xml", STYLES_XML)
             if _brand:
                 from tender_app.brand_kit import brand_header_footer as _brand_hf, header_rels as _brand_hrels
                 header_xml, footer_xml, _hdr_logo = _brand_hf(header_xml, footer_xml, _brand, anonymise=_anon)
@@ -10947,6 +11014,7 @@ Return ONLY valid JSON with no markdown fences:
                 '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
                 '  <Default Extension="xml" ContentType="application/xml"/>\n'
                 '  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>\n'
+                '  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>\n'
                 '</Types>',
             )
             z.writestr(
@@ -10956,7 +11024,9 @@ Return ONLY valid JSON with no markdown fences:
                 '  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>\n'
                 '</Relationships>',
             )
-            z.writestr("word/document.xml", doc_xml)
+            z.writestr("word/document.xml", _apply_heading_styles(doc_xml))
+            z.writestr("word/_rels/document.xml.rels", _STYLES_RELS_XML)
+            z.writestr("word/styles.xml", _STYLES_XML)
         out.seek(0)
         return send_file(
             out,
@@ -11113,6 +11183,7 @@ Return ONLY valid JSON with no markdown fences:
                 '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
                 '  <Default Extension="xml" ContentType="application/xml"/>\n'
                 '  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>\n'
+                '  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>\n'
                 '</Types>',
             )
             z.writestr(
@@ -11122,7 +11193,9 @@ Return ONLY valid JSON with no markdown fences:
                 '  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>\n'
                 '</Relationships>',
             )
-            z.writestr("word/document.xml", doc_xml)
+            z.writestr("word/document.xml", _apply_heading_styles(doc_xml))
+            z.writestr("word/_rels/document.xml.rels", _STYLES_RELS_XML)
+            z.writestr("word/styles.xml", _STYLES_XML)
         out.seek(0)
         return send_file(
             out,
@@ -11296,6 +11369,7 @@ Return ONLY valid JSON with no markdown fences:
                 '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
                 '  <Default Extension="xml" ContentType="application/xml"/>\n'
                 '  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>\n'
+                '  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>\n'
                 '</Types>',
             )
             z.writestr(
@@ -11305,7 +11379,9 @@ Return ONLY valid JSON with no markdown fences:
                 '  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>\n'
                 '</Relationships>',
             )
-            z.writestr("word/document.xml", doc_xml)
+            z.writestr("word/document.xml", _apply_heading_styles(doc_xml))
+            z.writestr("word/_rels/document.xml.rels", _STYLES_RELS_XML)
+            z.writestr("word/styles.xml", _STYLES_XML)
         out.seek(0)
         return send_file(
             out,

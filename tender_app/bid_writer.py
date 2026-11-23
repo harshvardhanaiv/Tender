@@ -138,6 +138,7 @@ def extract_questions(stage1: dict | None) -> list[dict]:
             "page_limit": _as_int(q.get("page_limit")),
             "mandatory": bool(q.get("mandatory", True)),
             "budget_hint": _as_int(q.get("budget_words")),
+            "guide": str(q.get("writer_guide") or "").strip(),
         })
 
     # Sub-parts that repeat their parent's weighting share it instead of each claiming all of it.
@@ -171,6 +172,20 @@ def extract_questions(stage1: dict | None) -> list[dict]:
 def questionnaire_mode(questions: list[dict]) -> bool:
     """Two or more buyer questions: the bid is the answers, not the house template's generic sections."""
     return len(questions) >= 2
+
+
+_BRIEF_LINE = re.compile(r"[^\n]*(?:Use these sub-headings, in this order|where the buyer's documents do not set their own|PRIVATE WRITER GUIDE"
+                         r"|STRUCTURE FOR THIS KIND OF CONTRACT)[^\n]*\n?", re.I)
+_BRIEF_SHARE = re.compile(r"\s*\((?:about )?\d{1,3}% of the words\)", re.I)
+
+
+def strip_house_brief(text: str) -> str:
+    """Re-test 23 Nov (B1): the house section brief must never appear in a bid. Remove any line that quotes it and any
+    '(about N% of the words)' share note the model copied from it."""
+    if not text:
+        return text
+    out = _BRIEF_SHARE.sub("", _BRIEF_LINE.sub("", str(text)))
+    return out.strip() if out != text else text
 
 
 def max_tokens_for(budget_words: int) -> int:
@@ -237,12 +252,15 @@ def question_prompt(q: dict, *, title: str, authority: str, company: str, tender
     limit_line = (f"HARD WORD LIMIT: {q['word_limit']} words (the buyer stops reading after it)."
                   if q.get("word_limit") else
                   f"LENGTH: at most {budget} words - this question's share of the bid by its weighting. "
-                  f"Aim for {int(budget * 0.85)}-{budget} words; do not go over. Tables count, and each "
+                  f"Aim for {int(budget * (0.95 if (q.get('weight_pct') or 0) >= 20 else 0.85))}-{budget} words; do not go over"
+                  f"{' (a heavily weighted question: use the full range, an answer well under it loses marks)' if (q.get('weight_pct') or 0) >= 20 else ''}. Tables count, and each "
                   f"[NEEDS INPUT]/[CONFIRM] tag counts as one word."
                   if q.get("weight_pct") is not None else
                   f"LENGTH: at most {budget} words. This question is not weighted: answer it completely, and "
                   f"keep factual answers short. Each [NEEDS INPUT]/[CONFIRM] tag counts as one word.")
     weight_line = f"Weighting: {q['weighting']}" if q.get("weighting") else "Weighting: not stated"
+    guide_block = (f"PRIVATE WRITER GUIDE (never quote it, name it or print it; the buyer's own wording and sub-points above always win over it): "
+                   f"{q['guide']}"+chr(10)) if q.get("guide") else ""
     return f"""Write the answer to ONE question in a tender response for {company}.
 
 TENDER: {title}
@@ -250,13 +268,13 @@ BUYER: {authority}
 {closed_note}
 QUESTION {q['number']}:
 {q['text']}
-{weight_line}
+{guide_block}{weight_line}
 {limit_line}
 
 OTHER QUESTIONS IN THIS QUESTIONNAIRE (answered separately; do not answer them here, cross-refer instead):
 {others or '- none'}
 
-PUBLISHED CLARIFICATION ANSWERS FROM THE BUYER:
+PUBLISHED CLARIFICATION ANSWERS FROM THE BUYER (where one corrects or changes the documents - a price, a date, a clerical error such as VAT, a scope change - follow the clarification and say so in the answer, citing it as the buyer's published clarification):
 {clarifications_block or 'None found in the documents provided.'}
 
 TENDER DISSECTION (from the buyer's documents):
@@ -416,6 +434,7 @@ def write_question(call: Callable[[str, str, int], str], q: dict, prompt: str,
             if trimmed and ends_cleanly(trimmed):
                 response, condensed_from = trimmed, before
                 placeholders = [p for p in placeholders if p in trimmed]
+    response = strip_house_brief(response)
     words = answer_words(response)
     return {
         "question_number": q["number"],
@@ -794,6 +813,15 @@ def qa_gate(bid_response: dict, closed: bool = False, rulings: list | None = Non
             add("word_budget", "P2", sec, f"{words} words against a budget of {budget} from its weighting; "
                                           f"trim it so the higher-weighted answers get the space.")
 
+    # Re-test 23 Nov (item 7): Chemonics' commercial section had 60 empty "[NEEDS INPUT: unit price]" rows and nothing said so.
+    _empty_prices = sum(len(re.findall(r"\[NEEDS INPUT:[^\]]*price[^\]]*\]", txt or "", re.I)) for _l, txt in bid_texts(r))
+    if _empty_prices >= 3:
+        add("prices_missing", "P1", "Price", f"Prices not entered: {_empty_prices} price lines are still empty. Type them in \"Your prices\" "
+                                            f"before Final export; TenderFlow never makes up a price.")
+    for label, txt in bid_texts(r):
+        if _BRIEF_LINE.search(txt or "") or _BRIEF_SHARE.search(txt or ""):
+            add("brief_leak", "P0", label, "The writer's own section brief is printed here (\"Use these sub-headings\" or \"(about N% of the words)\"). "
+                                           "Regenerate this part: the brief must never appear in a bid.")
     for label in failed_sections(r):
         if not label.startswith("Question "):
             add("coverage", "P0", label, "This section could not be generated. Regenerate it.")
@@ -886,6 +914,36 @@ def tender_sector(title: str, description: str, cpv: str = "", doc_text: str = "
 # ---------------------------------------------------------------------------
 
 
+_CHANGE_CUE = re.compile(r"\b(?:clerical error|typographical|typo|mistake|in error|correct(?:ed|ion)|amend(?:ed|ment)?|supersede[sd]?|replace[sd]?|"
+                         r"no longer|instead of|should (?:read|be)|now (?:read|be|reads)|is (?:hereby )?(?:changed|revised|extended)|revised)\b", re.I)
+_CHANGE_TOPIC = re.compile(r"\b(vat|price|pricing|rate|deadline|date|scope|insurance|lot|volume|quantit\w+|lease|rent|weighting|limit|budget|"
+                           r"specification|requirement)\b", re.I)
+
+
+def clarification_changes(stage1: dict | None) -> list:
+    """Published clarifications that correct or change the documents (Chemonics: the buyer's Q&A fixing a VAT clerical error). Each is
+    {question, answer, topic}. A clarification that only answers a question is not a change."""
+    out = []
+    items = (stage1 or {}).get("published_clarifications") or []
+    for c in items if isinstance(items, list) else []:
+        if not isinstance(c, dict):
+            continue
+        q, a = str(c.get("question") or "").strip(), str(c.get("answer") or "").strip()
+        if _CHANGE_CUE.search(a) or _CHANGE_CUE.search(q):
+            t = _CHANGE_TOPIC.search(q + " " + a)
+            out.append({"question": q, "answer": a, "topic": t.group(1).lower() if t else ""})
+    return out
+
+
+def uncited_clarification_changes(stage1: dict | None, bid_response: dict | None) -> list:
+    """The changes the draft never mentions: no paragraph names 'clarification' and the change's topic. Returns those changes."""
+    changes = clarification_changes(stage1)
+    if not changes:
+        return []
+    paras = [p for _l, t in bid_texts(bid_response or {}) for p in re.split(r"\n\s*\n", t or "") if re.search(r"clarification", p, re.I)]
+    return [c for c in changes if not any((not c["topic"]) or re.search(re.escape(c["topic"]), p, re.I) for p in paras)]
+
+
 def clarifications_block(stage1: dict | None, limit: int = 6000) -> str:
     items = (stage1 or {}).get("published_clarifications") or []
     lines = []
@@ -897,4 +955,10 @@ def clarifications_block(stage1: dict | None, limit: int = 6000) -> str:
         if q or a:
             src = str(c.get("source") or "").strip()
             lines.append(f"Q: {q}\nA: {a}" + (f"\n(Source: {src})" if src else ""))
-    return "\n\n".join(lines)[:limit]
+    changes = clarification_changes(stage1)
+    head = ""
+    if changes:
+        head = ("CHANGES TO THE DOCUMENTS (the buyer's published clarifications correct or change these; follow them, not the original text, "
+                "and say in your answer that you are following the clarification):\n"
+                + "\n".join(f"- {c['answer'] or c['question']}"[:400] for c in changes[:8]) + "\n\n")
+    return (head + "\n\n".join(lines))[:limit]

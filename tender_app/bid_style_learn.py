@@ -262,6 +262,7 @@ def answer_plan(questions, profile, bids, evidence_text=""):
             "question": (q.get("text") or "")[:140],
             "weight_pct": q.get("weight_pct"),
             "words": q.get("budget_words"),
+            "limit": q.get("word_limit"),      # the buyer's own limit, shown beside the target (Re-test 23 Nov, item 6)
             "subheadings": heads or "Approach · Delivery · Summary",
             "reusable": reuse,
         })

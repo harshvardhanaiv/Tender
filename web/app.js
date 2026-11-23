@@ -737,6 +737,8 @@ async function loadCurrentUser() {
     updatePlanBadge(); // updateCreditDisplay() returns before this while the balance is unknown
     state.role = data.role || "member";
     state.isAdmin = !!data.is_admin;
+    // Re-test 23 Nov (B2): the AIV dashboard is blank for pilot accounts, so only an admin sees its menu entry.
+    document.getElementById("btnAivDashboard")?.classList.toggle("hidden", !state.isAdmin);
     if (data.csrf_token) {
       _csrfToken = data.csrf_token;
       sessionStorage.setItem("tf_csrf", _csrfToken);
@@ -1708,18 +1710,35 @@ function cleanAlertTitle(raw, key) {
   return `A tracked tender${label ? " on " + label : ""}`;
 }
 
+// Re-test 23 Nov (item 13): one card listed every deadline change ("was 16/11, now 18/11 ... was 18/11, now 20/11 ...") and the
+// header said "50 alerts". Alerts of one kind on one tender are now one row: the latest message, with "changed N times" opening
+// the full history. Dismissing the row dismisses all of them.
+function groupDeepAlerts(list) {
+  const groups = new Map();
+  [...(list || [])].sort((x, y) => (Number(x.id) || 0) - (Number(y.id) || 0)).forEach(a => {
+    const k = `${deepAlertKey(a.tender_key)}|${a.kind || ""}`;
+    const g = groups.get(k) || { latest: a, all: [], ids: [] };
+    g.latest = a; g.all.push(a); if (a.id) g.ids.push(a.id);
+    groups.set(k, g);
+  });
+  return [...groups.values()].sort((x, y) => (Number(y.latest.id) || 0) - (Number(x.latest.id) || 0));
+}
 function deepAlertsBannerHtml() {
   if (!_deepAlerts.length) return "";
-  const rows = _deepAlerts.slice(0, 8).map(a => {
+  const groups = groupDeepAlerts(_deepAlerts);
+  const rows = groups.slice(0, 8).map(g => {
+    const a = g.latest;
     const rawTitle = state.pipeline[a.tender_key]?.title || Object.values(state.pipeline).find(p => deepAlertKey(p.tender_key) === deepAlertKey(a.tender_key))?.title || a.title || "";
     const title = cleanAlertTitle(rawTitle, a.tender_key);
     const keyAttr = Object.values(state.pipeline).find(p => deepAlertKey(p.tender_key) === deepAlertKey(a.tender_key))?.tender_key || a.tender_key;
+    const history = g.all.length > 1
+      ? `<details style="font-size:11.5px;margin-top:2px"><summary style="cursor:pointer">Changed ${g.all.length} times: see every change</summary>${g.all.map(x => `<div>${esc(x.message)}</div>`).join("")}</details>` : "";
     return `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:4px">
       <span>⚠</span><div style="flex:1"><button type="button" class="dash-profile-link" data-deep-alert-open="${esc(keyAttr)}" style="font-weight:700">${esc(title)}</button>
-      <div style="font-size:12px">${esc(a.message)}</div></div>
-      ${a.id ? `<button type="button" class="btn" style="font-size:11px;padding:1px 8px" data-deep-alert-dismiss="${a.id}">Dismiss</button>` : ""}</div>`;
+      <div style="font-size:12px">${esc(a.message)}</div>${history}</div>
+      ${g.ids.length ? `<button type="button" class="btn" style="font-size:11px;padding:1px 8px" data-deep-alert-dismiss="${g.ids.join(",")}">Dismiss</button>` : ""}</div>`;
   }).join("");
-  return `<details class="deep-alert-banner" id="deepAlertBanner"${_deepAlertsOpen ? " open" : ""}><summary style="font-weight:700;cursor:pointer">Must not miss: ${_deepAlerts.length} alert${_deepAlerts.length === 1 ? "" : "s"} on tenders you are tracking</summary><div style="margin-top:6px">${rows}</div></details>`;
+  return `<details class="deep-alert-banner" id="deepAlertBanner"${_deepAlertsOpen ? " open" : ""}><summary style="font-weight:700;cursor:pointer">Must not miss: ${groups.length} alert${groups.length === 1 ? "" : "s"} on tenders you are tracking</summary><div style="margin-top:6px">${rows}</div></details>`;
 }
 // Collapsed on every visit, like the lists under it; it stays as the reader leaves it until the page is reloaded.
 let _deepAlertsOpen = false;
@@ -1728,10 +1747,10 @@ document.addEventListener("toggle", (e) => { if (e.target && e.target.id === "de
 document.addEventListener("click", async (e) => {
   const dis = e.target.closest?.("[data-deep-alert-dismiss]");
   if (dis) {
-    const id = Number(dis.getAttribute("data-deep-alert-dismiss"));
+    const ids = String(dis.getAttribute("data-deep-alert-dismiss")).split(",").map(Number).filter(Boolean);
     try {
-      await fetch("/api/deep-alerts/dismiss", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
-      _deepAlerts = _deepAlerts.filter(a => a.id !== id);
+      for (const id of ids) await fetch("/api/deep-alerts/dismiss", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      _deepAlerts = _deepAlerts.filter(a => !ids.includes(a.id));
       renderPipelineBoard();
       if (typeof renderRows === "function") renderRows();
     } catch {/* ignore */ }
@@ -13001,6 +13020,7 @@ function renderLearnedHtml(d) {
   const bids = d.bids || [];
   const stat = (v, l) => `<div class="bid-stat"><strong>${esc(String(v))}</strong><span>${esc(l)}</span></div>`;
   return `<p class="bid-pv-muted">Learned from ${bids.length} bid${bids.length === 1 ? "" : "s"}: ${bids.map(b => esc(b.title)).join("; ")}.</p>
+    ${d.advice ? `<p class="bid-pv-warn" role="note" style="margin:6px 0 10px;padding:8px 10px;border-radius:6px;background:#fef3c7;color:#78350f;font-size:12.5px;max-width:70ch;">${esc(d.advice)}</p>` : ""}
     <div class="bid-stats">
       ${stat(p.words_per_sentence, "words per sentence on average")}${stat(p.figures_per_100, "figures per 100 words")}
       ${stat(p.tables + " of " + p.answers, "answers use a table")}${stat(p.subheadings, "sub-headings per answer")}
@@ -13018,7 +13038,7 @@ function renderPlanHtml(d) {
   const bySections = d.plan_source === "sections";
   const rows = plan.map(r => `<tr>
       <td class="n">${esc(r.number)}</td><td>${esc(r.question)}</td><td class="n">${r.weight_pct == null ? "" : esc(String(r.weight_pct)) + "%"}</td>
-      <td class="n">${esc(String(r.words || ""))}</td><td>${esc(r.subheadings)}</td>
+      <td class="n">${esc(String(r.words || ""))}${r.limit ? `<small style="display:block;color:var(--muted,#64748b)">limit ${esc(String(r.limit))}</small>` : ""}</td><td>${esc(r.subheadings)}</td>
       <td>${r.reusable ? `<span class="bid-badge won">1 paragraph</span><small>From ${esc(r.reusable.source_bid)}, ${esc(r.reusable.source_question)}. ${esc(String(r.reusable.facts_to_confirm))} fact(s) to confirm.</small>` : `<span class="bid-pv-muted">-</span>`}</td></tr>`).join("");
   return `<p class="bid-pv-muted">${bySections ? "The buyer's documents list no questions, so this is the plan for the sections TenderFlow will write. Upload the questionnaire in step 6 if there is one." : "The buyer's questions and order stay exactly as issued."} ${learned ? "Sub-headings follow the learned style." : "Standard sub-headings, because no past bid is in use."}</p>
     <div class="bid-tblwrap"><table class="bid-plan"><thead><tr><th>${bySections ? "#" : "Q"}</th><th>${bySections ? "Section" : "Question"}</th><th>Weight</th><th>Words</th><th>Sub-headings</th><th>Reusable text</th></tr></thead><tbody>${rows}</tbody></table></div>`;

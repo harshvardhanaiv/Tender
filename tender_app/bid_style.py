@@ -128,10 +128,23 @@ def past_bids_block(bids, max_chars=6000):
 _FACT = re.compile(r"(?:GBP|£)\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:k|m|million))?|\b\d{1,3}(?:\.\d+)?\s?%|\b(?:19|20)\d{2}\b|\b\d{1,3}(?:,\d{3})+\b")
 
 
-def mark_reused_facts(text, past_text, evidence_text, buyer_names=()):
-    """Mark facts that appear in the past bids but nowhere in this company's own evidence. Returns (text, count)."""
+_MONTH_BEFORE = re.compile(r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s*$|\d{1,2}[/.-]\d{1,2}[/.-]\s*$", re.I)
+
+
+def _is_date_year(text, start):
+    """True for a year that is part of a date in the bid ("31 January 2027", "15/12/2026"): a date is the buyer's timetable,
+    not a fact carried over from a past bid (Re-test 23 Nov: Oldham's own work-plan dates were boxed "from a past bid")."""
+    return bool(_MONTH_BEFORE.search(text[max(0, start - 14):start]))
+
+
+def mark_reused_facts(text, past_text, evidence_text, buyer_names=(), today=None):
+    """Mark facts that appear in the past bids but nowhere in this company's own evidence or the buyer's documents.
+    Years inside a date, and years later than this year (the contract period), are never marked: a past bid cannot be the
+    source of either. Returns (text, count)."""
     if not text or not past_text:
         return text or "", 0
+    import datetime
+    this_year = (today or datetime.date.today()).year
     past = set(m.group(0).strip() for m in _FACT.finditer(past_text))
     evidence = evidence_text or ""
     count = 0
@@ -139,6 +152,8 @@ def mark_reused_facts(text, past_text, evidence_text, buyer_names=()):
     def sub(m):
         nonlocal count
         v = m.group(0).strip()
+        if re.fullmatch(r"(?:19|20)\d{2}", v) and (int(v) > this_year or _is_date_year(text, m.start())):
+            return m.group(0)
         tail = text[m.end():m.end() + 12]
         if v in past and v not in evidence and not tail.lstrip().startswith(("- from a past bid", "]")):
             count += 1
@@ -151,6 +166,27 @@ def mark_reused_facts(text, past_text, evidence_text, buyer_names=()):
             out = out.replace(name, "[the buyer]")
             count += 1
     return out, count
+
+
+LOW_MATCH_PCT = 40
+
+
+def past_bid_advice(bids, matches):
+    """One plain sentence when the chosen past bids are a weak guide (Re-test 23 Nov: Oldham's only library bid was a 25% topic
+    match with the outcome pending). Empty when there is nothing to say. `matches` maps bid id -> topic match %."""
+    if not bids:
+        return ""
+    best = max([int(matches.get(b.get("id"), 0) or 0) for b in bids] or [0])
+    won = any(normalise_outcome(b.get("outcome")) == "won" for b in bids)
+    reasons = []
+    if best < LOW_MATCH_PCT:
+        reasons.append("the closest one matches this tender by only %d%%" % best)
+    if not won:
+        reasons.append("none is marked Won")
+    if not reasons:
+        return ""
+    return ("Your past bids are a weak guide here: " + " and ".join(reasons) + ". Consider writing in the standard style "
+            "(past bids off) so a poorly matched bid does not shape the answers.")
 
 
 def asks_for_anonymised_answers(buyer_text):

@@ -29,8 +29,7 @@
       <div id="flash" class="pricing-flash" style="display:none"></div>
 
       <div id="legacyBanner" class="pricing-switch-hint" style="display:none;border-color:#f59e0b;background:#fffbeb">
-        <strong>Old billing plan detected.</strong>
-        Plan switching won't prorate correctly until you cancel and subscribe again.
+        <span id="legacyText"></span>
         <div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
           <button id="btnCancelLegacy" class="btn btn--primary" type="button">Cancel subscription</button>
           <button id="btnDismissLegacy" class="btn" type="button">Dismiss</button>
@@ -105,6 +104,19 @@
 
       </div>
 
+      <!-- What a credit buys (Re-test 23 Nov, B3): visitors could not tell what a credit pays for -->
+      <div class="pricing-pack-section" style="margin-top: 3rem;">
+        <h2 class="pricing-section-title">What a credit buys</h2>
+        <p style="text-align:center;color:var(--muted);font-size:13.5px;margin:-0.5rem 0 1rem">Searching for tenders is free. Credits pay for the AI work and downloads below.</p>
+        <ul id="creditCosts" style="list-style:none;margin:0 auto;padding:0;max-width:520px;display:grid;gap:6px;font-size:14px">
+          <li style="display:flex;justify-content:space-between"><span>Fit score for a tender</span><strong>1 credit</strong></li>
+          <li style="display:flex;justify-content:space-between"><span>Tender summary</span><strong>3 credits</strong></li>
+          <li style="display:flex;justify-content:space-between"><span>Clarification analysis</span><strong>6 credits</strong></li>
+          <li style="display:flex;justify-content:space-between"><span>Bid draft (all the answers)</span><strong>10 credits</strong></li>
+          <li style="display:flex;justify-content:space-between"><span>Each bid download (Word or PDF)</span><strong>3 credits</strong></li>
+        </ul>
+      </div>
+
       <!-- Top-up Packs (Cohesive Section) -->
       <div class="pricing-pack-section" style="margin-top: 3.5rem;">
         <h2 class="pricing-section-title">Top-up packs</h2>
@@ -139,9 +151,11 @@
 
       <!-- Footer elements hidden/removed balanceAmt to prevent warnings, keep hidden for JS compatibility -->
       <div id="balanceBar" style="position: absolute; width: 0; height: 0; overflow: hidden; opacity: 0; pointer-events: none;">
-        <span id="balanceAmt">0</span>
-        <span id="planName">free</span>
+        <span id="balanceAmt"></span>
+        <span id="planName"></span>
       </div>
+
+      <p class="pricing-legal" id="footLegal" style="text-align:center;font-size:12px;color:var(--muted);max-width:720px;margin:1.2rem auto 0;line-height:1.55">TenderFlow is operated by AIVHUB LTD, company number 09941441, registered office 5 Canterbury Road, Reading, RG2 7TB. Contact <a href="mailto:hello@aivhub.com">hello@aivhub.com</a>. Your data is handled under UK GDPR. We use Firebase (Google), Stripe, an AI provider and our hosting provider, so data may be processed in the UK, EU or US. See the <a href="/legal/privacy.html">Privacy Policy</a> for what we collect and your rights.</p>
 
       <p class="pricing-footer">
         <a href="/legal/terms.html">Terms</a> · <a href="/legal/privacy.html">Privacy</a>

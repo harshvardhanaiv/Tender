@@ -121,7 +121,11 @@ def submission_doc_questions(stage1: dict | None, fallback: bool = False, title:
             continue  # the buyer's own price workbook, filled in the commercial file
         guide = _KIND_GUIDE.get(kind, _DEFAULT_GUIDE)
         budget = None
-        if kind == "technical" and tech_extra:
+        # Re-test 23 Nov (B1): the house sub-headings were part of question_text, so they were printed in the bid and replaced
+        # the buyer's own structure (Thetford's Method Statement fell to 8% of the words). The guide now travels in its own
+        # field, goes to the writer as private guidance and is dropped when the buyer's document sets its own sub-points.
+        own_points = bool(d.get("sub_headings") or d.get("must_include") or d.get("sub_points"))
+        if kind == "technical" and tech_extra and not own_points:
             guide = guide + " " + tech_extra
             budget = 2800
         elif ctype:
@@ -129,7 +133,8 @@ def submission_doc_questions(stage1: dict | None, fallback: bool = False, title:
         out.append({
             "budget_words": budget,
             "number": _number(d, i),
-            "question_text": f"{name}. {guide}",
+            "question_text": name,
+            "writer_guide": guide,
             "word_limit": None,
             "page_limit": None,
             "weighting": None,
@@ -290,6 +295,8 @@ def strip_drafting_guides(bid_response: dict | None) -> int:
                 if i >= 0:
                     j = i + len(g)
                     new = (new[:i].rstrip() + " " + new[j:].lstrip()).strip() if new[j:j + 1] else new[:i].rstrip()
+            from tender_app.bid_writer import strip_house_brief
+            new = strip_house_brief(new)       # the house sub-heading brief and its "(about N% of the words)" notes (B1)
             new = re.sub(r"\s+([.:])\s*$", r"\1", new)
             if new != v:
                 q[key] = new
@@ -404,12 +411,30 @@ def enforce_word_limits(bid_response: dict | None, stage1: dict | None = None) -
     blob = " ".join(str(v) for v in (fmt or {}).values()) if isinstance(fmt, dict) else ""
     m = _PER_ANSWER.search(blob)
     general = int(m.group(1) or m.group(2)) if m else None
+    # Re-test 23 Nov (Cornwall D1.4: 652 words against a limit of 560): an answer whose own record lost its limit (the draft's
+    # question numbering differed, or the limit sat only in the buyer's list) takes the limit of the buyer's question of the
+    # same number, then the limit written in its own question text.
+    from tender_app.bid_release4 import limit_from_text as _lim_text
+    buyer_limit = {}
+    for bq in ((stage1 or {}).get("itt_questions") or []) if isinstance(stage1, dict) else []:
+        if isinstance(bq, dict):
+            try:
+                lim = int(bq.get("word_limit") or 0) or _lim_text(str(bq.get("question_text") or bq.get("question") or ""))
+            except (TypeError, ValueError):
+                lim = 0
+            num = re.sub(r"[^a-z0-9.]", "", str(bq.get("number") or bq.get("question_number") or "").lower())
+            if lim and num:
+                buyer_limit[num] = int(lim)
     n = 0
     for q in bid_response.get("itt_question_responses") or []:
         if not isinstance(q, dict):
             continue
         try:
-            limit = int(q.get("word_limit") or 0) or (general or 0)
+            own = int(q.get("word_limit") or 0)
+            if not own:
+                num = re.sub(r"[^a-z0-9.]", "", str(q.get("question_number") or "").lower())
+                own = buyer_limit.get(num) or int(_lim_text(str(q.get("question_text") or "")) or 0)
+            limit = own or (general or 0)
         except (TypeError, ValueError):
             limit = general or 0
         text = str(q.get("response") or "")

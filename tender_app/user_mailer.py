@@ -214,6 +214,10 @@ def clean(data: Mapping[str, Any]) -> dict[str, Any]:
 # ── SMTP ──────────────────────────────────────────────────────────────────────
 
 def _default_factory(host: str, port: int, security: str) -> "smtplib.SMTP":
+    import os
+    if os.environ.get("EMAIL_DRY_RUN", "").strip().lower() in ("1", "true", "yes"):
+        # development: a user's own mail account is never contacted from a dev run
+        raise OSError("Email dry-run is on (development): nothing is sent from this run.")
     if security == "ssl":
         return smtplib.SMTP_SSL(host, port, timeout=SMTP_TIMEOUT, context=ssl.create_default_context())
     return smtplib.SMTP(host, port, timeout=SMTP_TIMEOUT)

@@ -39,13 +39,21 @@ S1 = {"required_submission_documents": [{"name": "Technical submission", "kind":
 EPSOM = ("Epsom and St Helier WC refurbishment", "Refurbishment of toilets and washrooms at St Helier Hospital",
          "Epsom and St Helier University Hospitals NHS Trust, Surrey. Registered in England and Wales.")
 qs = r7.submission_doc_questions(S1, True, *EPSOM)
-tech = qs[0]["question_text"]
+tech = qs[0]["writer_guide"]          # the house guide is private since 23 Nov (B1); question_text is the buyer's own wording
 for bad in ("Welsh language provision", "Accessibility (WCAG", "Ethics, safeguarding"):
     ok(bad not in tech, "Epsom's technical offer does not ask for %s" % bad)
 for want in ("Method of working", "Water safety", "HTM 04-01", "Health and safety", "Quality control"):
     ok(want in tech, "Epsom's technical offer has %s" % want)
 ok("Do NOT add sections for" in tech and "Welsh language" in tech.split("Do NOT add sections for")[1], "the writer is told not to add Welsh")
 ok(any(q["question_text"].startswith("Price and commercial basis") for q in qs), "a bid with no price document gets a price section")
+ok("sub-headings" not in qs[0]["question_text"] and "of the words" not in qs[0]["question_text"],
+   "B1: the printed question is the buyer's wording only: %s" % qs[0]["question_text"])
+_leak = {"itt_question_responses": [{"question_number": "1", "question_text": "B. Method Statement (maximum four A4 pages)",
+         "response": "Intro.\nUse these sub-headings, in this order, where the buyer's documents do not set their own: A (about 20% of the words); B.\nBody (about 30% of the words) here."}]}
+ok(r7.strip_drafting_guides(_leak) == 1 and "Use these sub-headings" not in _leak["itt_question_responses"][0]["response"]
+   and "of the words" not in _leak["itt_question_responses"][0]["response"], "B1: a copied house brief is stripped from the answer")
+ok(any(i["check"] == "brief_leak" for i in qa_gate({"itt_question_responses": [{"question_number": "1", "status": "ok",
+   "response": "Use these sub-headings, in this order: A (about 20% of the words). End."}]})["issues"]), "B1: the QA gate blocks a printed brief")
 ok("Welsh" not in r7._KIND_GUIDE["technical"] and "WCAG" not in r7._KIND_GUIDE["technical"], "the shared guide names no Welsh or WCAG")
 built = extract_questions(r7.with_submission_questions(S1, *EPSOM))
 ok(built[0]["budget_words"] >= 2500, "the works technical offer has room for its sections: %s words" % built[0]["budget_words"])

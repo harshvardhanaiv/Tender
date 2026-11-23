@@ -172,7 +172,7 @@
       </div>
     </section>
 
-    <div class="sources" id="sources"><div class="wrap"><span class="lab">LIVE SOURCES</span><span>Find a Tender</span><span>Contracts Finder</span><span>eTenders Ireland</span><span>TED (EU)</span></div></div>
+    <div class="sources" id="sources"><div class="wrap"><span class="lab">LIVE SOURCES</span><span>Find a Tender</span><span>Contracts Finder</span><span>Public Contracts Scotland</span><span>Sell2Wales</span><span>ProContract</span><span>eTenders Ireland</span><span>TED (EU)</span><span>+ 11 more</span></div></div>
 
     <section class="block" id="features"><div class="wrap">
       <h2 class="sec">Win more public sector work with less effort</h2>
@@ -207,16 +207,24 @@
 
     <div class="band">
       <div class="stats">
-        <div class="stat"><b>2,198</b><span>Tenders tracked</span></div>
-        <div class="stat"><b>82%</b><span>Average AI fit</span></div>
-        <div class="stat"><b>4</b><span>Live sources</span></div>
+        <div class="stat"><b id="statTenders">&mdash;</b><span>Tenders tracked</span></div>
+        <div class="stat"><b>10</b><span>UK and Irish portals</span></div>
+        <div class="stat"><b>18</b><span>Live sources</span></div>
       </div>
       <div class="band__cta"><h2>Ready to see your matches?</h2><a class="cta cta--gold" href="/login.html">Log in to TenderFlow</a></div>
     </div>
     <footer class="foot"><div class="wrap">
       <div><strong>TenderFlow</strong>Public tender search and bid workspace.</div>
       <nav aria-label="Footer"><a href="/legal/terms.html">Terms</a><a href="/legal/privacy.html">Privacy Policy</a><a href="mailto:hello@aivhub.com">Contact us</a></nav>
-    </div></footer>
+    </div>
+    <div class="wrap" id="footLegal" style="display:block;font-size:12.5px;color:#475569;line-height:1.55;padding-top:0">TenderFlow is operated by AIVHUB LTD, company number 09941441, registered office 5 Canterbury Road, Reading, RG2 7TB. Contact <a href="mailto:hello@aivhub.com">hello@aivhub.com</a>. Your data is handled under UK GDPR. We use Firebase (Google), Stripe, an AI provider and our hosting provider, so data may be processed in the UK, EU or US. See the <a href="/legal/privacy.html">Privacy Policy</a> for what we collect and your rights.</div></footer>
 
+    <script>
+      /* the tender count is read from the database, never typed in */
+      fetch("/api/public/stats").then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+        var el = document.getElementById("statTenders");
+        if (el && d && typeof d.tenders === "number" && d.tenders > 0) el.textContent = d.tenders.toLocaleString("en-GB");
+      }).catch(function () { /* the dash stays */ });
+    </script>
   </body>
 </html>

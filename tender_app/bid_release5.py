@@ -155,9 +155,9 @@ def flag_passed_dates_in_checklist(items: Any, today: _dt.date | None = None) ->
 
 _NUM_WORDS = {"five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
               "fifteen": 15, "twenty": 20, "twenty-five": 25, "thirty": 30}
-_YEARS = re.compile(r"((?:over|more than|nearly|almost|around|some)\s+)?(\d{1,2}|" + "|".join(_NUM_WORDS) + r")\+?\s+years(?:['’])?\s+"
+_YEARS = re.compile(r"((?:over|more than|nearly|almost|around|some)\s+)?(\d{1,2}|" + "|".join(_NUM_WORDS) + r")\+?[\s-]+years?(?:['’])?\s+"
                     r"(?:of\s+)?(?:[A-Za-z][\w&/-]*\s+){0,4}?"   # "12 years of hands-on plumbing and heating experience"
-                    r"(?:experience|(?:in|within)\s+(?:the\s+)?(?:trade|industry|sector|business|field|plumbing|drainage|construction)|"
+                    r"(?:experience|track record|history|(?:in|within)\s+(?:the\s+)?(?:trade|industry|sector|business|field|plumbing|drainage|construction)|"
                     r"(?:of\s+)?(?:service|trading))", re.I)
 
 
@@ -600,8 +600,11 @@ def drop_near_duplicates(bid_response: dict, threshold: float = 0.8, min_words: 
         keep, kept_sets = [], []
         for p in paras:
             toks = set(re.findall(r"[a-z0-9']+", p.lower()))
-            dup = len(toks) >= min_words and any(
+            # Re-test 23 Nov (item 8): a paragraph that repeats an earlier one of the SAME answer is dropped too (Matthewsgreen,
+            # Chemonics and Epsom each had one pair), not only a repeat in another part of the bid.
+            dup = len(toks) >= min_words and (any(
                 other != label and len(toks & ts) / len(toks | ts) >= threshold for other, ts in seen)
+                or any(len(toks & ts) / len(toks | ts) >= threshold for ts in kept_sets))
             if dup:
                 removed += 1
             else:
@@ -858,3 +861,63 @@ def export_block_payload(bid_response: dict, blockers: list) -> dict:
             items.append({"section": label, "kind": kind, "tag": tag[:240]})
     return {"error": "This bid is not ready for a final export.", "code": "FINAL_EXPORT_BLOCKED",
             "blockers": (blockers or [])[:25], "counts": placeholder_counts(bid_response or {}), "items": items[:300]}
+
+
+# ---- Re-test 23 Nov (item 5): the figure guard must not nest placeholders or flag public facts ---------------------------------------
+_TAG_SPAN = re.compile(r"\[[^\[\]]*\]")
+
+
+def sub_outside_tags(regex, fn, text, ref=None):
+    """regex.sub(fn, text) applied only to the stretches of text outside [bracketed tags], so a figure that is already inside a
+    [NEEDS INPUT: ...] or [CONFIRM: ...] tag is never wrapped in a second tag. `ref` is a one-item list that holds the stretch
+    being worked on, so fn can look at the words before a match."""
+    out, pos = [], 0
+    for m in _TAG_SPAN.finditer(text):
+        seg = text[pos:m.start()]
+        if ref is not None:
+            ref[0] = seg
+        out.append(regex.sub(fn, seg))
+        out.append(m.group(0))
+        pos = m.end()
+    seg = text[pos:]
+    if ref is not None:
+        ref[0] = seg
+    out.append(regex.sub(fn, seg))
+    return "".join(out)
+
+
+# Public legal thresholds a bid may quote without them being a claim about the bidder.
+_STATUTORY = ("£36 million", "£36m", "£36,000,000", "£36 m")
+
+
+def is_statutory_figure(figure: str) -> bool:
+    return re.sub(r"\s+", " ", str(figure or "").strip().lower()) in {s.lower() for s in _STATUTORY}
+
+
+_SENSITIVITY = re.compile(r"\b(?:up|down|rise|rises|rising|fall|falls|falling|drop|drops|increase[sd]?|decrease[sd]?|reduction|reduce[sd]?|"
+                          r"sensitivity|scenario|assum\w+|worst[- ]case|best[- ]case|by)\b[^.;%\d\n]{0,25}$", re.I)
+
+
+def is_sensitivity_pct(text: str, start: int) -> bool:
+    """True when the percentage sits in a what-if phrase ("costs up 10%", "income down 20%", "assume 5%")."""
+    return bool(_SENSITIVITY.search(str(text or "")[max(0, start - 40):start]))
+
+
+_NESTED = re.compile(r"\[([^\[\]]*?)\[(?:PLACEHOLDER|NEEDS INPUT|CONFIRM)[^\[\]]*?\]([^\[\]]*)\]")
+
+
+def flatten_nested_placeholders(text: str) -> str:
+    """One tag inside another becomes one tag: the inner tag is replaced by the figure it names (or its words), so the user sees
+    "[NEEDS INPUT: year 1 income at 80%]" not "[NEEDS INPUT: ... [PLACEHOLDER: ...]]". Repeats for deeper nesting."""
+    t = str(text or "")
+    for _ in range(4):
+        def one(m):
+            inner = m.group(0)[len(m.group(1)) + 1:len(m.group(0)) - len(m.group(2)) - 1]
+            q = re.search(r"'([^']{1,40})'", inner)
+            core = q.group(1) if q else re.sub(r"^\[(?:PLACEHOLDER|NEEDS INPUT|CONFIRM)\s*:?\s*|\]$", "", inner).strip()
+            return "[" + m.group(1) + core + m.group(2) + "]"
+        new = _NESTED.sub(one, t)
+        if new == t:
+            break
+        t = new
+    return t

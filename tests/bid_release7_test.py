@@ -32,7 +32,7 @@ qs = r7.submission_doc_questions(CHEM)
 names = [q["question_text"].split(".")[0] for q in qs]
 ok(len(qs) == 4, "the priced Volume 3 workbook is not written as prose: %s" % names)
 ok(qs[0]["number"] == "5.1", "the buyer's own numbering is kept: %s" % qs[0]["number"])
-ok("no price" in qs[0]["question_text"].lower(), "the technical offer carries no prices")
+ok("no price" in qs[0]["writer_guide"].lower(), "the technical offer carries no prices")
 ok(any("DDQ" in q["question_text"] for q in qs) and any("registration" in q["question_text"].lower() for q in qs), "DDQ and registration sections exist")
 ok(r7.use_submission_structure([], CHEM, LONG), "uploaded ITT with no questions uses the submission structure")
 ok(not r7.use_submission_structure([], CHEM, ""), "no buyer text: no submission structure")
@@ -127,7 +127,7 @@ ok("the buyer's portal" in r5.provisional_structure_note(False, {}), "no referen
 _qq = r7.submission_doc_questions({"required_submission_documents": [{"name": "5.1 Technical offer", "kind": "technical"}]})
 _bd = {"itt_question_responses": [{"question_number": "5.1", "question_text": _qq[0]["question_text"],
                                    "response": "Intro. " + r7._KIND_GUIDE["technical"] + " Our offer."}]}
-ok(r7.strip_drafting_guides(_bd) == 2 and _bd["itt_question_responses"][0]["question_text"] == "5.1 Technical offer."
+ok(r7.strip_drafting_guides(_bd) == 1 and _bd["itt_question_responses"][0]["question_text"] == "5.1 Technical offer"
    and "Write the technical offer" not in _bd["itt_question_responses"][0]["response"], "the drafting guide is stripped: %s" % _bd)
 _bd2 = {"itt_question_responses": [{"question_text": "Q1 text", "response": "Fine."}]}
 ok(r7.strip_drafting_guides(_bd2) == 0 and r7.strip_drafting_guides(None) == 0, "a clean bid is untouched")

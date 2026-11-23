@@ -76,6 +76,11 @@ def send_email(
     plain_body: Optional[str] = None,
     list_unsubscribe_url: Optional[str] = None,
 ) -> bool:
+    # A development run must never send real mail (a .py save restarts the worker and its startup jobs). EMAIL_DRY_RUN=1 logs the
+    # message and reports it as sent, so the flow can still be tested; production leaves it unset.
+    if os.environ.get("EMAIL_DRY_RUN", "").strip().lower() in ("1", "true", "yes"):
+        print(f"[Email dry-run] not sent. To: {to} | Subject: {subject}")
+        return True
     email_from = EMAIL_FROM or SMTP_USER
     smtp_pass = SMTP_PASSWORD or os.environ.get("SMTP_PASS", "")
     smtp_host = SMTP_HOST or os.environ.get("SMTP_HOST", "")

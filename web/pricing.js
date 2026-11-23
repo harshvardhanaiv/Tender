@@ -442,6 +442,7 @@
         updateBalanceUI(me.balance ?? 0, userPlan);
         document.getElementById("planName").textContent = planLabel(userPlan);
         if (subscriptionLegacy) {
+          document.getElementById("legacyText").innerHTML = "<strong>Old billing plan detected.</strong> Plan switching won't prorate correctly until you cancel and subscribe again.";
           document.getElementById("legacyBanner").style.display = "block";
         } else if (subStatus === "active" || hasStripeCustomer) {
           document.getElementById("btnPortal").style.display = "inline-flex";
@@ -459,6 +460,7 @@
     });
 
     const catPromise = api("/api/billing/catalog").then(cat => {
+      if (!cat) document.querySelectorAll(".plan-card__price-loading").forEach(el => { el.textContent = "Price shown at checkout"; });
       if (cat) {
         try { sessionStorage.setItem("tf_catalog_cache", JSON.stringify(cat)); } catch (e) {}
         catalogData = cat;

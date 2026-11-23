@@ -250,6 +250,29 @@ xml = zipfile.ZipFile(io.BytesIO(r.data)).read("word/document.xml").decode("utf-
 ok("DRAFT - NOT READY TO SUBMIT" in xml, "failed QA -> draft banner")
 ok("Section 2: Responses to the Buyer&apos;s Questions" in xml or "Section 2: Responses to the Buyer's Questions" in xml, "questions straight after the letter")
 ok("Section 3: Declarations to Confirm" in xml and "Executive Summary" not in xml, "only the sections the bid has")
+# Re-test 23 Nov (item 11): real heading styles, so Word gets a navigation pane and a screen reader can jump between questions.
+_zf = zipfile.ZipFile(io.BytesIO(r.data))
+ok("word/styles.xml" in _zf.namelist() and 'w:styleId="Heading1"' in _zf.read("word/styles.xml").decode("utf-8"), "the file carries Heading styles")
+ok("/word/styles.xml" in _zf.read("[Content_Types].xml").decode("utf-8") and "styles.xml" in _zf.read("word/_rels/document.xml.rels").decode("utf-8"),
+   "the styles part is registered and related")
+ok(xml.count('w:pStyle w:val="Heading1"') >= 2 and xml.count('w:pStyle w:val="Heading2"') >= 3,
+   "section titles are Heading 1 and each question is Heading 2: %d / %d" % (xml.count('w:pStyle w:val="Heading1"'), xml.count('w:pStyle w:val="Heading2"')))
+# the five smaller exports get styled titles too (Re-test 23 Nov, follow-up to item 11)
+_small = [("/api/download-covering-letter", {"title": "T", "authority": "A", "covering_letter": "Dear Sir,"+chr(10)*2+"We are pleased to bid."+chr(10)*2+"Yours faithfully", "checklist": []}),
+          ("/api/download-checklist", {"title": "T", "authority": "A", "checklist": {"checklist_items": [{"item_name": "Form A", "status": "pending"}]}}),
+          ("/api/download-clarifications", {"title": "T", "authority": "A", "clarifications": {"questions": [{"question": "What is the budget?", "category": "Price"}], "strategic_notes": "n"}}),
+          ("/api/download-dissection", {"title": "T", "authority": "A", "dissection": {"summary": "s"}}),
+          ("/api/download-questionnaire", {"title": "T", "authority": "A", "questionnaire": {"questions": []}, "bid_response": {"itt_question_responses": []}})]
+for _url, _body in _small:
+    _rr = client.post(_url, headers={"X-CSRF-Token": "t"}, json=_body)
+    if _rr.status_code != 200:
+        print("  (%s answered %d; skipped)" % (_url, _rr.status_code))
+        continue
+    _z = zipfile.ZipFile(io.BytesIO(_rr.data))
+    _dx = _z.read("word/document.xml").decode("utf-8")
+    ok("word/styles.xml" in _z.namelist() and "/word/styles.xml" in _z.read("[Content_Types].xml").decode("utf-8") and "styles.xml" in _z.read("word/_rels/document.xml.rels").decode("utf-8"),
+       _url + " carries and registers the styles part")
+    ok('w:pStyle w:val="Heading' in _dx, _url + " has at least one styled title")
 r = client.post("/api/download-proposal", headers={"X-CSRF-Token": "t"}, json={"title": "Matthewsgreen", "authority": "Wokingham", "company_name": "AIVHUB LTD",
                                                  "bid_response": br, "checklist": [], "clarifications": []})
 xml = zipfile.ZipFile(io.BytesIO(r.data)).read("word/document.xml").decode("utf-8")
