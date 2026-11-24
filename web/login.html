@@ -306,7 +306,7 @@
               <div class="forgot" id="forgotWrap"><a id="forgotLink" href="/login.html#forgot" role="button">Forgot password?</a></div>
               <button type="submit" id="btnSubmit" class="btn btn-primary"><span id="btnText">Sign in</span></button>
             </form>
-            <div class="toggle-mode">Don't have an account? <a id="toggleLink" href="#" role="button">Sign Up</a></div>
+            <div class="toggle-mode">Don't have an account? <a id="toggleLink" href="/login.html#signup" role="button">Sign Up</a></div>
             <div class="legal">By continuing you agree to our <a href="/legal/terms.html">Terms</a> and <a href="/legal/privacy.html">Privacy Policy</a>.</div>
             <div class="lang-row"><a href="#" class="lang-opt" data-lang="en">EN</a><span class="lang-sep">|</span><a href="#" class="lang-opt" data-lang="fr">FR</a><span class="lang-sep">|</span><a href="#" class="lang-opt" data-lang="nl">NL</a></div>
           </div>
@@ -455,6 +455,7 @@
         if (toggleLink) {
           toggleLink.parentNode.firstChild.textContent = isSignUp ? t("login_have_account") : t("login_no_account");
           toggleLink.textContent = isSignUp ? t("login_signin") : t("login_signup");
+          toggleLink.setAttribute("href", isSignUp ? "/login.html" : "/login.html#signup");
         }
 
         // Placeholders

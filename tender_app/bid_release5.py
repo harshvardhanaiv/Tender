@@ -156,8 +156,12 @@ def flag_passed_dates_in_checklist(items: Any, today: _dt.date | None = None) ->
 _NUM_WORDS = {"five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
               "fifteen": 15, "twenty": 20, "twenty-five": 25, "thirty": 30}
 _YEARS = re.compile(r"((?:over|more than|nearly|almost|around|some)\s+)?(\d{1,2}|" + "|".join(_NUM_WORDS) + r")\+?[\s-]+years?(?:['’])?\s+"
-                    r"(?:of\s+)?(?:[A-Za-z][\w&/-]*\s+){0,4}?"   # "12 years of hands-on plumbing and heating experience"
-                    r"(?:experience|track record|history|(?:in|within)\s+(?:the\s+)?(?:trade|industry|sector|business|field|plumbing|drainage|construction)|"
+                    r"(?:of\s+)?(?:[A-Za-z][\w&/-]*\s+){0,6}?"   # "12 years of hands-on plumbing and heating experience"
+                    r"(?:experience|expertise|track record|history|"
+                    r"(?:in|within)\s+(?:the\s+)?(?:trade|industry|sector|business|field|plumbing|drainage|construction|heating|maintenance|"
+                    r"water|facilities|public sector|healthcare|education)|"
+                    # re-test 23 Nov pm: "12 years working in", "12 years delivering", "12 years serving" went untagged
+                    r"(?:working|operating|trading|delivering|serving|supporting|providing|supplying)\b|"
                     r"(?:of\s+)?(?:service|trading))", re.I)
 
 
@@ -602,9 +606,14 @@ def drop_near_duplicates(bid_response: dict, threshold: float = 0.8, min_words: 
             toks = set(re.findall(r"[a-z0-9']+", p.lower()))
             # Re-test 23 Nov (item 8): a paragraph that repeats an earlier one of the SAME answer is dropped too (Matthewsgreen,
             # Chemonics and Epsom each had one pair), not only a repeat in another part of the bid.
-            dup = len(toks) >= min_words and (any(
-                other != label and len(toks & ts) / len(toks | ts) >= threshold for other, ts in seen)
-                or any(len(toks & ts) / len(toks | ts) >= threshold for ts in kept_sets))
+            # Re-test 23 Nov pm (item 4): one pair each in Thetford, Chemonics, NHS Wales and Epsom survived at 80%; a reworded
+            # repeat shares most of the shorter paragraph's words, so a paragraph whose words are 90% inside another also goes.
+            def _near(ts):
+                union = len(toks | ts)
+                small = min(len(toks), len(ts))
+                return len(toks & ts) / union >= threshold or (small >= 20 and len(toks & ts) / small >= 0.9)
+            dup = len(toks) >= min_words and (any(other != label and _near(ts) for other, ts in seen)
+                                              or any(_near(ts) for ts in kept_sets))
             if dup:
                 removed += 1
             else:

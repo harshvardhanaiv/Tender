@@ -184,7 +184,7 @@ def find_reusable(question_text, bids, evidence_text="", min_overlap=2):
     want = _words(question_text)
     best = None
     for b in bids or []:
-        if normalise_outcome(b.get("outcome")) == "lost":
+        if normalise_outcome(b.get("outcome")) == "lost" or b.get("style_only"):
             continue
         for a in split_answers(b.get("text", "")):
             if a["label"] == "Whole document":

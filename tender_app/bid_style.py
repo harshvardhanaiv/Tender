@@ -113,6 +113,11 @@ def past_bids_block(bids, max_chars=6000):
         if outcome == "lost":
             parts.append(head + "\n(Lost bid: use only its layout, headings and tone. Reuse no wording from it.)")
             continue
+        if b.get("style_only"):
+            # Re-test 23 Nov pm (item 3): under 40% topic match, learn the style only. No figures, sections or wording.
+            parts.append(head + "\n(Weak match with this tender: use only its layout, headings and tone. Reuse no wording, figure, "
+                         "scenario or section from it. Add nothing the buyer's documents do not ask for.)")
+            continue
         text = b.get("text") or ""
         if len(text) > per_bid:
             text = text[:per_bid] + "\n[...truncated]"

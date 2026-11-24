@@ -459,8 +459,13 @@
       }
     });
 
-    const catPromise = api("/api/billing/catalog").then(cat => {
-      if (!cat) document.querySelectorAll(".plan-card__price-loading").forEach(el => { el.textContent = "Price shown at checkout"; });
+    // Re-test 23 Nov pm: logged out, the prices stayed "...". A failed or empty catalog (network error, 5xx, no plans) now
+    // falls back to the same text, and the catalog is read without sending the visitor to sign in.
+    const _priceFallback = () => document.querySelectorAll(".plan-card__price-loading").forEach(el => { el.textContent = "Price shown at checkout"; });
+    const _priceTimer = setTimeout(_priceFallback, 8000);
+    const catPromise = api("/api/billing/catalog", { anonymousOk: true }).catch(() => null).then(cat => {
+      clearTimeout(_priceTimer);
+      if (!cat || !(cat.subscriptions || []).length) _priceFallback();
       if (cat) {
         try { sessionStorage.setItem("tf_catalog_cache", JSON.stringify(cat)); } catch (e) {}
         catalogData = cat;

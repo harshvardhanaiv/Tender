@@ -111,7 +111,7 @@ def readiness(bid_response, stage1, qa, closed=False, gate=False, signoffs=None,
         if total_w >= 400 and total_m > 0:
             for lbl, wds in qwords.items():
                 m = weights.get(lbl)
-                if m and m >= 15 and (wds / total_w) * 100 < 0.5 * (m / total_m) * 100:
+                if m and m >= 15 and (wds / total_w) * 100 < 0.75 * (m / total_m) * 100:
                     add("P1", "It has only %d%% of the words for %g%% of the marks. Expand it." % (
                         round(wds * 100 / total_w), m), lbl.capitalize(), "word_share", m)
     except Exception:  # noqa: BLE001

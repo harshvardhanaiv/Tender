@@ -814,7 +814,9 @@ def qa_gate(bid_response: dict, closed: bool = False, rulings: list | None = Non
                                           f"trim it so the higher-weighted answers get the space.")
 
     # Re-test 23 Nov (item 7): Chemonics' commercial section had 60 empty "[NEEDS INPUT: unit price]" rows and nothing said so.
-    _empty_prices = sum(len(re.findall(r"\[NEEDS INPUT:[^\]]*price[^\]]*\]", txt or "", re.I)) for _l, txt in bid_texts(r))
+    # Re-test 23 Nov pm (item 5): Chemonics showed 30 gaps and no warning because its tags said "rate", "fee" or "cost", not "price".
+    _empty_prices = sum(len(re.findall(r"\[NEEDS INPUT:[^\]]*(?:price|pricing|rate|fee|cost|charge|£|quote)[^\]]*\]", txt or "", re.I))
+                        for _l, txt in bid_texts(r))
     if _empty_prices >= 3:
         add("prices_missing", "P1", "Price", f"Prices not entered: {_empty_prices} price lines are still empty. Type them in \"Your prices\" "
                                             f"before Final export; TenderFlow never makes up a price.")

@@ -501,8 +501,50 @@ def recover_questions(buyer_text: str, minimum: int = 3) -> list[dict]:
         fam.setdefault(num[0], []).append(num)
     best = max(fam.values(), key=len) if fam else []
     if len(best) < minimum:
-        return []
+        return _recover_numbered_questions(buyer_text, minimum)
     return [{"number": n, "question_text": found[n], "weighting": None} for n in best]
+
+
+# Re-test 23 Nov pm (item 1): Matthewsgreen's Document 4 numbers its questions "Q1 (10%) ...", "Q3 (10%)" then "Q3.I ...", "Q3.II ...",
+# which the D1.1-style reader above never matched, so the bid fell back to "Technical offer" and "Price and commercial basis".
+_QN_LINE = re.compile(r"^\s*(?:Question\s+)?(Q\d{1,2}(?:\.(?:\d{1,2}|[IVX]{1,4}))*)\b\s*"
+                      r"(?:\(\s*(\d{1,3}(?:\.\d+)?)\s*%[^)]*\))?\s*[.:)–—-]?\s*(.*)$")
+
+
+def _recover_numbered_questions(buyer_text: str, minimum: int = 3) -> list[dict]:
+    rows: list[dict] = []
+    seen: set[str] = set()
+    lines = str(buyer_text or "").splitlines()
+    for i, line in enumerate(lines):
+        m = _QN_LINE.match(line)
+        if not m:
+            continue
+        num, pct, text = m.group(1), m.group(2), m.group(3).strip()
+        # A question that wraps onto the next line keeps its second half (it ends on a comma or no full stop).
+        if text and text[-1] in ",;" or (text and text[-1].isalnum() and len(text) > 40):
+            nxt = lines[i + 1].strip() if i + 1 < len(lines) else ""
+            if nxt and not _QN_LINE.match(nxt) and len(nxt) < 300:
+                text = (text + " " + nxt).strip()
+        if num in seen:
+            continue
+        seen.add(num)
+        rows.append({"number": num, "question_text": text, "weighting": (pct + "%") if pct is not None else None})
+    if len(rows) < minimum:
+        return []
+    nums = [r["number"] for r in rows]
+    out: list[dict] = []
+    for r in rows:
+        has_children = any(n.startswith(r["number"] + ".") for n in nums)
+        if has_children:
+            continue                          # a parent heading such as "Q3 (10%)" or "Q4 (40%) Financial sustainability."
+        if len(r["question_text"]) < 8:
+            continue
+        if r["weighting"] is None and "." in r["number"]:
+            parent = next((p for p in rows if p["number"] == r["number"].rsplit(".", 1)[0]), None)
+            if parent:
+                r["weighting"] = parent["weighting"]
+        out.append({"number": r["number"], "question_text": r["question_text"], "weighting": r["weighting"]})
+    return out if len(out) >= minimum else []
 
 
 def drop_other_lot_documents(stage1: dict | None, title_text: str) -> int:

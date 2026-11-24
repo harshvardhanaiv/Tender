@@ -3505,7 +3505,8 @@ def verify_and_clean_bid_claims(bid_response: dict, ground_truth_str: str, check
 
     # ── Pattern 2: Monetary figures (£/€/$) with unit ─────────────────────────
     _money_re = re.compile(
-        r'[£€\$]\s*\d[\d,\.]*\s*(?:m(?:illion)?|k|bn|billion|thousand)?'
+        # The unit must end at a word boundary: "£300,000 multi-year" lost its "m" to the tag (Herts drainage, re-test 23 Nov pm).
+        r'[£€\$]\s*\d[\d,\.]*(?:\s*(?:m(?:illion)?|k|bn|billion|thousand)(?![A-Za-z]))?'
         r'|\b\d[\d,\.]*\s*(?:million|billion|thousand)\s*(?:pound|euro|dollar)s?\b',
         re.IGNORECASE
     )
@@ -7995,7 +7996,15 @@ Return ONLY this JSON structure:
                          "text": r[4] or "", "outcome": r[5] or "unknown"} for r in cursor.fetchall()]
                 cursor.close()
                 conn.close()
-                winning_bids = choose_past_bids(_pb_mode, _lib, wb_ids, str((body.get("tender") or {}).get("title") or body.get("title") or ""), "")
+                _pb_title = str((body.get("tender") or {}).get("title") or body.get("title") or "")
+                winning_bids = choose_past_bids(_pb_mode, _lib, wb_ids, _pb_title, "")
+                # Re-test 23 Nov pm (item 3): a past bid that matches this tender by under 40% gives layout and tone only; its
+                # figures and sections (a lease bid's "income down 20%") must not reach an unrelated bid (Oldham).
+                from tender_app.bid_style import topic_match as _tm, LOW_MATCH_PCT as _low
+                for _b in winning_bids:
+                    _m = _tm(_b, _pb_title)
+                    if _m is not None and _m < _low:
+                        _b["style_only"] = True
             except Exception as e:
                 print("Failed to load winning bids for proposal:", e)
 
