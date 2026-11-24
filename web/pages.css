@@ -439,6 +439,9 @@ body.tf-shell #supplierIntelligenceModal.sd-open #supplierDetailPanel { transfor
 #supplierIntelligenceModal.sd-open .sd-close { display: block; }
 
 /* ══ App shell: the brand and the account card live in the side panel; the top bar carries the breadcrumb and the actions ══ */
+/* The brand starts in the masthead and pages.js moves it into the sidebar once the scripts load. Until then it showed in the
+   old dark-header style ("Tender" white on white, a lavender "Flow") on every refresh. Once moved it is no longer in the masthead. */
+body.tf-shell .tf-masthead .tf-brand { visibility: hidden; }
 body.tf-shell .tf-masthead { background: var(--pg-card) !important; color: var(--pg-ink) !important; border-bottom: 1px solid var(--pg-line) !important; }
 body.tf-shell .tf-masthead .topbar-btn { color: var(--pg-ink) !important; background: var(--pg-card) !important; border: 1px solid var(--pg-line) !important; }
 body.tf-shell .tf-masthead .topbar-btn:hover { background: var(--pg-ground) !important; }

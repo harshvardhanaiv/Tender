@@ -3664,7 +3664,9 @@ def verify_and_clean_bid_claims(bid_response: dict, ground_truth_str: str, check
 
 # The stored-notice, index and CPV reads of one search, kept briefly so the many polls of one search do not repeat them (item 12).
 _SEARCH_DB_PART: dict = {}
-SEARCH_DB_PART_TTL_SEC = float(os.environ.get("SEARCH_DB_PART_TTL_SEC", "90"))
+# Measured live: with 90 s the copy expired while Find a Tender was still running (up to 150 s), and the next poll stalled 14.5 s
+# on the repeated reads. It must outlast a whole search; a new search (no job named) always reads afresh.
+SEARCH_DB_PART_TTL_SEC = float(os.environ.get("SEARCH_DB_PART_TTL_SEC", "600"))
 
 
 def create_app() -> Flask:
