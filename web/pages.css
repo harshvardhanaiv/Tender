@@ -22,7 +22,7 @@
 .pg-field > span { font-size: 12px; font-weight: 600; color: var(--pg-mute); }
 .pg-field input, .pg-field textarea { width: 100%; font: 400 14px var(--font-sans); color: var(--pg-ink); background: var(--pg-card); border: 1px solid var(--pg-line); border-radius: 10px; padding: 11px 13px; }
 .pg-field input::placeholder, .pg-field textarea::placeholder { color: var(--mute); }
-.pg-field input:focus, .pg-field textarea:focus { outline: 0; border-color: var(--pg-gold); box-shadow: 0 0 0 3px rgba(242,181,46,.28); }
+.pg-field input:focus, .pg-field textarea:focus { outline: 0; border-color: var(--pg-gold); box-shadow: 0 0 0 3px var(--pg-glow, rgba(242,181,46,.28)); }
 .pg-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
 .pg-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 5px; }
 .pg-actions--split { justify-content: space-between; }
@@ -120,7 +120,7 @@ body.tf-shell #profileModal .profile-btn-save-global svg { display: none; }
 body.tf-shell .pg-btn { font-size: 13px !important; padding: 9px 18px !important; border-radius: 10px !important; line-height: 1.2; height: auto !important; min-height: 0 !important; }
 body.tf-shell .pg-btn--gold { background: var(--pg-gold) !important; border-color: var(--pg-gold) !important; color: var(--pg-gold-ink) !important; }
 body.tf-shell .pg-field :is(input, textarea) { font-size: 14px !important; padding: 11px 13px !important; border-radius: 10px !important; height: auto !important; min-height: 0 !important; background: var(--pg-card) !important; border: 1px solid var(--pg-line) !important; }
-body.tf-shell .pg-field :is(input, textarea):focus { border-color: var(--pg-gold) !important; box-shadow: 0 0 0 3px rgba(242,181,46,.28) !important; }
+body.tf-shell .pg-field :is(input, textarea):focus { border-color: var(--pg-gold) !important; box-shadow: 0 0 0 3px var(--pg-glow, rgba(242,181,46,.28)) !important; }
 body.tf-shell .ct-step { font-size: 14px !important; border-radius: 999px !important; padding: 6px 16px 6px 6px !important; }
 body.tf-shell .ct-step.is-active { background: #0C1A33 !important; color: #fff !important; border-color: #0C1A33 !important; }
 body.tf-shell .pg-card { border-radius: 16px !important; box-shadow: none !important; }

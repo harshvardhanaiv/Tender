@@ -20635,6 +20635,17 @@ function applyColorPreview(color) {
     root.style.setProperty("--plan-badge-shadow", `0 2px 6px rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)`);
   }
 
+  // ── New shell (pages.css) reads --pg-gold, not --primary: the selected colour drives it, the default lavender included ──
+  if (rgb) {
+    const lum = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+    root.style.setProperty("--pg-gold", cleanHex);
+    root.style.setProperty("--pg-gold-soft", `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.16)`);
+    root.style.setProperty("--pg-gold-ink", lum > 0.6 ? "#1A1304" : "#FFFFFF");
+    root.style.setProperty("--pg-glow", `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.28)`);
+  } else {
+    ["--pg-gold", "--pg-gold-soft", "--pg-gold-ink", "--pg-glow"].forEach(p => root.style.removeProperty(p));
+  }
+
   // ── Active nav/filter highlight ──
   document.querySelectorAll(".pill.active, .topbar-btn--active, .filter-chip--active").forEach(el => {
     el.style.background = cleanHex;
@@ -20720,6 +20731,7 @@ function resetDefaultThemeColor() {
   root.style.removeProperty("--primary-bg");
   root.style.removeProperty("--row-hover");
   root.style.removeProperty("--accent-grad");
+  ["--pg-gold", "--pg-gold-soft", "--pg-gold-ink", "--pg-glow"].forEach(p => root.style.removeProperty(p));
 
   const stop1 = document.getElementById("brandLogoStop1");
   const stop2 = document.getElementById("brandLogoStop2");
