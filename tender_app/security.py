@@ -1,6 +1,7 @@
 """Rate limiting, CSRF, and security helpers."""
 from __future__ import annotations
 
+import os
 import secrets
 import time
 from collections import defaultdict
@@ -14,12 +15,27 @@ _lock = Lock()
 _buckets: dict[str, list[float]] = defaultdict(list)
 
 
+def _client_ip() -> str:
+    """Client IP that a caller cannot spoof.
+
+    X-Forwarded-For is a comma list where every proxy appends the address it saw, so only the
+    entries added by OUR proxies are trustworthy. The leftmost entry is whatever the client sent.
+    TRUSTED_PROXY_COUNT (default 1) is how many proxies sit in front of the app; we read that
+    far in from the right. Set it to 0 to ignore the header entirely.
+    """
+    try:
+        hops = max(0, int(os.environ.get("TRUSTED_PROXY_COUNT", "1")))
+    except ValueError:
+        hops = 1
+    parts = [p.strip() for p in request.headers.get("X-Forwarded-For", "").split(",") if p.strip()]
+    if hops and len(parts) >= hops:
+        return parts[-hops]
+    return request.remote_addr or "unknown"
+
+
 def _client_key(prefix: str) -> str:
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown")
-    if "," in ip:
-        ip = ip.split(",")[0].strip()
     user = session.get("username", "")
-    return f"{prefix}:{user or ip}"
+    return f"{prefix}:{user or _client_ip()}"
 
 
 def rate_limit(max_calls: int, window_sec: int = 60) -> Callable:

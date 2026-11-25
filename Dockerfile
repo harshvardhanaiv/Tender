@@ -11,7 +11,7 @@ ENV DB_HOST=localhost
 ENV DB_PORT=5440
 ENV DB_NAME=postgres
 ENV DB_USER=postgres
-ENV DB_PASSWORD="root"
+# DB_PASSWORD is deliberately not defaulted: set it in .env / the host environment
 
 # Install system dependencies required for ddddocr and lxml
 RUN apt-get update && apt-get install -y --no-install-recommends \

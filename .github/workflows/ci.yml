@@ -32,3 +32,4 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -c "from tender_app.config import FREE_TRIAL_CREDITS; from tender_app.credits import InsufficientCredits; print('imports ok')"
       - run: python -c "import server; app = server.create_app(); print('app ok')"
+      - run: python scripts/run_tests.py
