@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 import time
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from tender_app.email_svc import send_best_fit_digest
 from etenders_scraper.sources import SOURCES, search_single_source
@@ -160,7 +163,7 @@ def extract_user_search_and_profile_context(
                         if token.strip():
                             profile_keywords.append(token.strip().lower())
     except Exception:
-        pass
+        logger.warning("alerts: could not read profile keywords", exc_info=True)
 
     # Extract meaningful domain tokens from profile_text
     if profile_text:
@@ -541,9 +544,9 @@ def find_best_fit_tenders_for_user(
                         seen_keys.add(unique_key)
                         candidate_tenders.append(r)
             except Exception:
-                pass
+                logger.warning("alerts: a candidate tender was skipped", exc_info=True)
     except Exception:
-        pass
+        logger.warning("alerts: tender collection failed", exc_info=True)
     finally:
         try:
             executor.shutdown(wait=False, cancel_futures=True)

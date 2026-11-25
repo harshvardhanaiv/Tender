@@ -12,6 +12,7 @@ except ImportError:
 
 import io
 import json
+import logging
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -3701,6 +3702,40 @@ def create_app() -> Flask:
         response.headers.setdefault("Permissions-Policy", "geolocation=(self), camera=(), microphone=()")
         if request.headers.get("X-Forwarded-Proto", request.scheme) == "https":
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        # Report-only: the browser logs what a real CSP would block (see the console) but blocks nothing.
+        # Tighten it and switch to Content-Security-Policy once the console is clean.
+        if response.mimetype == "text/html":
+            response.headers.setdefault(
+                "Content-Security-Policy-Report-Only",
+                "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com "
+                "https://cdn.jsdelivr.net https://js.stripe.com https://www.gstatic.com https://apis.google.com; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; "
+                "img-src 'self' data: https:; connect-src 'self' https:; frame-src 'self' https:; "
+                "object-src 'none'; base-uri 'self'; frame-ancestors 'self'",
+            )
+        return response
+
+    @app.after_request
+    def gzip_text_responses(response):
+        # The 1.4 MB app.js and the CSS go out uncompressed otherwise (unless a proxy compresses them).
+        try:
+            if (response.status_code != 200 or response.headers.get("Content-Encoding")
+                    or "gzip" not in request.headers.get("Accept-Encoding", "")
+                    or response.mimetype not in ("text/html", "text/css", "text/javascript", "application/javascript",
+                                                 "application/json", "image/svg+xml")
+                    or response.is_streamed and not response.direct_passthrough):
+                return response
+            response.direct_passthrough = False
+            data = response.get_data()
+            if len(data) < 1024:
+                return response
+            import gzip
+            response.set_data(gzip.compress(data, compresslevel=6))
+            response.headers["Content-Encoding"] = "gzip"
+            response.headers.add("Vary", "Accept-Encoding")
+            response.headers["Content-Length"] = str(len(response.get_data()))
+        except Exception:
+            logging.getLogger(__name__).warning("gzip skipped", exc_info=True)
         return response
 
     @app.after_request

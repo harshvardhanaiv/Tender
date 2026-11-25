@@ -273,7 +273,7 @@ def _get_or_create_customer(conn, username: str, email: str) -> str:
             cursor.close()
             return row[0]
         except Exception:
-            pass
+            logger.warning("billing: price lookup failed", exc_info=True)
 
     customer = stripe.Customer.create(
         email=email,
@@ -307,7 +307,7 @@ def _customer_has_details(stripe, customer_id: str) -> bool:
         if invoices and invoices.data:
             return True
     except Exception:
-        pass
+        logger.warning("billing: invoice check failed", exc_info=True)
     return False
 
 
@@ -484,7 +484,7 @@ def confirm_checkout_session(
             inv = stripe.Invoice.retrieve(invoice_id)
             invoice_pdf = inv.invoice_pdf or inv.hosted_invoice_url
         except Exception:
-            pass
+            logger.warning("billing: invoice PDF lookup failed", exc_info=True)
     return {
         "ok": True,
         "balance": get_balance(conn, username),
@@ -542,7 +542,7 @@ def get_billing_status(conn, username: str) -> dict:
                 inv = invoices.data[0]
                 invoice_pdf = inv.invoice_pdf or inv.hosted_invoice_url
         except Exception:
-            pass
+            logger.warning("billing: latest invoice lookup failed", exc_info=True)
     return {
         "plan": sub[0] if sub else "free",
         "status": sub[1] if sub else "trialing",
