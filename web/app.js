@@ -10293,6 +10293,7 @@ function renderSummary(s, row) {
 
 async function runAnalysis() {
   if (!_analyseRow) return;
+  if (!(await confirmFitBeforeSpend(_analyseRow, "The clarification analysis"))) return;
   const company = ($("companyName")?.value || "").trim();
   const files = state.uploadedFiles || [];
 
@@ -11092,6 +11093,7 @@ async function initDeepAi(row, refresh) {
 async function runDeepAi(row) {
   const box = $("deepAiBox");
   if (!box) return;
+  if (!(await confirmFitBeforeSpend(row, "The AI briefing"))) return;
   box.innerHTML = `<div style="border:1px solid #bae6fd;background:#f0f9ff;border-radius:10px;padding:12px 14px;margin-bottom:16px">
     <span class="blink-cursor">🧠 AI is reading everything that was crawled…</span></div>`;
   try {
@@ -12876,8 +12878,9 @@ function renderBidPlan(plan) {
       </div>
       ${head ? `<div style="color:var(--muted,#64748b);margin-top:2px;">${head}</div>` : ""}
       ${(plan.warnings || []).length ? `<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:#fef3c7;color:#78350f;"><ul style="margin:0 0 0 16px;padding:0;">${li(plan.warnings)}</ul></div>` : ""}
-      ${sect("How to bid", `<ol style="margin:0 0 0 20px;padding:0;">${li(plan.steps || [])}</ol>`)}
-      ${sect(`Files to prepare (${(plan.files || []).length})`, `<div style="display:grid;gap:8px;">${files}</div>`)}
+      ${plan.notice_kind === "pre_market" ? `<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:#e0f2fe;color:#075985;"><strong>Notice, not open for bids.</strong> Nothing can be submitted yet, so there are no files to prepare.</div>` : ""}
+      ${sect(plan.notice_kind === "pre_market" ? "What to do" : "How to bid", `<ol style="margin:0 0 0 20px;padding:0;">${li(plan.steps || [])}</ol>`)}
+      ${plan.notice_kind === "pre_market" ? "" : sect(`Files to prepare (${(plan.files || []).length})`, `<div style="display:grid;gap:8px;">${files}</div>`)}
       ${sect("Timetable", dates ? `<table style="border-collapse:collapse;font-size:12.5px;">${dates}</table><div style="font-size:11.5px;color:var(--muted,#64748b);margin-top:4px;">⚑ = you have to do something by this date.</div>` : "")}
       ${sect("Mandatory requirements", mand ? `<ul style="margin:0 0 0 18px;padding:0;">${mand}</ul>` : "")}
       ${sect("Buyer's published rulings (these override the tender text)", rulings ? `<ul style="margin:0 0 0 18px;padding:0;">${rulings}</ul>` : "")}
@@ -13401,10 +13404,12 @@ async function _runBidAssistantInner(isRefresh = false) {
                                needsFinancials: Boolean(_lastProposal && _lastProposal.needs_financial_upload) });
     if (pre.show) {
       const go = window.showConfirm
-        ? await window.showConfirm(pre.message, "Before we write your bid", { okText: "Generate", cancelText: "Add documents first", danger: false })
+        ? await window.showConfirm(pre.message, pre.noBid ? "Advice: do not bid" : "Before we write your bid",
+            pre.noBid ? { okText: "Generate anyway", cancelText: "Don't generate", danger: true }
+                      : { okText: "Generate", cancelText: "Add documents first", danger: false })
         : window.confirm(pre.message);
       if (!go) {
-        openBidUploadStep();
+        if (!pre.noBid) openBidUploadStep();
         return;
       }
       lsSet(packKey, Date.now());
@@ -14517,6 +14522,50 @@ const _EXPECTED_DOCS = [
   ["Updates, addenda and clarification answers", /clarif|q\s*&\s*a|q and a|\bq\s*a\b|questions? and answers|\brfi\b|update|addend|message|amend|corrig/i],
 ];
 
+// A speculative / prior-information / market-engagement notice is not a tender: nothing can be submitted yet. Mirrors
+// tender_app/notice_kind.py; the server's answer (fit check, bid plan) wins once it has come back.
+const _noticeKindCache = {};
+const _PM_CORE = /speculative notice|not a call for competition|pre-?market (?:engagement|consultation)|preliminary market (?:engagement|consultation)/i;
+const _PM_EVENT = /market engagement (?:event|exercise)|market (?:briefing|engagement) (?:session|event)|invitation to attend a (?:briefing|market)/i;
+const _PM_PIN = /prior information notice|planned procurement notice|\(PIN\)|notice type:?\s*PIN\b/i;
+const _PM_LIVE_TYPE = /(?<!without )call for competition|reducing time limits|tender notice|contract notice|award notice|contract award|contract details|\bUK[4-7]\b|\bF0[2367]\b/i;
+const _PM_PAST = /(?:was|were|has been|have been|had been)\s+(?:held|carried out|undertaken|completed)|previous(?:ly)?|earlier|last year/i;
+const _PM_HARD_LIVE = /submission deadline:\s*\d|tenders? (?:must|should) be (?:submitted|returned)|closing date:\s*\d|deadline for (?:the )?(?:receipt|submission) of tenders?/i;
+const _PM_SOFT_LIVE = /invitation to tender|\bITT\b|call for competition(?! is not)/i;
+function setNoticeKind(row, kind) {
+  try { if (row && kind) _noticeKindCache[rowKey(row)] = kind; } catch (e) { /* the text check still works */ }
+}
+function isPreMarketNotice(row) {
+  if (!row) return false;
+  let known = null;
+  try { known = _noticeKindCache[rowKey(row)]; } catch (e) { known = null; }
+  if (known) return known === "pre_market";
+  const head = [row.title, row.procedure, row.notice_type, row.notice_status].filter(Boolean).join(" ").slice(0, 2000);
+  const body = String(row.description || "").slice(0, 12000);
+  const blob = head + " " + body;
+  if (!blob.trim() || _PM_HARD_LIVE.test(blob) || _PM_LIVE_TYPE.test(head)) return false;
+  const soft = _PM_SOFT_LIVE.test(blob);
+  if (_PM_CORE.test(head) || _PM_PIN.test(head)) return true;
+  for (const pat of [_PM_CORE, _PM_EVENT]) {
+    const m = pat.exec(body);
+    if (m) {
+      const near = body.slice(Math.max(0, m.index - 120), m.index + m[0].length + 120);
+      if (m.index < 600 && !_PM_PAST.test(near)) return true;
+      return !soft && !_PM_PAST.test(near);
+    }
+  }
+  if (_PM_PIN.test(body.slice(0, 400))) return !soft;
+  return false;
+}
+// The banner shown on the tender page when the notice is not open for bids.
+function preMarketBannerHtml(row, compact, view) {
+  const text = [row && row.description, row && row.title].filter(Boolean).join(" ");
+  const emails = Array.from(new Set((text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []))).slice(0, 3);
+  const how = emails.length ? ` Register by emailing ${emails.map(esc).join(" and ")}.` : "";
+  return `<div class="ws-extra ws-extra--notice" data-notice="pre_market" data-view="${view || ""}"><strong>Notice, not open for bids</strong>
+    <p class="ws-extra__p">This is a pre-market notice: there are no tender documents and nothing to submit yet.${compact ? "" : ` What to do: register for the briefing if you want to attend,${how ? "" : " by the route the notice gives,"} raise your questions there, and watch for the tender itself.`}${compact ? "" : how}</p></div>`;
+}
+
 // The "Before we write your bid" box (fix plan M15): expected documents, portal steps, deadline, past bids, cost.
 function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, costs, closed, publicDocs, fitCheck, roles, extra) {
   const ex = extra || {};
@@ -14544,6 +14593,9 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
       + (gaps.length ? ` Not shown in your profile: ${gaps.join("; ")}.` : "")
       + " The full check runs again on the documents while drafting.";
     (fitCheck.verdict === "Bid" ? info : warnings).unshift(line);
+    if (fitCheck.notice_kind === "pre_market") {
+      warnings.unshift("This is a notice, not a tender: there is nothing to submit yet. The only thing it asks is usually to register for a briefing. The draft will be a short registration response, and clarification questions are left for the briefing.");
+    }
   } else if (ex.deep && Number.isFinite(Number(ex.deep.score))) {
     // The notice check did not come back, but this tender already has an AI deep score: show that fit line.
     const sc = Number(ex.deep.score);
@@ -14614,9 +14666,14 @@ function bidPreflight(row, uploads, pastedText, wbTitles, confirmedRecently, cos
     || Boolean(fitCheck && fitCheck.verdict && !confirmedRecently) || (custom && !confirmedRecently);
   const cost = costs && costs.proposal ? costs.proposal : "credits";
   const dlCost = costs && costs.download ? `; each download afterwards uses ${costs.download}` : "";
-  const message = "Before we write your bid:\n\n" + [...warnings, ...info].map(w => "• " + w).join("\n\n")
-    + `\n\nGenerate now? This uses ${cost}${dlCost}.`;
-  return { show, warnings, info, message };
+  // A No-bid verdict or a notice with nothing to submit: say so first and make "Generate" a deliberate choice.
+  const noBid = Boolean(fitCheck && fitCheck.verdict === "No-bid");
+  const preMarket = Boolean(fitCheck && fitCheck.notice_kind === "pre_market");
+  const message = (noBid ? "The fit check advises NOT to bid for this.\n\n" : "") + "Before we write your bid:\n\n"
+    + [...warnings, ...info].map(w => "• " + w).join("\n\n")
+    + (noBid ? `\n\nGenerate anyway? This uses ${cost}${dlCost}, and the advice stays: do not bid unless you add a partner.`
+              : `\n\nGenerate now? This uses ${cost}${dlCost}.`);
+  return { show: show || noBid || preMarket, warnings, info, message, noBid, preMarket };
 }
 
 // Fresh portal details refresh the row, but never with a stand-in or an empty value: when Contracts Finder did not
@@ -14675,12 +14732,32 @@ async function fetchBidCheck(row, profileId, text) {
     });
     if (!res.ok) return null;
     const data = await res.json();
-    if (data && data.decision) lsSet(key, { at: Date.now(), decision: data.decision });
+    if (data && data.decision) { lsSet(key, { at: Date.now(), decision: data.decision }); setNoticeKind(row, data.decision.notice_kind); }
     return (data && data.decision) || null;
   } catch (e) {
     return null;
   } finally {
     if (timer) clearTimeout(timer);
+  }
+}
+
+// Before a tab spends credits (clarification analysis, AI briefing): if the free fit check says No-bid, ask first.
+// Any failure, no profile or no verdict just lets the action go ahead; it never blocks on its own error.
+async function confirmFitBeforeSpend(row, what) {
+  try {
+    const pid = String((typeof getActiveProfile === "function" && getActiveProfile()?.id) || $("bidCompanyProfileSelect")?.value || "");
+    if (!row || !pid) return true;
+    const fit = await fetchBidCheck(row, pid, "");
+    if (!fit || fit.verdict !== "No-bid") return true;
+    const score = fit.fit_score != null ? ` (fit ${fit.fit_score}/100)` : "";
+    const brief = (String(fit.summary || "").match(/[^.!?]+[.!?]+/g) || [String(fit.summary || "")]).slice(0, 2).join("").trim();
+    const note = fit.notice_kind === "pre_market" ? " This is also a notice, not a tender: nothing can be submitted yet." : "";
+    const msg = "The fit check advises NOT to bid" + score + ". " + brief + note + "\n\n" + what + " uses credits. Run it anyway?";
+    return window.showConfirm
+      ? await window.showConfirm(msg, "Advice: do not bid", { okText: "Run anyway", cancelText: "Don't run", danger: true })
+      : window.confirm(msg);
+  } catch (e) {
+    return true;
   }
 }
 
@@ -29685,7 +29762,9 @@ window.updateBidStepSummary = function(stepNumber, summaryEl) {
       bar.className = "ws-bar";
       modal.insertBefore(bar, modal.firstChild);
     }
-    const when = row && row.submission_deadline ? String(row.submission_deadline) : "";
+    const rawWhen = row && row.submission_deadline ? String(row.submission_deadline).trim() : "";
+    const when = /^[-–—.\s]*$|^(unknown|not stated|n\/a)/i.test(rawWhen) ? "" : rawWhen;
+    const notice = isPreMarketNotice(row);
     bar.innerHTML = `
       <div class="ws-bar__top">
         <button type="button" class="ws-bar__back" data-ws-back>&larr; Back to results</button>
@@ -29695,7 +29774,8 @@ window.updateBidStepSummary = function(stepNumber, summaryEl) {
       <div class="ws-bar__chips">
         ${(() => { const b = (row && row.contracting_authority) || (typeof _lastProposal !== "undefined" && _lastProposal && _lastProposal.buyer_name) || ""; return b ? `<span class="ws-chip">${esc(b)}</span>` : ""; })()}
         ${row && row.source_label ? `<span class="ws-chip">${esc(row.source_label)}</span>` : (row && row.source ? `<span class="ws-chip">${esc(row.source)}</span>` : "")}
-        ${when ? `<span class="ws-chip ws-chip--when">Closes ${esc(when)}</span>` : ""}
+        ${notice ? `<span class="ws-chip ws-chip--notice" title="A pre-market notice: nothing can be submitted yet">Notice · not open for bids</span>`
+          : (when ? `<span class="ws-chip ws-chip--when">Closes ${esc(when)}</span>` : `<span class="ws-chip">No deadline stated</span>`)}
       </div>
       <div class="ws-tabs" role="tablist" aria-label="Tender views">
         ${VIEWS.map(v => `<button type="button" class="ws-tab" role="tab" data-ws-view="${v[0]}" aria-selected="${v[0] === view}">${v[1]}</button>`).join("")}
@@ -29740,32 +29820,34 @@ window.updateBidStepSummary = function(stepNumber, summaryEl) {
     const view = activeView("analyseModal");
     const have = body.querySelector(":scope > .ws-extra");
     if (have && have.dataset.view === view) return;
-    if (have) have.remove();
+    body.querySelectorAll(":scope > .ws-extra").forEach(e => e.remove());
     if (body.querySelector(".modal-placeholder, .analysis-loading")) return;
     const row = currentRow() || {};
     let html = "";
+    const noticeBanner = isPreMarketNotice(row) ? preMarketBannerHtml(row, view !== "summary", view) : "";
     if (view === "summary") {
       const rows = [
         factRow("Buyer", row.contracting_authority || row.authority_name || row.authority || row.buyer),
-        factRow("Deadline", row.submission_deadline || row.deadline),
+        factRow("Deadline", noticeBanner ? "None: a notice, not open for bids" : (row.submission_deadline || row.deadline)),
         factRow("Value", row.estimated_value || row.value),
         factRow("Portal", row.source_label || row.source),
         factRow("Reference", row.reference || row.resource_id),
       ].join("");
-      if (!rows) return;
-      html = `<div class="ws-extra ws-extra--facts" data-view="summary"><h3 class="ws-extra__h">Key facts</h3><div class="ws-facts">${rows}</div></div>`;
+      if (!rows && !noticeBanner) return;
+      html = noticeBanner + (rows ? `<div class="ws-extra ws-extra--facts" data-view="summary"><h3 class="ws-extra__h">Key facts</h3><div class="ws-facts">${rows}</div></div>` : "");
     } else if (view === "clarifications") {
       const ref = row.reference || row.resource_id || "";
       const draft = `Dear ${row.contracting_authority || row.authority_name || "Sir or Madam"},\n\nRegarding "${row.title || "the tender"}"${ref ? " (" + ref + ")" : ""}: could you please clarify the following?\n\n1. \n\nKind regards`;
-      html = `<div class="ws-extra ws-extra--ask" data-view="clarifications"><h3 class="ws-extra__h">Ask the buyer</h3>
+      html = noticeBanner + `<div class="ws-extra ws-extra--ask" data-view="clarifications"><h3 class="ws-extra__h">Ask the buyer</h3>
         <p class="ws-extra__p">Write your question here, copy it, and send it through the buyer's portal message area. TenderFlow does not send messages to buyers.</p>
         <textarea class="ws-ask__text" rows="6" aria-label="Question for the buyer">${esc(draft)}</textarea>
         <button type="button" class="btn btn--secondary ws-ask__copy">Copy question</button> <span class="ws-ask__done" aria-live="polite"></span></div>`;
     } else if (view === "analysis") {
       const all = body.querySelectorAll(".deep-check");
-      if (!all.length) return;
+      if (!all.length && !noticeBanner) return;
+      if (!all.length) { body.insertAdjacentHTML("afterbegin", noticeBanner); return; }
       const done = Array.from(all).filter(b => b.checked).length;
-      html = `<div class="ws-extra ws-extra--kpis" data-view="analysis"><div class="ws-kpi"><b>${all.length}</b><span>steps found</span></div>
+      html = noticeBanner + `<div class="ws-extra ws-extra--kpis" data-view="analysis"><div class="ws-kpi"><b>${all.length}</b><span>steps found</span></div>
         <div class="ws-kpi"><b class="ws-kpi__done">${done}</b><span>done</span></div><div class="ws-kpi"><b class="ws-kpi__left">${all.length - done}</b><span>left</span></div></div>`;
     }
     if (html) body.insertAdjacentHTML("afterbegin", html);

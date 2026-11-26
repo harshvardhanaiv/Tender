@@ -103,4 +103,36 @@ ok(/btnFinalExport/.test(src) && /final_export: finalExport/.test(src) && /FINAL
 ok(/refreshBidAnswerCount/.test(grab("refreshBidAnswerCount")) || true, "the bid's own answer count is fetched");
 ok(/answer-bank\?profile_id=/.test(grab("refreshBidAnswerCount")), "step 3 counts the selected bid profile's answers");
 
+
+// Fit gate: a No-bid verdict and a pre-market notice make the box show, and the wording says so
+pre = ctx.bidPreflight(row, [{ filename: "Doc 4 Questionnaire.pdf" }], "", [], true, costs, false, [], { verdict: "No-bid", fit_score: 0, summary: "No care provision.", capability_gaps: [] }, [1], { facts: {} });
+ok(pre.noBid && pre.show && /advises NOT to bid/.test(pre.message) && /Generate anyway\?/.test(pre.message), "a No-bid verdict shows the box and asks 'Generate anyway?'");
+pre = ctx.bidPreflight(row, [], "", [], true, costs, false, [], { verdict: "Bid", fit_score: 80, summary: "Good.", capability_gaps: [] }, [], { facts: {} });
+ok(!pre.noBid && !/advises NOT to bid/.test(pre.message) && /Generate now\?/.test(pre.message), "a Bid verdict keeps the normal wording");
+pre = ctx.bidPreflight(row, [], "", [], true, costs, false, [], { verdict: "Bid with partner", fit_score: 40, summary: "Partner needed.", capability_gaps: [], notice_kind: "pre_market" }, [], { facts: {} });
+ok(pre.preMarket && pre.show && /This is a notice, not a tender/.test(pre.message), "a pre-market notice says nothing can be submitted yet");
+
+
+// Not-open-for-bids state: the notice is recognised, the banner says so, the plan has no files section
+const nctx = {}; vm.createContext(nctx);
+vm.runInContext(src.slice(src.indexOf("const _noticeKindCache"), src.indexOf("// The \"Before we write your bid\" box"))
+  .replace(/^const /gm, "var ") + "\nfunction rowKey(r) { return r.source + ':' + r.resource_id; }\nfunction esc(v) { return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }", nctx);
+const notice = { source: "sell2wales", resource_id: "NOV680441", title: "Community Based Services",
+                 description: "Speculative Notice. Register by emailing HRosser@carmarthenshire.gov.uk and AJPowell@carmarthenshire.gov.uk" };
+ok(nctx.isPreMarketNotice(notice), "a speculative notice is recognised on the client");
+ok(!nctx.isPreMarketNotice({ source: "x", resource_id: "1", title: "Cleaning", description: "Invitation to tender. Submission deadline: 12/01/2027" }), "a live ITT is not a notice");
+nctx.setNoticeKind({ source: "x", resource_id: "2", title: "t" }, "pre_market");
+ok(nctx.isPreMarketNotice({ source: "x", resource_id: "2", title: "t" }), "the server's verdict is remembered");
+ok(!nctx.isPreMarketNotice({ source: "x", resource_id: "5", title: "Housing software", notice_type: "UK4", description: "Tender for software. A preliminary market engagement event was held last year." }), "a UK4 tender that recalls a past engagement stays live");
+ok(nctx.isPreMarketNotice({ source: "x", resource_id: "6", title: "Fire safety", notice_type: "UK3: Planned procurement notice", description: "Maintenance services." }), "a planned procurement notice is a notice");
+ok(!nctx.isPreMarketNotice({ source: "x", resource_id: "7", title: "Cleaning", notice_type: "F01: Prior information notice (Call for competition)", description: "Open for tenders." }), "a PIN that is a call for competition stays live");
+const banner = nctx.preMarketBannerHtml(notice, false, "summary");
+ok(/Notice, not open for bids/.test(banner) && /HRosser@carmarthenshire\.gov\.uk/.test(banner) && /data-view="summary"/.test(banner), "the banner says so, names the registration emails and carries its view");
+const pctx = vm.createContext({ esc: v => String(v) });
+vm.runInContext(grab("renderBidPlan"), pctx);
+const html = pctx.renderBidPlan({ notice_kind: "pre_market", steps: ["Register"], files: [], dates: [], warnings: [] });
+ok(/Notice, not open for bids/.test(html) && /What to do/.test(html) && !/Files to prepare/.test(html) && !/How to bid/.test(html), "the bid plan for a notice has no files section");
+const liveHtml = pctx.renderBidPlan({ steps: ["Upload"], files: [], dates: [], warnings: [] });
+ok(/How to bid/.test(liveHtml) && /Files to prepare/.test(liveHtml), "the bid plan for a live tender is unchanged");
+
 console.log(`bid_release5_js_test: ${n} checks passed`);

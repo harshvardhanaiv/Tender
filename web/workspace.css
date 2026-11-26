@@ -316,3 +316,9 @@ body.tf-shell #bidModal.ws-page #bidModalBody .pills-container {
 #bidModal .bid-todo__act { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
 #bidModal .bid-todo__in { flex: 1 1 180px; min-width: 0; box-sizing: border-box; padding: 5px 8px; font: inherit; font-size: 13px; }
 #bidModal .bid-todo-flash { outline: 3px solid #f59e0b; outline-offset: 2px; border-radius: 3px; transition: outline-color .3s; }
+
+/* A pre-market notice: nothing can be submitted yet */
+.ws-chip--notice { background: #e0f2fe; color: #075985; font-weight: 600; }
+.ws-extra--notice { background: #e0f2fe; color: #075985; border: 1px solid #bae6fd; border-radius: 10px; padding: 10px 14px; margin: 0 0 12px; }
+.ws-extra--notice .ws-extra__p { margin: 4px 0 0; color: inherit; }
+:root[data-theme="dark"] .ws-chip--notice, :root[data-theme="dark"] .ws-extra--notice { background: #0c2a3d; color: #7cc7f0; border-color: #164e63; }

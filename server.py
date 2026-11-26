@@ -5592,6 +5592,9 @@ def create_app() -> Flask:
         # Which portal holds the documents, from the full notice (the search row's description is shortened).
         from tender_app.bid_release5 import portal_hint as _portal_hint
         decision["portal_hint"] = _portal_hint(f"{desc} {t.get('url') or ''} {t.get('detail_url') or ''}")
+        from tender_app.notice_kind import is_pre_market
+        decision["notice_kind"] = "pre_market" if is_pre_market(
+            desc, fields=(t.get("title"), t.get("procedure"), t.get("notice_type"))) else "tender"
         _BID_CHECK_CACHE[key] = (time.time(), decision)
         if len(_BID_CHECK_CACHE) > 500:
             for k in sorted(_BID_CHECK_CACHE, key=lambda k: _BID_CHECK_CACHE[k][0])[:100]:
@@ -6502,6 +6505,26 @@ Extract and return this JSON:
                     "focus": "lease or licence terms, rent, repairs and maintenance obligations, schedule of condition, utilities and service charges, insurance, permitted use, planning conditions, shared areas, car parking",
                     "questions_hint": "Ask about the lease length and break clauses, rent expectations, who repairs what, whether a schedule of condition will be agreed, how utilities and shared costs are split, insurance responsibilities, permitted uses and planning conditions"
                 })
+            # A speculative / prior-information / market-engagement notice is not a tender: few, briefing-style
+            # questions from the specialists who matter, not 25-30 across every category.
+            from tender_app.notice_kind import is_pre_market, clarification_rules
+            pre_market = is_pre_market(description, str(doc_text or "")[:6000], fields=(title, procedure, proc_type, notice_status))
+            pm_rule = clarification_rules().replace("\n", " ") if pre_market else ""
+            pm_cap, pm_total = (3, 6) if pre_market else (4, 30)
+            coverage_task = (
+                "3. This is a pre-market notice: return 4 to 6 questions in total (fewer only if the notice already answers them), "
+                "the ones that most change the decision to bid, ONE topic per question (never join two topics in one question). "
+                "Cover where the notice is silent: lot structure and whether lots can be bid separately, framework term and "
+                "extensions, how providers are appointed and call-offs made, current volumes or spend, required regulatory "
+                "registrations, and the timetable. Do NOT keep a question just to cover a category; drop any about insurance "
+                "limits, liability, contract terms, evaluation weightings, response templates or the portal." if pre_market else
+                "3. MANDATORY CATEGORY COVERAGE: You MUST retain at least 1–3 high-value questions for EVERY active "
+                "category present in raw questions (Technical, Security, Legal, Commercial, Delivery, Reporting, "
+                "General, Data). NO valid operational category present in the input may be dropped to 0 questions. "
+                "Limit total output to 25–30 unique, highest-impact questions.")
+            if pre_market:
+                _keep = ("Commercial Consultant", "Procurement Specialist", "Operations Manager", "Delivery Manager")
+                specialist_agents = [a for a in specialist_agents if a["name"] in _keep] or specialist_agents[:3]
             deadline_passed = False
             try:
                 deadline_passed = (isinstance(days_left, (int, float)) and days_left < 0) or bool(
@@ -6533,7 +6556,7 @@ RULES:
 7. Return ONLY valid JSON. Escape all newlines as \\n inside string values.
 9. If the documents contain answers the buyer has already published (a clarification log, Q&A, update note or portal message), do NOT ask those questions again; cite the published answer instead.
 10. Priority: Critical only when the gap could make the bid non-compliant or impossible to price; most questions are High or Medium.
-11. Do not raise questions about topics this tender does not involve.{closed_rule}
+11. Do not raise questions about topics this tender does not involve.{closed_rule}{pm_rule}
 {lang_instruction}
 
 Return this JSON:
@@ -6581,7 +6604,7 @@ Return this JSON:
             # Interleave questions round-robin across all 8 specialist agents (max 4 per agent to keep total <= 32)
             agent_map_trimmed = {}
             for aname, q_list in agent_map.items():
-                agent_map_trimmed[aname] = q_list[:4]
+                agent_map_trimmed[aname] = q_list[:pm_cap]
 
             all_raw_questions = []
             max_len = max((len(q_list) for q_list in agent_map_trimmed.values()), default=0)
@@ -6610,7 +6633,7 @@ RAW QUESTIONS:
 YOUR TASKS:
 1. STRICT DEDUPLICATION: You MUST aggressively merge exact duplicates and near-duplicates. Never include multiple questions on the same underlying topic (e.g. payment milestones, contract extensions, VAT, pricing models, or security clearances must be asked EXACTLY ONCE).
 2. REAL SCOPE VERIFICATION: Verify each question against the actual tender description. If a question makes specialized domain assumptions not grounded in the tender (e.g. asking about ETL pipelines for a generic PM staffing role), DISCARD IT.
-3. MANDATORY CATEGORY COVERAGE: You MUST retain at least 1–3 high-value questions for EVERY active category present in raw questions (Technical, Security, Legal, Commercial, Delivery, Reporting, General, Data). NO valid operational category present in the input may be dropped to 0 questions. Limit total output to 25–30 unique, highest-impact questions.
+{coverage_task}
 4. GROUP all questions into standardized categories: General, Technical, Data, Security, Commercial, Legal, Delivery, Reporting, Future / Support.
 5. PRIORITISE: within each group, Critical first, then High, Medium, Low. Explain why each question is prioritized.
 6. RENUMBER sequentially starting from 1.
@@ -6761,7 +6784,7 @@ Return this JSON structure:
                     else:
                         deduped_q.append(q)
 
-                deduped_q = deduped_q[:30]
+                deduped_q = deduped_q[:pm_total]
                 for idx, q in enumerate(deduped_q, 1):
                     if isinstance(q, dict):
                         q["no"] = idx
@@ -6774,9 +6797,17 @@ Return this JSON structure:
                 letter_lines = [
                     f"Dear {auth_name},",
                     "",
-                    f"Following our review of the tender documents for '{title}', we wish to submit the following clarification questions on behalf of {comp_name}:",
+                    (f"Following the market engagement notice for '{title}', {comp_name} would like to raise the following questions at the briefing, or in writing beforehand if you prefer:"
+                     if pre_market else
+                     f"Following our review of the tender documents for '{title}', we wish to submit the following clarification questions on behalf of {comp_name}:"),
                     ""
                 ]
+                if isinstance(analysis, dict):
+                    analysis["notice_kind"] = "pre_market" if pre_market else "tender"
+                    if pre_market:
+                        analysis["submission_instructions"] = {
+                            "where_to_submit": "At the market briefing, or by email to the contacts named in the notice. The buyer does not administer a notice through the portal.",
+                            "how_to_submit": "Short written questions by email, or ask them live at the briefing."}
                 for q in deduped_q:
                     if isinstance(q, dict):
                         q_no = q.get("no", "")
@@ -7883,6 +7914,15 @@ Return ONLY this JSON structure:
             stage1 = {}
         fill_buyer_basics(stage1, tender_text[:200000])
         plan = build_bid_plan(stage1)
+        from tender_app.notice_kind import is_pre_market, notice_steps
+        if is_pre_market(t.get("description"), json.dumps(stage1, default=str)[:3000], tender_text[:6000],
+                         fields=(t.get("title"), t.get("procedure"))):
+            plan["notice_kind"] = "pre_market"
+            plan["files"] = []
+            plan["steps"] = notice_steps(tender_text[:8000], plan.get("dates") or [])
+            # "No tender reference / value / criteria stated" is normal for a notice: keep only what changes what you do.
+            plan["warnings"] = [w for w in (plan.get("warnings") or []) if re.search(r"regist|briefing", str(w), re.I)]
+            plan["empty"] = False
         plan["documents_read"] = [p.split("===")[1].replace("Document:", "").strip() for p in parts if p.startswith("=== Document:")][:20]
         _BID_PLAN_CACHE[key] = (time.time(), plan)
         if len(_BID_PLAN_CACHE) > 200:
@@ -8451,7 +8491,18 @@ Return ONLY this JSON structure:
                 )
 
                 # Stage 3: Clarification Questions (Run BEFORE proposal generation to feed findings into Stage 4 proposal writers)
-                if tender_closed or clarification_window_closed(passed_stages):
+                from tender_app.notice_kind import is_pre_market as _is_pre_market, writer_rules as _pm_writer_rules
+                _pre_market = _is_pre_market(description, json.dumps(stage1_result, default=str)[:4000],
+                                             combined_tender_text[:6000], fields=(title,))
+                if _pre_market and not (tender_closed or clarification_window_closed(passed_stages)):
+                    # A notice has no tender documents to query: no AI call, the questions go to the briefing.
+                    yield json.dumps({"status": "progress", "stage": 3, "message": "This is a notice, not a tender: no clarification questions proposed; raise questions at the briefing. (Stage 3/5)"}) + "\n"
+                    stage4_result = {
+                        "clarification_deadline": "", "submission_method": "", "total_questions": 0, "questions": [],
+                        "strategic_notes": "This is a pre-market notice, not a call for competition. Register for the briefing "
+                                           "and raise questions there; formal clarification questions come with the tender.",
+                    }
+                elif tender_closed or clarification_window_closed(passed_stages):
                     # No questions once the buyer has stopped answering them (fix plan G6): no AI call either.
                     _cw = next((w for w in passed_stages if w["kind"] == "clarification"), None)
                     _why = (f"The clarification deadline ({_cw['date']}) has passed" if _cw else
@@ -8555,8 +8606,15 @@ Return ONLY this JSON structure:
                                                                           combined_tender_text[:200000]))
                     if _sub_qs:
                         questions, q_mode = _sub_qs, True
+                if _pre_market and q_mode and questions:
+                    # A notice asks for one thing (usually to register for a briefing). A "price and commercial basis"
+                    # answer invented a pricing structure for a notice that has none, so keep only that one item.
+                    _reg_re = re.compile(r"regist|briefing|attend|interest|expression", re.I)
+                    _first = next((q for q in questions if _reg_re.search(
+                        f"{q.get('title') or ''} {q.get('text') or ''} {q.get('question') or ''}")), questions[0])
+                    questions = [_first]
                 if q_mode:
-                    yield json.dumps({"status": "progress", "stage": 4, "message": f"Drafting answers to the buyer's {len(questions)} questions... (Stage 4/5)"}) + "\n"
+                    yield json.dumps({"status": "progress", "stage": 4, "message": f"Drafting answers to the buyer's {len(questions)} question{'' if len(questions) == 1 else 's'}... (Stage 4/5)"}) + "\n"
                 else:
                     yield json.dumps({"status": "progress", "stage": 4, "message": "No questionnaire found in the documents: drafting a general outline... (Stage 4/5)"}) + "\n"
 
@@ -8568,6 +8626,14 @@ Return ONLY this JSON structure:
                 authority_name = (_buyer_name(stage1_result if isinstance(stage1_result, dict) else {}, authority or "")
                                   or "Contracting Authority")
                 _addr = _addressee(stage1_result if isinstance(stage1_result, dict) else {})
+                if _pre_market:
+                    # A notice names who to write to ("For the attention of Hannah Rosser"): address that person, and
+                    # keep only the name from whatever the analysis gave ("Hannah Rosser (x@y) and" is not a name).
+                    _nm = r"[A-Z][a-z'’-]+(?: [A-Z][a-z'’-]+){1,2}"
+                    _m = re.search(r"(?i:for the attention of|contact(?: name)?)\s*[:\-]?\s+(" + _nm + r")\b",
+                                   combined_tender_text[:20000])
+                    _m2 = re.match(_nm, _addr or "")
+                    _addr = _m.group(1) if _m else (_m2.group(0) if _m2 else "")
                 if _addr:
                     greeting_target = f"Dear {_addr},"
                 else:
@@ -8607,7 +8673,7 @@ Return ONLY this JSON structure:
                 cap_note = capability_note(bid_decision)
                 from tender_app.bid_release5 import required_statements_block as _required_block
                 from tender_app.bid_release5 import buyer_dates_block as _buyer_dates_block
-                writer_notes = (closed_note + cap_note + _required_block(stage1_result if isinstance(stage1_result, dict) else {})
+                writer_notes = (closed_note + cap_note + (_pm_writer_rules() if _pre_market else "") + _required_block(stage1_result if isinstance(stage1_result, dict) else {})
                                 + _buyer_dates_block(combined_tender_text[:200000]))
                 from tender_app.bid_release5 import submission_rules_block as _sub_rules
                 from etenders_scraper.xlsx_text import clarification_sheets_block as _qa_sheets
@@ -8653,7 +8719,7 @@ OPEN CLARIFICATION POINTS: {critical_clarifications_summary}
                         "key": "w1",
                         "name": "Covering letter",
                         "max_tokens": 1500,
-                        "prompt": f"""Write a short covering letter (250-350 words) for this tender response. It introduces the response and refers the reader to the answers, which follow in the buyer's own question order. Begin with '{greeting_target}'. Do not summarise or repeat the answers, and make no claim about the bidder that is not in COMPANY DATA / COMPANY DOCUMENTS / ANSWER BANK. Sign it off with the name, job title, email and phone from BID CONTACT AND SIGNATORY, exactly as given, and no other person's details.
+                        "prompt": f"""Write a short covering letter (250-350 words) for this tender response. {"It introduces the registration details that follow (this is a notice, not a tender: do not call them answers or mention a question order, and do not describe the bidder's capabilities beyond one sentence of interest; because it is addressed to a named person, close with 'Yours sincerely')." if _pre_market else "It introduces the response and refers the reader to the answers, which follow in the buyer's own question order."} Begin with '{greeting_target}'. Do not summarise or repeat the answers, and make no claim about the bidder that is not in COMPANY DATA / COMPANY DOCUMENTS / ANSWER BANK. Sign it off with the name, job title, email and phone from BID CONTACT AND SIGNATORY, exactly as given, and no other person's details.
 
 {shared_context}
 COMPANY DOCUMENTS: {company_ctx_short}
