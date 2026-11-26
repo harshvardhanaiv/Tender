@@ -27,9 +27,9 @@
   --shadow-lg: 0 20px 25px -5px rgba(15, 23, 42, 0.06), 0 8px 10px -6px rgba(15, 23, 42, 0.06);
 
   /* Brand / profile accent variables */
-  --user-accent: #4f46e5;
-  --user-accent-hover: #4338ca;
-  --user-accent-soft: rgba(79, 70, 229, 0.1);
+  --user-accent: #0F6B66;
+  --user-accent-hover: #0B5550;
+  --user-accent-soft: rgba(15, 107, 102, 0.1);
   --user-accent-glow: rgba(79, 70, 229, 0.25);
   --primary: var(--user-accent, #4f46e5);
   --primary-hover: var(--user-accent-hover, #4338ca);

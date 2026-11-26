@@ -22,7 +22,36 @@
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="prefetch" href="/" />
     <link rel="prefetch" href="/app.js" />
-    <link rel="stylesheet" href="/styles.css?v=39" />
+    <link rel="stylesheet" href="/styles.css?v=40" />
+    <style>
+      /* Brand refresh: teal, navy and amber (matches the new sign-in and home pages). */
+      :root {
+        --primary: var(--user-accent, #0F6B66);
+        --primary-hover: var(--user-accent-hover, #0B5550);
+        --primary-2: var(--user-accent-hover, #0B5550);
+        --primary-bg: var(--user-accent-soft, rgba(15, 107, 102, 0.09));
+        --accent-grad: var(--user-accent, #0F6B66);
+        --pr-navy: #0B1F3A;
+        --pr-amber: #E8A33D;
+      }
+      :root[data-theme="dark"] {
+        --primary: #3DB3A8; --primary-hover: #5CC8BE; --primary-2: #5CC8BE;
+        --primary-bg: rgba(61, 179, 168, 0.12); --accent-grad: #3DB3A8;
+      }
+      body { background: var(--paper, #F3F6F8); }
+      .pricing-header__left h1 { color: var(--pr-navy); }
+      :root[data-theme="dark"] .pricing-header__left h1 { color: #E4EBF2; }
+      .pricing-card-wrap { border-radius: 24px; box-shadow: 0 18px 50px rgba(12, 29, 48, 0.08); }
+      .plan-card { border-radius: 18px; }
+      .plan-card--featured { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary), 0 12px 32px rgba(15, 107, 102, 0.14); }
+      .plan-card .btn--primary, .plan-card--featured .btn { background: var(--primary) !important; border-color: var(--primary) !important; color: #fff !important; box-shadow: none !important; }
+      :root[data-theme="dark"] .plan-card .btn--primary, :root[data-theme="dark"] .plan-card--featured .btn { color: #04201E !important; }
+      .plan-card__badge[style*="2563eb"] { background: var(--pr-navy) !important; color: #fff !important; }
+      .plan-card__badge[style*="ef4444"] { background: var(--pr-amber) !important; color: #1A1304 !important; }
+      .plan-card__price-sub[style*="16a34a"] { color: var(--primary) !important; }
+      .plan-card__features svg.feature-checkbox rect, .plan-card__features svg.feature-checkbox path { stroke: var(--primary) !important; }
+      .pricing-btn-manage { background: var(--pr-navy); color: #fff; border-color: var(--pr-navy); }
+    </style>
   </head>
   <body>
     <main class="container container--wide pricing-main" style="animation: fadeIn 0.25s ease-out;">

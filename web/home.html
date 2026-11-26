@@ -21,7 +21,7 @@
     <style>
       :root {
         --ink: #0C1D30; --slate: #4A5C70; --mute: #7A8899; --line: #DCE2E9; --paper: #F4F6FA; --panel: #FFFFFF;
-        --accent: #4F46E5; --accent-hover: #4338CA; --gold: #F5B82E; --gold-hover: #E5A818; --gold-ink: #1A1304;
+        --accent: #0F6B66; --accent-hover: #0B5550; --gold: #E8A33D; --gold-hover: #E5A818; --gold-ink: #1A1304;
         --pos: #1B7A4B; --pos-soft: #E4F5EC; --neg: #AE3A2E; --neg-soft: #FBEAE8;
         --navy: #0C1A33; --navy-2: #132747; --chip-tint: #FEF3D0; --chip-ink: #9A6B00;
         --radius-field: 10px;
@@ -30,7 +30,7 @@
       }
       :root[data-theme="dark"] {
         --ink: #E4EBF2; --slate: #B3C0CE; --mute: #8395A8; --line: #243548; --paper: #0A1521; --panel: #101E2D;
-        --accent: #8B85FF; --accent-hover: #756DFF; --pos: #58C08A; --pos-soft: #12301F; --neg: #E07A6E; --neg-soft: #2E1714;
+        --accent: #3DB3A8; --accent-hover: #5CC8BE; --pos: #58C08A; --pos-soft: #12301F; --neg: #E07A6E; --neg-soft: #2E1714;
         --navy: #060E17; --navy-2: #0F2037; --chip-tint: #3A2D0B; --chip-ink: #F5B82E;
       }
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -52,7 +52,8 @@
       .sitenav nav a:hover { color: var(--accent); }
       .sitenav__cta { display: flex; align-items: center; gap: 10px; }
       .nbtn { display: inline-block; text-decoration: none; font-size: 13.5px; font-weight: 700; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--line); color: var(--ink); background: var(--panel); }
-      .nbtn--gold { background: var(--gold); border-color: var(--gold); color: var(--gold-ink); }
+      .nbtn--gold { background: #0F7F78; border-color: #0F7F78; color: #fff; }
+      :root[data-theme="dark"] .nbtn--gold { background: var(--accent); border-color: var(--accent); color: #04201E; }
       .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 40px; }
       .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-family: var(--font-display); font-weight: 800; font-size: 19px; letter-spacing: -.02em; color: #fff; }
       .brand b { color: color-mix(in srgb, var(--accent) 55%, #fff); font-weight: 800; }
@@ -66,8 +67,45 @@
       .hero p.lede { font-size: 16px; color: rgba(255,255,255,.78); max-width: 460px; margin-bottom: 26px; }
       .cta-row { display: flex; flex-wrap: wrap; gap: 12px; }
       .cta { display: inline-block; text-decoration: none; text-align: center; font-family: var(--font-sans); font-size: 14.5px; font-weight: 700; padding: 13px 22px; border-radius: 10px; cursor: pointer; border: 1.5px solid transparent; transition: background .15s ease, border-color .15s ease; }
-      .cta--gold { background: var(--gold); color: var(--gold-ink); }
-      .cta--gold:hover { background: var(--gold-hover); }
+      .cta--gold { background: #0F9A90; color: #fff; }
+      .cta--gold:hover { background: #12AEA3; }
+      .hero__stats { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 30px; }
+      .hstat { background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 12px 18px; min-width: 128px; }
+      .hstat b { display: block; font-family: var(--font-display); font-size: 26px; line-height: 1.1; color: var(--gold); letter-spacing: -.02em; }
+      .hstat span { font-size: 12.5px; color: rgba(255,255,255,.72); }
+
+      /* Two workspaces */
+      .ws { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+      .ws__card { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 28px; box-shadow: 0 1px 2px rgba(12,29,48,.04); display: flex; flex-direction: column; }
+      .ws__tag { align-self: flex-start; font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); padding: 4px 11px; border-radius: 999px; }
+      .ws__card h3 { font-family: var(--font-display); font-size: 21px; font-weight: 700; margin: 14px 0 6px; letter-spacing: -.01em; }
+      .ws__card > p { font-size: 14px; color: var(--slate); margin-bottom: 16px; }
+      .ws__list { list-style: none; display: flex; flex-direction: column; gap: 10px; font-size: 14px; margin-bottom: 22px; flex: 1; }
+      .ws__list li { display: flex; gap: 10px; align-items: flex-start; }
+      .ws__list li::before { content: "\2713"; flex: none; width: 20px; height: 20px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 14%, var(--panel)); color: var(--accent); font-size: 11px; font-weight: 700; display: grid; place-items: center; margin-top: 1px; }
+      .ws__btns { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 18px; border-top: 1px solid var(--line); }
+      .ws .nbtn--gold { padding: 11px 20px; font-size: 14px; }
+      .seg { display: inline-flex; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; margin-bottom: 24px; }
+      .seg button { border: 0; background: transparent; font: 600 13.5px var(--font-sans); color: var(--slate); padding: 8px 18px; border-radius: 7px; cursor: pointer; }
+      .seg button[aria-selected="true"] { background: var(--navy); color: #fff; }
+      .seg-panel[hidden] { display: none; }
+      .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; max-width: 760px; }
+      .plans--packs { max-width: 900px; }
+      .plans__sub { font-family: var(--font-display); font-size: 17px; margin: 34px 0 14px; }
+      .plans__note { font-size: 13px; color: var(--mute); margin-top: 14px; }
+      .pcard { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 24px; display: flex; flex-direction: column; gap: 6px; }
+      .pcard--pop { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 12px 32px rgba(15,107,102,.14); }
+      .pcard__tag { position: absolute; top: 18px; right: 18px; background: var(--navy); color: #fff; font-size: 11px; font-weight: 700; padding: 3px 11px; border-radius: 999px; }
+      .pcard h3 { font-family: var(--font-display); font-size: 19px; font-weight: 700; }
+      .pcard__price { font-family: var(--font-display); font-size: 36px; font-weight: 800; letter-spacing: -.02em; line-height: 1.15; }
+      .pcard__price small { font-family: var(--font-sans); font-size: 13px; font-weight: 500; color: var(--mute); letter-spacing: 0; }
+      .pcard__cr { font-size: 13.5px; color: var(--slate); margin-bottom: 8px; }
+      .pcard ul { list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; margin-bottom: 16px; flex: 1; }
+      .pcard ul li::before { content: "\2713"; color: var(--accent); font-weight: 700; margin-right: 8px; }
+      .pcard .nbtn { text-align: center; padding: 11px; }
+      .pricing-note { background: var(--navy); color: #fff; border-radius: 20px; padding: 28px 32px; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; justify-content: space-between; }
+      .pricing-note h2 { font-family: var(--font-display); font-size: 22px; margin-bottom: 4px; }
+      .pricing-note p { font-size: 14px; color: rgba(255,255,255,.76); max-width: 560px; }
       .cta--ghost { background: transparent; color: #fff; border-color: rgba(255,255,255,.35); }
       .cta--ghost:hover { border-color: #fff; background: rgba(255,255,255,.06); }
 
@@ -118,6 +156,7 @@
       footer.foot a:hover { color: var(--ink); }
 
       @media (max-width: 900px) {
+        .ws { grid-template-columns: 1fr; }
         .hero__grid { grid-template-columns: 1fr; gap: 36px; }
         .grid--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .grid--3 { grid-template-columns: 1fr; }
@@ -141,6 +180,7 @@
           <a href="#features">Product</a>
           <a href="#sources">Sources</a>
           <a href="#how">How it works</a>
+          <a href="#plans">Plans</a>
           <a href="mailto:hello@aivhub.com">Contact</a>
         </nav>
         <div class="sitenav__cta">
@@ -160,6 +200,11 @@
               <a class="cta cta--gold" href="/login.html#signup">Start free</a>
               <a class="cta cta--ghost" href="/login.html">Log in to TenderFlow</a>
             </div>
+            <div class="hero__stats">
+              <div class="hstat"><b id="heroTenders">&mdash;</b><span>Tenders tracked</span></div>
+              <div class="hstat"><b>18</b><span>Live sources</span></div>
+              <div class="hstat"><b>UK + EU</b><span>Coverage</span></div>
+            </div>
           </div>
           <div class="matches" role="img" aria-label="Example list of top tender matches with fit scores">
             <div class="matches__head"><span>Top matches today</span><span class="live-tag">Live</span></div>
@@ -174,7 +219,27 @@
 
     <div class="sources" id="sources"><div class="wrap"><span class="lab">LIVE SOURCES</span><span>Find a Tender</span><span>Contracts Finder</span><span>Public Contracts Scotland</span><span>Sell2Wales</span><span>ProContract</span><span>eTenders Ireland</span><span>TED (EU)</span><span>+ 11 more</span></div></div>
 
-    <section class="block" id="features"><div class="wrap">
+    <section class="block" id="workspaces"><div class="wrap">
+      <h2 class="sec">Two dedicated workspaces, tailored to each side of the tender</h2>
+      <div class="ws">
+        <div class="ws__card">
+          <span class="ws__tag">For suppliers</span>
+          <h3>Find, fit and win public contracts</h3>
+          <p>Everything a bid team needs from first notice to submission.</p>
+          <ul class="ws__list"><li>One search across UK, Irish and EU portals</li><li>AI fit score on every notice</li><li>Reusable answers and compliance evidence</li><li>Pipeline from watching to won</li></ul>
+          <div class="ws__btns"><a class="nbtn nbtn--gold" href="/login.html">Sign in as supplier</a><a class="nbtn" href="/login.html#signup">Register</a></div>
+        </div>
+        <div class="ws__card">
+          <span class="ws__tag">For buyers</span>
+          <h3>Understand your market before you go out</h3>
+          <p>Market intelligence for procurement and commissioning teams.</p>
+          <ul class="ws__list"><li>See who supplies your category and at what value</li><li>Spot renewals and spend patterns</li><li>Plan market engagement with real award data</li><li>Compare your buying with similar buyers</li></ul>
+          <div class="ws__btns"><a class="nbtn nbtn--gold" href="/login.html">Sign in as buyer</a><a class="nbtn" href="/login.html#signup">Register</a></div>
+        </div>
+      </div>
+    </div></section>
+
+    <section class="block block--tint" id="features"><div class="wrap">
       <h2 class="sec">Win more public sector work with less effort</h2>
       <div class="grid grid--4">
         <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span><h3>Faster discovery</h3><p>New tenders from every major source in one search, the moment they are published.</p></div>
@@ -184,7 +249,7 @@
       </div>
     </div></section>
 
-    <section class="block block--tint" id="how"><div class="wrap">
+    <section class="block" id="how"><div class="wrap">
       <h2 class="sec">How it works</h2>
       <div class="grid grid--3">
         <div class="card step"><div class="step__n">1</div><h3>Search and match</h3><p>Tell us what you sell. We surface the tenders that fit and score each one.</p></div>
@@ -205,6 +270,12 @@
       </div>
     </div></section>
 
+    <section class="block block--tint" id="plans"><div class="wrap">
+      <h2 class="sec">Plans and credits</h2>
+      <div class="plans" id="planGrid" aria-live="polite"><p class="plans__note">Loading plans&hellip;</p></div>
+      <p class="plans__note">Prices exclude taxes. Create a free account to subscribe.</p>
+    </div></section>
+
     <div class="band">
       <div class="stats">
         <div class="stat"><b id="statTenders">&mdash;</b><span>Tenders tracked</span></div>
@@ -220,10 +291,47 @@
     <div class="wrap" id="footLegal" style="display:block;font-size:12.5px;color:#475569;line-height:1.55;padding-top:0">TenderFlow is operated by AIVHUB LTD, company number 09941441, registered office 5 Canterbury Road, Reading, RG2 7TB. Contact <a href="mailto:hello@aivhub.com">hello@aivhub.com</a>. Your data is handled under UK GDPR. We use Firebase (Google), Stripe, an AI provider and our hosting provider, so data may be processed in the UK, EU or US. See the <a href="/legal/privacy.html">Privacy Policy</a> for what we collect and your rights.</div></footer>
 
     <script>
+      /* plans and prices come from the live billing catalogue (Stripe), never typed in */
+      (function () {
+        var FEATURES = {
+          standard: ["Multi-portal search and live scraper", "AI fit score and tender analytics", "Standard email and deadline alerts"],
+          advance: ["Unlimited multi-portal search", "Full AI proposal and bid writer suite", "Priority alerts and dedicated support"]
+        };
+        function money(n) { return "£" + (Math.round(n) === n ? String(n) : n.toFixed(2)); }
+        function card(p, pop) {
+          var d = document.createElement("div"); d.className = "pcard" + (pop ? " pcard--pop" : "");
+          if (pop) { var t = document.createElement("span"); t.className = "pcard__tag"; t.textContent = "Popular"; d.appendChild(t); }
+          var h = document.createElement("h3"); h.textContent = p.label; d.appendChild(h);
+          var pr = document.createElement("div"); pr.className = "pcard__price"; pr.textContent = money(p.amount_gbp);
+          if (p.mode === "subscription") { var s = document.createElement("small"); s.textContent = " /month"; pr.appendChild(s); }
+          d.appendChild(pr);
+          var cr = document.createElement("div"); cr.className = "pcard__cr";
+          cr.textContent = p.credits.toLocaleString("en-GB") + (p.mode === "subscription" ? " credits every month" : " credits, one-off");
+          d.appendChild(cr);
+          var feats = FEATURES[p.plan];
+          if (feats) { var ul = document.createElement("ul"); feats.forEach(function (f) { var li = document.createElement("li"); li.textContent = f; ul.appendChild(li); }); d.appendChild(ul); }
+          else { var sp = document.createElement("div"); sp.style.flex = "1"; d.appendChild(sp); }
+          var a = document.createElement("a"); a.className = "nbtn nbtn--gold"; a.href = "/login.html#signup";
+          a.textContent = p.mode === "subscription" ? "Get started" : "Sign up to buy"; d.appendChild(a);
+          return d;
+        }
+        fetch("/api/billing/catalog").then(function (r) { return r.ok ? r.json() : null; }).then(function (c) {
+          var grid = document.getElementById("planGrid");
+          var subs = ((c && c.subscriptions) || []).filter(function (p) { return p.available && p.amount_gbp > 0; });
+          if (!subs.length) { grid.innerHTML = '<p class="plans__note">Plans are shown after you sign in. <a href="/login.html#signup">Create a free account</a>.</p>'; return; }
+          var order = { standard: 1, advance: 2 };
+          subs.sort(function (a, b) { return (order[a.plan] || 9) - (order[b.plan] || 9); });
+          grid.textContent = ""; subs.forEach(function (p) { grid.appendChild(card(p, p.plan === "advance")); });
+        }).catch(function () { document.getElementById("planGrid").innerHTML = '<p class="plans__note">Plans could not be loaded. <a href="/pricing.html">See the pricing page</a>.</p>'; });
+      })();
+
       /* the tender count is read from the database, never typed in */
       fetch("/api/public/stats").then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
-        var el = document.getElementById("statTenders");
-        if (el && d && typeof d.tenders === "number" && d.tenders > 0) el.textContent = d.tenders.toLocaleString("en-GB");
+        if (!d || typeof d.tenders !== "number" || d.tenders <= 0) return;
+        ["statTenders", "heroTenders"].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.textContent = d.tenders.toLocaleString("en-GB");
+        });
       }).catch(function () { /* the dash stays */ });
     </script>
   </body>
