@@ -63,7 +63,7 @@
       .back:hover { color: #fff; }
       body.mode-signin .rp { background: var(--paper); display: flex; align-items: center; justify-content: center; padding: 40px 28px; position: relative; }
       body.mode-signin .auth-card { width: 100%; max-width: 556px; background: var(--panel); border: 1px solid var(--line); border-radius: 30px; padding: 38px 40px 34px; box-shadow: 0 18px 50px rgba(12,29,48,.08); }
-      body.mode-signin .lang-row { position: absolute; top: 28px; right: 40px; gap: 18px; margin: 0; }
+      body.mode-signin .lang-row { gap: 18px; margin: 6px 0 0; }
       body.mode-signin .lang-sep { display: none; }
       body.mode-signin .lang-opt { font-size: 15px; font-weight: 700; padding: 4px 0; }
       body.mode-signin .lang-opt.active { color: var(--ink); }
@@ -140,6 +140,42 @@
       .lang-opt.active, .lang-opt:hover { color: var(--accent); }
       .lang-sep { color: var(--line); align-self: center; }
 
+      /* Buyer / supplier portals: same form, different panel colour and wording */
+      body[data-role="supplier"].mode-signin .lp--signin { background: linear-gradient(160deg, #0F6B66 0%, #0B4F4B 100%); }
+      body[data-role="buyer"].mode-signin .lp--signin { background: linear-gradient(160deg, #0B1F3A 0%, #102C52 100%); }
+      .role-switch { display: inline-flex; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.18); border-radius: 12px; padding: 4px; gap: 4px; align-self: flex-start; }
+      .role-switch button { border: 0; background: transparent; color: rgba(255,255,255,.82); font: 600 14px var(--font-sans); padding: 8px 16px; border-radius: 9px; cursor: pointer; }
+      .role-switch button:hover { color: #fff; }
+      .role-switch button[aria-pressed="true"] { background: #fff; color: #0B1F3A; }
+      .lp--signin .role-switch { margin-top: 18px; }
+      .su-nav .role-switch { margin-right: 6px; }
+      .portal-note { display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: rgba(255,255,255,.7); margin-bottom: 14px; }
+      .portal-bar { display: flex; align-items: center; gap: 10px; }
+      .pbtn { font: 600 14px var(--font-sans); text-decoration: none; border-radius: 10px; padding: 10px 18px; cursor: pointer; border: 1.5px solid transparent; transition: background .15s ease, border-color .15s ease, color .15s ease; white-space: nowrap; }
+      .pbtn--ghost { background: transparent; border-color: var(--line); color: var(--ink); }
+      .pbtn--ghost:hover { border-color: var(--accent); color: var(--accent); }
+      .pbtn--solid { background: var(--navy); color: #fff; border-color: var(--navy); }
+      body[data-role="buyer"] .pbtn--solid { background: #0F7F78; border-color: #0F7F78; }
+      .pbtn--solid:hover { filter: brightness(1.15); }
+      .portal-bar--rp { position: absolute; top: 22px; right: 32px; }
+      body.mode-signin .rp { padding-top: 84px; }
+      @media (max-width: 960px) {
+        body.mode-signin .rp { flex-wrap: wrap; padding-top: 18px; }
+        .portal-bar--rp { position: static; width: 100%; justify-content: flex-end; margin-bottom: 14px; }
+      }
+      body.mode-signup .su-nav .portal-bar { margin-left: 8px; }
+      body.mode-signup .su-nav .pbtn--ghost { color: #fff; border-color: rgba(255,255,255,.35); }
+      body.mode-signup .su-nav .pbtn--ghost:hover { color: #fff; border-color: #fff; }
+      body.mode-signup .portal-bar--rp { display: none; }
+      body.mode-signin .su-nav { display: none; }
+      .role-link { text-align: center; font-size: 15px; color: var(--slate); margin-top: 2px; }
+      .role-link a { color: var(--accent); font-weight: 700; text-decoration: none; cursor: pointer; padding: 6px 2px; display: inline-block; }
+      .role-link a:hover { text-decoration: underline; }
+      @media (max-width: 960px) {
+        .lp--signin .role-switch { margin-top: 0; }
+        .lp--signin .portal-note { display: none; }
+      }
+
       @media (max-width: 960px) {
         body.mode-signin .shell { grid-template-columns: 1fr; }
         .lp--signin { padding: 28px 24px 30px; gap: 20px; }
@@ -147,7 +183,6 @@
         .lp--signin h1 { font-size: 32px; margin-bottom: 0; }
         .lp--signin .back { order: 5; }
         body.mode-signin .rp { padding: 28px 18px 40px; align-items: flex-start; }
-        body.mode-signin .lang-row { position: static; justify-content: center; margin-top: 4px; }
         body.mode-signin .auth-card { padding: 28px 22px 24px; border-radius: 24px; }
         body.mode-signup .shell { grid-template-columns: 1fr; padding: 0 16px 40px; }
         .su-nav { position: static; padding: 18px 16px; }
@@ -223,6 +258,20 @@
         body.mode-signup .tabs { margin-bottom: 12px; }
         body.mode-signup .tabs button { font-size: 16px; padding: 4px 0 8px; }
       }
+      @media (min-width: 961px) { body.mode-signin .rp { padding-top: 84px; } }
+      /* Short desktop windows: keep the whole sign-in card (with the portal link and language row) on screen. */
+      @media (min-width: 961px) and (max-height: 780px) {
+        body.mode-signin .rp { padding-top: 70px; }
+        body.mode-signin .auth-card { padding: 18px 30px 10px; }
+        body.mode-signin #loginForm { display: grid !important; grid-template-columns: 1fr auto; gap: 9px 12px !important; }
+        body.mode-signin #loginForm > * { grid-column: 1 / -1; }
+        body.mode-signin #rememberWrap { grid-column: 1; }
+        body.mode-signin #forgotWrap { grid-column: 2; margin-top: 0; }
+        .role-link { font-size: 14px; margin-top: 0; }
+        .role-link a { padding: 2px; }
+        body.mode-signin .lang-row { margin: 0; }
+        body.mode-signin .lang-opt { padding: 2px 0; }
+      }
       @media (max-width: 480px) {
         .su-nav nav a:not(:last-child) { display: none; }
         body.mode-signup .tabs button { font-size: 17px; }
@@ -253,17 +302,18 @@
     </script>
     <div class="su-nav">
       <a class="brand" href="/home.html" aria-label="TenderFlow home"><span class="brand__mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/></svg></span>TenderFlow</a>
-      <nav aria-label="Main"><a href="/home.html#features">Features</a><a href="/pricing.html">Pricing</a><a href="/home.html#sources">Sources</a></nav>
+      <nav aria-label="Main"><div class="portal-bar"><a class="pbtn pbtn--ghost js-back" href="/home.html">Back to website</a><button type="button" class="pbtn pbtn--solid js-switch" data-role-set="buyer">Switch to Buyer Portal</button></div><a href="/home.html#features">Features</a><a href="/home.html#plans">Plans</a><a href="/home.html#sources">Sources</a></nav>
     </div>
     <main class="shell">
       <aside class="lp lp--signin">
         <a class="brand" href="/home.html" aria-label="TenderFlow home"><span class="brand__mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/></svg></span>TenderFlow</a>
         <div>
-          <h1>Search once. <em>Bid smarter.</em></h1>
-          <p class="tag">AI-powered discovery, fit scoring and bid drafting across UK, Ireland and international public tenders.</p>
-          <ul class="checks"><li>Tenders from four live sources in one search</li><li>AI fit score on every notice</li><li>First-draft bids from your Answer Bank</li></ul>
+          <span class="portal-note" id="portalNote">Supplier portal</span>
+          <h1 id="lpHeading">Search once. <em>Bid smarter.</em></h1>
+          <p class="tag" id="lpTag">AI-powered discovery, fit scoring and bid drafting across UK, Ireland and international public tenders.</p>
+          <ul class="checks" id="lpChecks"><li>Tenders from four live sources in one search</li><li>AI fit score on every notice</li><li>First-draft bids from your Answer Bank</li></ul>
         </div>
-        <a class="back" href="/home.html">&larr; Back to website</a>
+        <span aria-hidden="true"></span>
       </aside>
       <section class="lp lp--signup">
         <span class="pill">Public tender search and bid workspace</span>
@@ -272,6 +322,7 @@
         <div class="stats"><div class="stat"><b>2,198</b><span>Tenders tracked</span></div><div class="stat"><b>82%</b><span>Average AI fit</span></div></div>
       </section>
       <section class="rp">
+        <div class="portal-bar portal-bar--rp"><a class="pbtn pbtn--ghost js-back" href="/home.html">Back to website</a><button type="button" class="pbtn pbtn--solid js-switch" data-role-set="buyer">Switch to Buyer Portal</button></div>
         <div class="auth-card">
           <div class="tabs" role="tablist" aria-label="Sign in or create an account">
             <button type="button" role="tab" data-mode="signin" aria-selected="true" id="tabSignin">Sign in</button>
@@ -314,6 +365,84 @@
         </div>
       </section>
     </main>
+    <script>
+      // Buyer and supplier portals: one sign-in, two wordings. The choice is kept so the next visit opens the same portal.
+      (function () {
+        var COPY = {
+          supplier: {
+            note: "Supplier portal",
+            h1: "Discover and win <em>public contracts.</em>",
+            tag: "Your bid workspace for matched tender alerts, reusable compliance evidence and AI-drafted submissions, all in one place.",
+            checks: ["Tender alerts matched to what you sell", "A compliance vault you reuse on every bid", "AI fit score and first-draft answers"],
+            title: "Welcome back", sub: "Sign in to find, fit and win your next contract.",
+            btn: "Sign in to Supplier Portal", other: "Buying for a public body?", otherLink: "Switch to Buyer Portal", back: "Back to website", otherRole: "buyer"
+          },
+          buyer: {
+            note: "Buyer portal",
+            h1: "Know your market <em>before you buy.</em>",
+            tag: "Market intelligence for procurement teams: who supplies your category, at what value, and when contracts come up for renewal.",
+            checks: ["See incumbent suppliers and contract values", "Spot renewals and spending patterns", "Plan market engagement with real award data"],
+            title: "Welcome back", sub: "Sign in to explore your market and plan your next procurement.",
+            btn: "Sign in to Buyer Portal", other: "Looking for contracts to bid on?", otherLink: "Switch to Supplier Portal", back: "Back to website", otherRole: "supplier"
+          }
+        };
+        var T = {
+          fr: {
+            supplier: { note: "Portail fournisseur", h1: "Découvrez et remportez des <em>marchés publics.</em>", tag: "Votre espace de réponse aux appels d'offres : alertes ciblées, preuves de conformité réutilisables et réponses rédigées par l'IA, au même endroit.", checks: ["Alertes adaptées à votre offre", "Un coffre de conformité réutilisable pour chaque offre", "Score d'adéquation IA et premières réponses"], title: "Bon retour", sub: "Connectez-vous pour trouver et remporter votre prochain marché.", btn: "Se connecter au portail fournisseur", other: "Vous achètez pour un organisme public ?", otherLink: "Passer au portail acheteur", back: "Retour au site" },
+            buyer: { note: "Portail acheteur", h1: "Connaissez votre marché <em>avant d'acheter.</em>", tag: "L'intelligence de marché pour les équipes achats : qui fournit votre catégorie, à quelle valeur et quand les contrats arrivent à échéance.", checks: ["Voir les fournisseurs en place et la valeur des contrats", "Repérer les renouvellements et les dépenses", "Préparer le dialogue avec le marché grâce aux données d'attribution"], title: "Bon retour", sub: "Connectez-vous pour explorer votre marché et préparer votre prochain achat.", btn: "Se connecter au portail acheteur", other: "Vous cherchez des marchés à convoiter ?", otherLink: "Passer au portail fournisseur", back: "Retour au site" },
+            sup: "Je suis fournisseur", buy: "Je suis acheteur"
+          },
+          nl: {
+            supplier: { note: "Leveranciersportaal", h1: "Ontdek en win <em>openbare opdrachten.</em>", tag: "Uw werkruimte voor inschrijvingen: gerichte meldingen, herbruikbaar bewijs van naleving en door AI opgestelde antwoorden, op één plek.", checks: ["Meldingen afgestemd op wat u levert", "Een nalevingskluis die u bij elke inschrijving hergebruikt", "AI-geschiktheidsscore en eerste conceptantwoorden"], title: "Welkom terug", sub: "Meld u aan om uw volgende opdracht te vinden en te winnen.", btn: "Inloggen op het leveranciersportaal", other: "Koopt u in voor een overheidsinstelling?", otherLink: "Naar het inkopersportaal", back: "Terug naar de website" },
+            buyer: { note: "Inkopersportaal", h1: "Ken uw markt <em>voordat u inkoopt.</em>", tag: "Marktinzicht voor inkoopteams: wie uw categorie levert, tegen welke waarde en wanneer contracten verlopen.", checks: ["Zie zittende leveranciers en contractwaarden", "Herken verlengingen en bestedingspatronen", "Plan marktconsultatie met echte gunningsgegevens"], title: "Welkom terug", sub: "Meld u aan om uw markt te verkennen en uw volgende inkoop te plannen.", btn: "Inloggen op het inkopersportaal", other: "Zoekt u opdrachten om op in te schrijven?", otherLink: "Naar het leveranciersportaal", back: "Terug naar de website" },
+            sup: "Ik ben leverancier", buy: "Ik ben inkoper"
+          }
+        };
+        function getRole() {
+          var m = /[?&]role=(buyer|supplier)/.exec(location.search);
+          if (m) return m[1];
+          try { var r = localStorage.getItem("tf_role"); if (r === "buyer" || r === "supplier") return r; } catch (e) { /* storage blocked */ }
+          return "supplier";
+        }
+        function setRole(role) {
+          try { localStorage.setItem("tf_role", role); } catch (e) { /* storage blocked */ }
+          try {
+            var u = new URL(location.href); u.searchParams.set("role", role);
+            history.replaceState(null, "", u.pathname + u.search + u.hash);
+          } catch (e) { /* ignore */ }
+          window.tfApplyRole();
+        }
+        window.tfApplyRole = function () {
+          var role = getRole(), c = COPY[role];
+          var lang = "en"; try { lang = localStorage.getItem("tf_lang") || "en"; } catch (e) { /* ignore */ }
+          var tr = T[lang];
+          if (tr && tr[role]) { c = Object.assign({}, c, tr[role]); }
+          try { localStorage.setItem("tf_role", role); } catch (e) { /* storage blocked */ }
+          document.body.setAttribute("data-role", role);
+          document.querySelectorAll("[data-role-set]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-role-set") === role)); });
+          var $ = function (id) { return document.getElementById(id); };
+          if ($("portalNote")) $("portalNote").textContent = c.note;
+          var lab = { supplier: (tr && tr.sup) || "I'm a supplier", buyer: (tr && tr.buy) || "I'm a buyer" };
+          document.querySelectorAll(".lp--signin [data-role-set]").forEach(function (b) { b.textContent = lab[b.getAttribute("data-role-set")]; });
+          if ($("lpHeading")) $("lpHeading").innerHTML = c.h1;
+          if ($("lpTag")) $("lpTag").textContent = c.tag;
+          if ($("lpChecks")) $("lpChecks").innerHTML = c.checks.map(function (x) { return "<li>" + x + "</li>"; }).join("");
+          var signup = document.body.classList.contains("mode-signup") || window.__tfWantSignup === true;
+          if (!signup) {
+            if ($("titleText")) $("titleText").textContent = c.title;
+            if ($("subText")) $("subText").textContent = c.sub;
+            if ($("btnText")) $("btnText").textContent = c.btn;
+          }
+          document.querySelectorAll(".js-switch").forEach(function (b) { b.textContent = c.otherLink; b.setAttribute("data-role-set", c.otherRole); });
+          document.querySelectorAll(".js-back").forEach(function (a) { a.textContent = c.back || "Back to website"; });
+        };
+        document.addEventListener("click", function (e) {
+          var b = e.target.closest && e.target.closest("[data-role-set]");
+          if (b) setRole(b.getAttribute("data-role-set"));
+        });
+        document.addEventListener("DOMContentLoaded", function () { window.tfApplyRole(); });
+      })();
+    </script>
     <script>
       // The two tabs switch the screen. Sign-in itself lives in the module script below (it loads Firebase, which can be slower than a click),
       // so the wanted mode is remembered here and applied when the module is ready.
@@ -365,7 +494,9 @@
         }
         if (!res.ok || !data.ok) throw new Error(data.error || "Server auth failed");
         if (data.csrf_token) sessionStorage.setItem("tf_csrf", data.csrf_token);
-        window.location.href = "/";
+        let dest = "/";
+        try { if (localStorage.getItem("tf_role") === "buyer") dest = "/buyer-workspace"; } catch (e) { /* storage blocked */ }
+        window.location.href = dest;
       }
 
       function formatAuthError(err) {
@@ -462,6 +593,7 @@
         // Placeholders
         $("companyName").setAttribute("placeholder", isSignUp ? t("login_company") : "");
         $("email").setAttribute("placeholder", "you@company.com");
+        if (window.tfApplyRole) window.tfApplyRole();
       }
 
       document.querySelectorAll(".lang-opt").forEach(opt => {
@@ -616,9 +748,12 @@
         document.body.classList.toggle("mode-signin", !isSignUp);
         document.querySelectorAll("[data-mode]").forEach((b) => b.setAttribute("aria-selected", String((b.getAttribute("data-mode") === "signup") === isSignUp)));
         document.title = (isSignUp ? "Create account" : "Sign in") + " \u2014 TenderFlow";
+        if (window.tfApplyRole) window.tfApplyRole();
         try { history.replaceState(null, "", isSignUp ? "#signup" : location.pathname + location.search); } catch (e) { /* ignore */ }
       }
       window.tfSetMode = (signup) => { if (signup !== isSignUp) $("toggleLink").click(); else applyMode(); };
+      applyRoleSoon();
+      function applyRoleSoon() { if (window.tfApplyRole) window.tfApplyRole(); }
       const wantSignup = window.__tfWantSignup !== undefined ? window.__tfWantSignup : (location.hash === "#signup" || /[?&]mode=signup/.test(location.search));
       window.tfSetMode(wantSignup);
     </script>

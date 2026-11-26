@@ -52,6 +52,16 @@
       .sitenav nav a:hover { color: var(--accent); }
       .sitenav__cta { display: flex; align-items: center; gap: 10px; }
       .nbtn { display: inline-block; text-decoration: none; font-size: 13.5px; font-weight: 700; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--line); color: var(--ink); background: var(--panel); }
+      .nbtn--outline { border: 1.5px solid #0F7F78; color: #0F7F78; background: transparent; }
+      .nbtn--outline:hover { background: color-mix(in srgb, #0F7F78 10%, transparent); }
+      .nbtn--navy { background: var(--navy); border-color: var(--navy); color: #fff; }
+      :root[data-theme="dark"] .nbtn--outline { color: var(--accent); border-color: var(--accent); }
+      :root[data-theme="dark"] .nbtn--navy { background: var(--navy-2); border-color: var(--line); }
+      .rolepill { display: inline-flex; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px; }
+      .rolepill a { text-decoration: none; font-size: 13px; font-weight: 700; color: var(--slate); padding: 6px 13px; border-radius: 7px; }
+      .rolepill a:first-child { background: #0F7F78; color: #fff; }
+      .rolepill a:last-child { background: var(--navy); color: #fff; }
+      .rolepill a:hover { filter: brightness(1.12); }
       .nbtn--gold { background: #0F7F78; border-color: #0F7F78; color: #fff; }
       :root[data-theme="dark"] .nbtn--gold { background: var(--accent); border-color: var(--accent); color: #04201E; }
       .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 40px; }
@@ -184,8 +194,7 @@
           <a href="mailto:hello@aivhub.com">Contact</a>
         </nav>
         <div class="sitenav__cta">
-          <a class="nbtn" href="/login.html">Log in</a>
-          <a class="nbtn nbtn--gold" href="/login.html#signup">Start free</a>
+                    <a class="nbtn nbtn--outline" href="/login.html?role=supplier">Supplier login</a><a class="nbtn nbtn--navy" href="/login.html?role=buyer">Buyer login</a>
         </div>
       </div>
     </header>
@@ -197,8 +206,8 @@
             <h1>Every public tender. One search. <em>Your best bids first.</em></h1>
             <p class="lede">Search Find a Tender, Contracts Finder, eTenders Ireland and TED in one place, ranked by how well each fits your business.</p>
             <div class="cta-row">
-              <a class="cta cta--gold" href="/login.html#signup">Start free</a>
-              <a class="cta cta--ghost" href="/login.html">Log in to TenderFlow</a>
+              <a class="cta cta--gold" href="/login.html?role=supplier">Supplier sign-in</a>
+              <a class="cta cta--ghost" href="/login.html?role=buyer">Buyer sign-in</a>
             </div>
             <div class="hero__stats">
               <div class="hstat"><b id="heroTenders">&mdash;</b><span>Tenders tracked</span></div>
@@ -227,14 +236,14 @@
           <h3>Find, fit and win public contracts</h3>
           <p>Everything a bid team needs from first notice to submission.</p>
           <ul class="ws__list"><li>One search across UK, Irish and EU portals</li><li>AI fit score on every notice</li><li>Reusable answers and compliance evidence</li><li>Pipeline from watching to won</li></ul>
-          <div class="ws__btns"><a class="nbtn nbtn--gold" href="/login.html">Sign in as supplier</a><a class="nbtn" href="/login.html#signup">Register</a></div>
+          <div class="ws__btns"><a class="nbtn nbtn--gold" href="/login.html?role=supplier">Sign in as supplier</a><a class="nbtn" href="/login.html?role=supplier#signup">Register</a></div>
         </div>
         <div class="ws__card">
           <span class="ws__tag">For buyers</span>
           <h3>Understand your market before you go out</h3>
           <p>Market intelligence for procurement and commissioning teams.</p>
           <ul class="ws__list"><li>See who supplies your category and at what value</li><li>Spot renewals and spend patterns</li><li>Plan market engagement with real award data</li><li>Compare your buying with similar buyers</li></ul>
-          <div class="ws__btns"><a class="nbtn nbtn--gold" href="/login.html">Sign in as buyer</a><a class="nbtn" href="/login.html#signup">Register</a></div>
+          <div class="ws__btns"><a class="nbtn nbtn--gold" href="/login.html?role=buyer">Sign in as buyer</a><a class="nbtn" href="/login.html?role=buyer#signup">Register</a></div>
         </div>
       </div>
     </div></section>
@@ -282,7 +291,7 @@
         <div class="stat"><b>10</b><span>UK and Irish portals</span></div>
         <div class="stat"><b>18</b><span>Live sources</span></div>
       </div>
-      <div class="band__cta"><h2>Ready to see your matches?</h2><a class="cta cta--gold" href="/login.html">Log in to TenderFlow</a></div>
+      <div class="band__cta"><h2>Ready to see your matches?</h2><a class="cta cta--gold" href="/login.html?role=supplier">Supplier login</a></div>
     </div>
     <footer class="foot"><div class="wrap">
       <div><strong>TenderFlow</strong>Public tender search and bid workspace.</div>
@@ -311,7 +320,7 @@
           var feats = FEATURES[p.plan];
           if (feats) { var ul = document.createElement("ul"); feats.forEach(function (f) { var li = document.createElement("li"); li.textContent = f; ul.appendChild(li); }); d.appendChild(ul); }
           else { var sp = document.createElement("div"); sp.style.flex = "1"; d.appendChild(sp); }
-          var a = document.createElement("a"); a.className = "nbtn nbtn--gold"; a.href = "/login.html#signup";
+          var a = document.createElement("a"); a.className = "nbtn nbtn--gold"; a.href = "/login.html?role=supplier#signup";
           a.textContent = p.mode === "subscription" ? "Get started" : "Sign up to buy"; d.appendChild(a);
           return d;
         }
