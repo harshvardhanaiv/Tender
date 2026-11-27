@@ -23,10 +23,17 @@
   ["replaceState", "pushState"].forEach(function (fn) {
     var orig = history[fn].bind(history);
     history[fn] = function (state, title, url) {
+      var res = orig(state, title, url);
       try {
-        if (url != null && new URL(url, location.href).pathname === "/" && location.pathname !== "/") { location.replace("/buyer-workspace"); return; }
-      } catch (e) { /* fall through */ }
-      return orig(state, title, url);
+        // Switching section closes the current one (address goes to "/") and then opens the next (address moves on).
+        // Only if nothing has opened shortly after does the buyer go back to the buyer workspace.
+        if (url != null && new URL(url, location.href).pathname === "/") {
+          setTimeout(function () {
+            if ((location.pathname.replace(/\/+$/, "") || "/") === "/") location.replace("/buyer-workspace");
+          }, 700);
+        }
+      } catch (e) { /* ignore */ }
+      return res;
     };
   });
 

@@ -136,6 +136,24 @@
       /* Sections */
       section.block { padding: 64px 0; }
       section.block--tint { background: var(--paper); }
+      .sechead { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 30px; }
+      .sechead h2.sec { margin-bottom: 0; }
+      .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 3px; background: #fff; }
+      .seg button { border: 0; background: none; padding: 8px 18px; border-radius: 999px; font: inherit; font-size: 13px; font-weight: 600; color: var(--slate); cursor: pointer; }
+      .seg button[aria-pressed="true"] { background: var(--navy); color: #fff; }
+      .tog .seg button[aria-pressed="true"] { background: #0F7F78; color: #fff; }
+      .tog[data-mode="buyer"] .seg button[aria-pressed="true"] { background: var(--gold); color: var(--gold-ink); }
+      .tog .card { border-top: 3px solid #0F7F78; transition: transform .15s, box-shadow .15s; }
+      .tog .card:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(12,26,51,.08); }
+      .tog[data-mode="supplier"] .ico, .tog[data-mode="supplier"] .ico--grey { background: color-mix(in srgb, #0F7F78 14%, #fff); color: #0F6B66; }
+      .tog[data-mode="supplier"] .step__n { background: #0F7F78; color: #fff; }
+      .tog[data-mode="buyer"] .card { border-top-color: var(--gold); }
+      .tog[data-mode="buyer"] .ico, .tog[data-mode="buyer"] .ico--grey { background: var(--chip-tint); color: var(--chip-ink); }
+      .tog[data-mode="buyer"] .step__n { background: var(--gold); color: var(--gold-ink); }
+      .tog[data-mode="buyer"] h2.sec { border-left: 4px solid var(--gold); padding-left: 14px; }
+      .tog[data-mode="supplier"] h2.sec { border-left: 4px solid #0F7F78; padding-left: 14px; }
+      .seg button:focus-visible { outline: 2px solid var(--accent, #0F6B66); outline-offset: 2px; }
+      [data-view][hidden] { display: none !important; }
       h2.sec { font-family: var(--font-display); font-size: clamp(26px, 3.6vw, 32px); font-weight: 700; letter-spacing: -.02em; line-height: 1.25; margin-bottom: 30px; max-width: 520px; }
       .grid { display: grid; gap: 18px; }
       .grid--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -158,12 +176,15 @@
       .stat b { display: block; font-family: var(--font-display); font-size: 38px; color: var(--gold); line-height: 1.1; letter-spacing: -.02em; }
       .stat span { font-size: 13.5px; color: rgba(255,255,255,.75); }
       .band__cta h2 { font-family: var(--font-display); font-size: 22px; font-weight: 700; margin-bottom: 14px; }
-      footer.foot { background: var(--paper); border-top: 1px solid var(--line); padding: 36px 0 44px; font-size: 13px; color: var(--mute); }
+      footer.foot { background: var(--navy); border-top: 3px solid var(--accent); padding: 36px 0 44px; font-size: 13px; color: var(--mute); }
       footer.foot .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; align-items: flex-start; }
-      footer.foot strong { display: block; color: var(--ink); font-family: var(--font-display); font-size: 15px; margin-bottom: 4px; }
+      footer.foot strong { display: block; color: #fff; font-family: var(--font-display); font-size: 15px; margin-bottom: 4px; }
       footer.foot nav { display: flex; gap: 26px; }
-      footer.foot a { color: var(--slate); text-decoration: none; }
-      footer.foot a:hover { color: var(--ink); }
+      footer.foot a { color: #C5D0E0; text-decoration: none; }
+      footer.foot a:hover { color: var(--gold); }
+      footer.foot { color: #9FB0C8; }
+      footer.foot #footLegal { color: #9FB0C8 !important; }
+      footer.foot #footLegal a { text-decoration: underline; }
 
       @media (max-width: 900px) {
         .ws { grid-template-columns: 1fr; }
@@ -248,34 +269,53 @@
       </div>
     </div></section>
 
-    <section class="block block--tint" id="features"><div class="wrap">
-      <h2 class="sec">Win more public sector work with less effort</h2>
-      <div class="grid grid--4">
+    <section class="block block--tint tog" id="features" data-mode="supplier"><div class="wrap">
+      <div class="sechead"><h2 class="sec" data-sup="Win more public sector work with less effort" data-buy="Know your market with less effort">Win more public sector work with less effort</h2><div class="seg" role="group" aria-label="Show for"><button type="button" data-v="supplier" aria-pressed="true">Supplier</button><button type="button" data-v="buyer" aria-pressed="false">Buyer</button></div></div>
+      <div class="grid grid--4" data-view="supplier">
         <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span><h3>Faster discovery</h3><p>New tenders from every major source in one search, the moment they are published.</p></div>
         <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><h3>Smarter priorities</h3><p>AI fit scores show which tenders are worth your time.</p></div>
         <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span><h3>Fewer barriers</h3><p>Your certificates and past answers are ready to reuse in every bid.</p></div>
         <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h13"/></svg></span><h3>Simple automation</h3><p>Draft summaries, analyses and proposals from an easy interface.</p></div>
       </div>
+      <div class="grid grid--4" data-view="buyer" hidden>
+        <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6M5 10v9M19 10v9M9 14v5M15 14v5M3 21h18"/></svg></span><h3>Clearer market view</h3><p>See who supplies your category and what they are paid.</p></div>
+        <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10"/></svg></span><h3>Better timing</h3><p>Spot contract renewals and expiries before you go to market.</p></div>
+        <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4zM8 9h8M8 12h5"/></svg></span><h3>Real engagement</h3><p>Plan supplier engagement with real award data.</p></div>
+        <div class="card"><span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span><h3>Simple benchmarking</h3><p>Compare your buying with similar public bodies.</p></div>
+      </div>
     </div></section>
 
-    <section class="block" id="how"><div class="wrap">
-      <h2 class="sec">How it works</h2>
-      <div class="grid grid--3">
+    <section class="block tog" id="how" data-mode="supplier"><div class="wrap">
+      <div class="sechead"><h2 class="sec" data-sup="How it works" data-buy="How it works for buyers">How it works</h2><div class="seg" role="group" aria-label="Show for"><button type="button" data-v="supplier" aria-pressed="true">Supplier</button><button type="button" data-v="buyer" aria-pressed="false">Buyer</button></div></div>
+      <div class="grid grid--3" data-view="supplier">
         <div class="card step"><div class="step__n">1</div><h3>Search and match</h3><p>Tell us what you sell. We surface the tenders that fit and score each one.</p></div>
         <div class="card step"><div class="step__n">2</div><h3>Plan your bid</h3><p>Move opportunities through your pipeline and see requirements at a glance.</p></div>
         <div class="card step"><div class="step__n">3</div><h3>Draft and submit</h3><p>Generate a first draft from your Answer Bank, then refine and submit.</p></div>
       </div>
+      <div class="grid grid--3" data-view="buyer" hidden>
+        <div class="card step"><div class="step__n">1</div><h3>Choose your organisation</h3><p>Tell us who you are and the categories you buy.</p></div>
+        <div class="card step"><div class="step__n">2</div><h3>Research the market</h3><p>Explore suppliers, values and renewals in Market Radar.</p></div>
+        <div class="card step"><div class="step__n">3</div><h3>Engage suppliers</h3><p>Plan and record market engagement before you tender.</p></div>
+      </div>
     </div></section>
 
-    <section class="block"><div class="wrap">
-      <h2 class="sec">Everything in one workspace</h2>
-      <div class="grid grid--3">
+    <section class="block tog" data-mode="supplier"><div class="wrap">
+      <div class="sechead"><h2 class="sec" data-sup="Everything in one workspace" data-buy="Everything a buyer needs">Everything in one workspace</h2><div class="seg" role="group" aria-label="Show for"><button type="button" data-v="supplier" aria-pressed="true">Supplier</button><button type="button" data-v="buyer" aria-pressed="false">Buyer</button></div></div>
+      <div class="grid grid--3" data-view="supplier">
         <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span><div><h3>Tender search</h3><p>One search across UK, Ireland and EU notices.</p></div></div>
         <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h6"/></svg></span><div><h3>Pipeline</h3><p>Track every bid from watching to won.</p></div></div>
         <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6"/><path d="M5 10v9M19 10v9M9 14v5M15 14v5M3 21h18"/></svg></span><div><h3>Buyer intelligence</h3><p>See who buys what, and how much.</p></div></div>
         <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c1-4 4-5.5 7-5.5s6 1.5 7 5.5"/></svg></span><div><h3>Supplier intelligence</h3><p>Learn from past winners and their contracts.</p></div></div>
         <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></span><div><h3>Growth Studio</h3><p>Turn buying signals into outreach campaigns.</p></div></div>
         <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10l-5 4v-4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></svg></span><div><h3>Answer Bank</h3><p>Reusable answers and evidence for every bid.</p></div></div>
+      </div>
+      <div class="grid grid--3" data-view="buyer" hidden>
+        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12l6-6M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8"/></svg></span><div><h3>Market Radar</h3><p>See suppliers, spend and renewals in your category.</p></div></div>
+        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4zM8 9h8M8 12h5"/></svg></span><div><h3>Market engagement</h3><p>Plan and record engagement before you go out.</p></div></div>
+        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6M5 10v9M19 10v9M9 14v5M15 14v5M3 21h18"/></svg></span><div><h3>Buyer intelligence</h3><p>See who buys what, and how much.</p></div></div>
+        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M6 21V11l6-4 6 4v10M10 21v-5h4v5M12 3v4"/></svg></span><div><h3>Planning leads</h3><p>Early sight of upcoming buying plans.</p></div></div>
+        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v10M9.5 9.5c.6-.8 1.5-1 2.5-1s2 .5 2 1.5-1 1.3-2 1.5-2 .6-2 1.6 1 1.5 2 1.5 1.9-.2 2.5-1"/></svg></span><div><h3>Funding</h3><p>Find grants and funding that match your work.</p></div></div>
+        <div class="card feat"><span class="ico ico--grey" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg></span><div><h3>Followed categories</h3><p>Keep track of the categories you care about.</p></div></div>
       </div>
     </div></section>
 
@@ -285,14 +325,6 @@
       <p class="plans__note">Prices exclude taxes. Create a free account to subscribe.</p>
     </div></section>
 
-    <div class="band">
-      <div class="stats">
-        <div class="stat"><b id="statTenders">&mdash;</b><span>Tenders tracked</span></div>
-        <div class="stat"><b>10</b><span>UK and Irish portals</span></div>
-        <div class="stat"><b>18</b><span>Live sources</span></div>
-      </div>
-      <div class="band__cta"><h2>Ready to see your matches?</h2><a class="cta cta--gold" href="/login.html?role=supplier">Supplier login</a></div>
-    </div>
     <footer class="foot"><div class="wrap">
       <div><strong>TenderFlow</strong>Public tender search and bid workspace.</div>
       <nav aria-label="Footer"><a href="/legal/terms.html">Terms</a><a href="/legal/privacy.html">Privacy Policy</a><a href="mailto:hello@aivhub.com">Contact us</a></nav>
@@ -333,6 +365,19 @@
           grid.textContent = ""; subs.forEach(function (p) { grid.appendChild(card(p, p.plan === "advance")); });
         }).catch(function () { document.getElementById("planGrid").innerHTML = '<p class="plans__note">Plans could not be loaded. <a href="/pricing.html">See the pricing page</a>.</p>'; });
       })();
+
+      /* Supplier / Buyer switch on each section */
+      document.querySelectorAll(".tog").forEach(function (sec) {
+        var h = sec.querySelector("h2.sec");
+        sec.querySelectorAll(".seg button").forEach(function (b) {
+          b.addEventListener("click", function () {
+            var v = b.getAttribute("data-v"); sec.setAttribute("data-mode", v);
+            sec.querySelectorAll(".seg button").forEach(function (x) { x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+            sec.querySelectorAll("[data-view]").forEach(function (g) { g.hidden = g.getAttribute("data-view") !== v; });
+            h.textContent = h.getAttribute(v === "buyer" ? "data-buy" : "data-sup");
+          });
+        });
+      });
 
       /* the tender count is read from the database, never typed in */
       fetch("/api/public/stats").then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
