@@ -1149,6 +1149,10 @@ def _search_suppliers_uncached():
         # (at least 200, and four times the cards wanted, up to 1,500: the same records are read for the first pages, so their order agrees), merged, and the page is cut from the merged list.
         page_mode = limit is not None and offset is not None
         page_end = (offset or 0) + (limit or 0)
+        # The merged read stops at 1,500 records, so a page past that (the "Last" button on 134,000 suppliers) was cut from a list
+        # that never reached it and came back empty under "No matching suppliers found". Deep pages read their own records directly.
+        if page_mode and page_end > 1500:
+            page_mode = False
         raw_limit, raw_offset = (min(1500, max(200, page_end * 4)), 0) if page_mode else (limit, offset)
 
         if use_stats:

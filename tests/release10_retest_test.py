@@ -145,7 +145,7 @@ _ab._STATS_CACHE.update({"at": 0.0, "n": None})
 ok(_app.test_client().get("/api/public/stats").get_json()["tenders"] is None, "a database problem gives null")
 _home = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "home.html"), encoding="utf-8").read()
 _pricing = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "pricing.html"), encoding="utf-8").read()
-ok("2,198" not in _home and "82%" not in _home and 'id="statTenders"' in _home, "the home page has no typed-in statistics")
+ok("2,198" not in _home and "82%" not in _home and 'id="heroTenders"' in _home, "the home page has no typed-in statistics (the tender count is filled in from the database)")
 ok("Old billing plan" not in _pricing and '<span id="balanceAmt"></span>' in _pricing, "the pricing page's raw HTML says nothing about a legacy plan or a zero balance")
 
 
